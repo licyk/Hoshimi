@@ -60,7 +60,6 @@ export default {
     noProvidersText: 'config.json でプロバイダーにアカウントを追加し、サーバーを再起動してください。',
     dataDir: 'データディレクトリ',
     configPath: '設定ファイル',
-    defaultConfigPath: '既定（データディレクトリと同じ場所）',
     emptyAccounts: 'アカウントなし',
   },
   models: {
@@ -248,7 +247,6 @@ export default {
     version: 'バージョン',
     dataDir: 'データディレクトリ',
     configPath: '設定ファイル',
-    defaultConfigPath: '既定（データディレクトリと同じ場所）',
     openapi: 'API リファレンス',
     needsAuthorization: '認可が必要',
   },

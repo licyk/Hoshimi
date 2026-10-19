@@ -38,7 +38,7 @@ def _write(path: Path, text: str) -> Path:
 
 def test_a_save_restricts_the_file_it_just_wrote(tmp_path: Path) -> None:
     """The file holds refresh tokens in plaintext."""
-    target = save_settings(Settings(), tmp_path / "config.json")
+    target = save_settings(Settings())
 
     assert target.exists()
     if os.name != "posix":
@@ -59,7 +59,7 @@ def test_a_save_is_not_blocked_by_a_filesystem_with_no_file_modes(tmp_path: Path
 
     monkeypatch.setattr(os, "chmod", refuse)
 
-    target = save_settings(Settings(), tmp_path / "config.json")
+    target = save_settings(Settings())
 
     assert json.loads(target.read_text(encoding="utf-8"))["server"]["port"] == 10600
 
@@ -75,8 +75,7 @@ def test_the_restriction_is_applied_before_the_file_is_visible(tmp_path: Path) -
 
     seen: list[int] = []
 
-    target = tmp_path / "config.json"
-    original = save_settings(Settings(), target)
+    original = save_settings(Settings())
     original.unlink()
 
     # Watch the mode the tmp file carries for as long as it exists.
@@ -90,7 +89,7 @@ def test_the_restriction_is_applied_before_the_file_is_visible(tmp_path: Path) -
 
     Path.write_text = spy  # type: ignore[method-assign]
     try:
-        save_settings(Settings(), target)
+        save_settings(Settings())
     finally:
         Path.write_text = real_write  # type: ignore[method-assign]
 
@@ -101,7 +100,7 @@ def test_a_save_keeps_a_copy_of_a_config_it_could_not_parse(tmp_path: Path) -> N
     """The overwrite must not be the first time this file is looked at."""
     target = _write(tmp_path / "config.json", CORRUPT)
 
-    save_settings(Settings(), target)
+    save_settings(Settings())
 
     backups = list(tmp_path.glob("config.json.corrupt-*"))
     assert len(backups) == 1, "the only copy was overwritten without a copy being kept"
@@ -112,9 +111,9 @@ def test_a_save_keeps_a_copy_of_a_config_it_could_not_parse(tmp_path: Path) -> N
 
 def test_a_save_leaves_a_readable_config_alone(tmp_path: Path) -> None:
     """A backup on every save would be a litter of identical files."""
-    target = save_settings(Settings(), tmp_path / "config.json")
+    save_settings(Settings())
 
-    save_settings(Settings(), target)
+    save_settings(Settings())
 
     assert list(tmp_path.glob("config.json.corrupt-*")) == []
 
@@ -129,7 +128,7 @@ def test_an_unreadable_config_is_backed_up_before_the_startup_refusal(tmp_path: 
     _write(tmp_path / "config.json", CORRUPT)
 
     with pytest.raises(ValueError) as excinfo:
-        load_settings(str(tmp_path / "config.json"))
+        load_settings()
 
     backups = list(tmp_path.glob("config.json.corrupt-*"))
     assert len(backups) == 1
@@ -144,7 +143,7 @@ def test_a_backup_is_not_world_readable_either(tmp_path: Path) -> None:
     _write(tmp_path / "config.json", CORRUPT)
 
     with pytest.raises(ValueError):
-        load_settings(str(tmp_path / "config.json"))
+        load_settings()
 
     backup = next(tmp_path.glob("config.json.corrupt-*"))
     assert backup.exists()
@@ -156,7 +155,7 @@ def test_a_config_that_parses_starts_normally(tmp_path: Path) -> None:
     """The refusal is about a file that cannot be read, not about a strict shape."""
     _write(tmp_path / "config.json", json.dumps({"server": {"port": 10999}}))
 
-    settings = load_settings(str(tmp_path / "config.json"))
+    settings = load_settings()
 
     assert settings.port == 10999
     assert list(tmp_path.glob("config.json.corrupt-*")) == []
@@ -167,14 +166,18 @@ def test_a_config_that_is_valid_json_but_not_an_object_is_still_refused(tmp_path
     target = _write(tmp_path / "config.json", "[1, 2, 3]")
 
     with pytest.raises(TypeError):
-        load_settings(str(tmp_path / "config.json"))
+        load_settings()
 
     assert list(tmp_path.glob("config.json.corrupt-*")) == []
     assert target.read_text(encoding="utf-8") == "[1, 2, 3]"
 
 
-def test_a_missing_directory_is_created_before_the_first_save(tmp_path: Path) -> None:
-    target = save_settings(Settings(), tmp_path / "nested" / "deeper" / "config.json")
+def test_a_missing_directory_is_created_before_the_first_save(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data_dir = tmp_path / "nested" / "deeper"
+    monkeypatch.setenv("HOSHIMI_DATA_DIR", str(data_dir))
+    target = save_settings(Settings())
+
+    assert target == data_dir / "config.json"
 
     assert target.exists()
     if os.name == "posix":

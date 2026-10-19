@@ -891,7 +891,7 @@ def test_codearts_dpop_proof_on_the_token_exchange() -> None:
 # -- the manager ------------------------------------------------------------ #
 def _manager(tmp_path: Any, client: httpx.Client) -> LoginManager:
     settings = Settings()
-    return LoginManager(settings=settings, config_path=tmp_path / "config.json", client=client)
+    return LoginManager(settings=settings, client=client)
 
 
 def _wait_for(manager: LoginManager, session_id: str, timeout: float = 10.0) -> Any:

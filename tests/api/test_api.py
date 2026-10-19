@@ -38,6 +38,8 @@ def test_app_meta_reports_the_server(services: Any) -> None:
     assert payload["providers"] == 1
     assert payload["accounts"] == 1
     assert payload["api_prefix"] == ""
+    assert payload["config_path"] == str(services.data_dir / "config.json")
+    assert not services.config_path.exists()
 
 
 def test_chat_completion_streaming_and_json(client: Any) -> None:
@@ -129,18 +131,22 @@ def test_unknown_model_returns_openai_shaped_404() -> None:
 
 
 def test_settings_roundtrip(client: Any, services: Any, tmp_path: Path) -> None:
-    services.config_path = tmp_path / "config.json"
     current = client.get("/api/v1/settings")
     assert current.status_code == 200
     assert "ofm_home" not in current.json()
     assert current.json()["server"]["port"] == 0
     assert "api_key" not in current.json()["server"]
+    assert current.json()["config_path"] == str(services.data_dir / "config.json")
+    assert not services.config_path.exists()
 
     patched = client.patch("/api/v1/settings", json={"server": {"default_model": "fake-1"}})
     assert patched.status_code == 200
     assert patched.json()["server"]["default_model"] == "fake-1"
     assert services.settings.default_model == "fake-1"
     assert services.config_path.is_file()
+    from hoshimi.core.config import load_settings
+
+    assert load_settings().default_model == "fake-1"
 
     rejected = client.patch("/api/v1/settings", json={"server": {"port": -1}})
     assert rejected.status_code == 400
@@ -221,7 +227,6 @@ def test_providers_listing(client: Any) -> None:
 
 def test_delete_account_removes_from_pool_and_config(client: Any, services: Any, tmp_path: Path) -> None:
     """The channels page's "forget" button: gone from the running pool and from the file."""
-    services.config_path = tmp_path / "config.json"
     # Give the fake provider a configured account so there is something to delete twice over.
     client.patch("/api/v1/settings", json={"providers": {"fake": {"accounts": [{"id": "fake-0", "access_token": "t"}]}}})
     listed = {row["id"]: row for row in client.get("/api/v1/providers").json()}
@@ -293,7 +298,6 @@ def test_adding_an_account_appends_and_reaches_the_running_pool(client: Any, ser
     account *counts* only, so an endpoint that replaced the list would be
     overwriting accounts it had never seen — and "add" taking away is a lie.
     """
-    services.config_path = tmp_path / "config.json"
     client.patch("/api/v1/settings", json={"providers": {"agg": {"accounts": [{"id": "kept", "preset": "bai", "api_key": "k0"}]}}})
 
     added = client.post("/api/v1/providers/agg/accounts", json={"account": {"preset": "llm7", "api_key": "sk-new"}})
@@ -312,7 +316,6 @@ def test_the_lane_refuses_an_account_it_would_drop_at_build_time(client: Any, se
     Otherwise the save announces an account that does not exist, which is
     exactly what the channels page would go on displaying.
     """
-    services.config_path = tmp_path / "config.json"
 
     no_key = client.post("/api/v1/providers/agg/accounts", json={"account": {"preset": "bai"}})
     assert no_key.status_code == 400
@@ -336,7 +339,6 @@ def test_adding_to_a_provider_that_does_not_exist_is_not_found(client: Any) -> N
 
 def test_adding_an_account_id_the_lane_already_uses_conflicts(client: Any, services: Any, tmp_path: Path) -> None:
     """Two accounts behind one name would make "forget" match whichever it reached first."""
-    services.config_path = tmp_path / "config.json"
     client.patch("/api/v1/settings", json={"providers": {"agg": {"accounts": [{"id": "kept", "preset": "bai", "api_key": "k"}]}}})
 
     conflict = client.post("/api/v1/providers/agg/accounts", json={"account": {"id": "kept", "preset": "bai", "api_key": "k2"}})
@@ -353,7 +355,6 @@ def test_the_generated_id_avoids_the_names_the_pool_derives_itself(client: Any, 
     Handing out `agg-1` here would put two accounts behind one name, and the
     forget button would then delete the wrong one.
     """
-    services.config_path = tmp_path / "config.json"
     client.patch("/api/v1/settings", json={"providers": {"agg": {"accounts": [{"preset": "bai", "api_key": "k0"}, {"preset": "llm7", "api_key": "k1"}]}}})
     listed = {row["id"]: row for row in client.get("/api/v1/providers").json()}
     assert listed["agg"]["account_ids"] == ["agg-0", "agg-1"]
@@ -371,7 +372,6 @@ def test_forgetting_an_account_the_pool_named_by_position(client: Any, services:
     no id to match on — so forgetting on the file's terms answered "removed"
     while leaving the entry behind for the next rebuild to hand straight back.
     """
-    services.config_path = tmp_path / "config.json"
     client.patch("/api/v1/settings", json={"providers": {"agg": {"accounts": [{"preset": "bai", "api_key": "k0"}]}}})
 
     removed = client.delete("/api/v1/providers/agg/accounts/agg-0")

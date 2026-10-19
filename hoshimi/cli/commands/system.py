@@ -15,7 +15,6 @@ from hoshimi.version import VERSION
 COMPONENTS = ("fastapi", "uvicorn", "pydantic", "typer", "httpx", "rich")
 
 ENV_VARS = {
-    "HOSHIMI_CONFIG": "Path to the config file (default: ./config.json)",
     "HOSHIMI_DATA_DIR": "Data directory holding settings and the runtime file",
     "HOSHIMI_LOG_LEVEL": "Log level: DEBUG, INFO, WARNING or ERROR",
 }

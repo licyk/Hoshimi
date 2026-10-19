@@ -752,7 +752,7 @@ export interface components {
             /** Auth Required */
             auth_required: boolean;
             /** Config Path */
-            config_path: string | null;
+            config_path: string;
             /** Data Dir */
             data_dir: string;
             /** Default Model */
@@ -1515,7 +1515,7 @@ export interface components {
          */
         SettingsView: {
             /** Config Path */
-            config_path: string | null;
+            config_path: string;
             /** Data Dir */
             data_dir: string;
             /** Providers */

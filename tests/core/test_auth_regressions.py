@@ -32,7 +32,7 @@ def test_eac_login_updates_the_existing_relay_and_acks_with_post(tmp_path, monke
         return httpx.Response(200, json={"ok": True})
     done = threading.Event()
     with httpx.Client(transport=httpx.MockTransport(handle), follow_redirects=True) as client:
-        manager = LoginManager(settings, tmp_path / "config.json", client=client, on_persist=lambda _: done.set())
+        manager = LoginManager(settings, client=client, on_persist=lambda _: done.set())
         session = manager.start("eac")
         assert done.wait(3), session.message
         with manager._persist_lock:
@@ -61,7 +61,7 @@ def test_cancel_during_eac_poll_cannot_write_credentials(tmp_path, monkeypatch):
         assert release.wait(3)
         return httpx.Response(200, json={"status": "ok", "token": "late"})
     with httpx.Client(transport=httpx.MockTransport(handle)) as client:
-        manager = LoginManager(settings, tmp_path / "config.json", client=client)
+        manager = LoginManager(settings, client=client)
         run = manager._run
         def wrapped(*args):
             try:
@@ -100,7 +100,7 @@ def test_failed_login_save_leaves_live_credentials_unchanged(tmp_path, monkeypat
         raise OSError("not writable")
     monkeypatch.setattr("hoshimi.core.config.save_settings", fail)
     with httpx.Client() as client:
-        manager = LoginManager(settings, tmp_path / "config.json", client=client)
+        manager = LoginManager(settings, client=client)
         with pytest.raises(OSError):
             manager._persist("test", {"sub": "user", "access_token": "new"})
         assert settings.providers["test"].accounts[0]["access_token"] == "original"

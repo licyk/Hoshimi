@@ -60,7 +60,6 @@ export default {
     noProvidersText: 'Add an account to a provider in config.json and restart the server.',
     dataDir: 'Data directory',
     configPath: 'Config file',
-    defaultConfigPath: 'Default (beside the data directory)',
     emptyAccounts: 'No accounts',
   },
   models: {
@@ -248,7 +247,6 @@ export default {
     version: 'Version',
     dataDir: 'Data directory',
     configPath: 'Config file',
-    defaultConfigPath: 'Default (beside the data directory)',
     openapi: 'API reference',
     needsAuthorization: 'Needs authorization',
   },

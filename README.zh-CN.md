@@ -43,7 +43,7 @@ hoshimi config path
 ```
 
 `hoshimi serve` 支持 `--host`、`--port`、`--strict-port`、`--open/--no-open`、
-`--ui/--no-ui`、`--config`、`--access-token`、`--model-api-key` 和 `--default-model`。
+`--ui/--no-ui`、`--access-token`、`--model-api-key` 和 `--default-model`。
 
 ### 可选云平台依赖
 
@@ -145,8 +145,19 @@ curl http://127.0.0.1:10600/v1/messages \
 ## 配置
 
 可以直接在渠道和设置页面完成配置。使用配置文件时，参考
-[config.example.json](config.example.json)，将自己的配置保存为启动目录下的 `config.json`。
-也可以通过 `--config` 或 `HOSHIMI_CONFIG` 指定其他文件。
+[config.example.json](config.example.json)，将自己的配置保存为数据目录下的 `config.json`。
+运行 `hoshimi config path` 可以查看绝对路径，文件尚未创建时也会显示。
+所有命令和界面均使用同一个文件，与启动时所在的目录无关。
+
+| 平台 | 默认配置文件 |
+| --- | --- |
+| Linux | `~/.local/share/hoshimi/config.json`，设置 `XDG_DATA_HOME` 后为 `$XDG_DATA_HOME/hoshimi/config.json` |
+| Windows | `%APPDATA%\hoshimi\config.json` |
+| macOS | `~/Library/Application Support/hoshimi/config.json` |
+
+通过 `HOSHIMI_DATA_DIR` 可以统一更改数据目录，配置文件始终位于 `<数据目录>/config.json`。
+**破坏性变更：** 已移除 `--config` 和 `HOSHIMI_CONFIG`，不再读取或自动迁移启动目录中的旧配置。
+升级前请将原有配置手动移至 `hoshimi config path` 显示的位置。
 
 例如，配置两种网关密钥并添加 NVIDIA 账户：
 
@@ -174,7 +185,7 @@ CLI 也支持查看和修改配置：
 hoshimi config show
 hoshimi config get server.port
 hoshimi config set server.port 10600
-hoshimi serve --config /path/to/config.json
+hoshimi config path
 ```
 
 在界面中保存的配置会应用到运行中的网关；直接修改文件或通过 CLI 修改后应重启服务。
@@ -295,7 +306,7 @@ python scripts/dev.py dev
 ```
 
 开发前端默认运行在 `:5173`，代理 `:10600` 的 API。可使用 `--api-port`、
-`--web-port` 和 `--config` 调整，Ctrl+C 同时结束两个进程。
+`--web-port` 调整，通过 `HOSHIMI_DATA_DIR` 指定统一的数据目录，Ctrl+C 同时结束两个进程。
 源码环境下使用 `hoshimi serve` 提供界面前，需运行 `python scripts/dev.py web`；
 未构建前端时只提供 API。
 

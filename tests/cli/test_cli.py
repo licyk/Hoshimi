@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from hoshimi.cli.app import get_app
+from hoshimi.core.paths import config_file_path
 from hoshimi.logger import LOGGER_NAME
 
 EXPECTED_TREE = {
@@ -67,7 +67,8 @@ def test_version_and_env_json(runner):
     version = json.loads(runner.invoke(get_app(), ["version", "--json"]).output)
     assert version["hoshimi"] and version["python"]
     env = json.loads(runner.invoke(get_app(), ["env", "--json"]).output)
-    assert "HOSHIMI_CONFIG" in env["known"]
+    assert "HOSHIMI_DATA_DIR" in env["known"]
+    assert "HOSHIMI_CONFIG" not in env["known"]
 
 
 @pytest.mark.parametrize("command", ["serve", "check"])
@@ -88,7 +89,12 @@ def test_env_does_not_advertise_or_read_external_config_directory(runner, monkey
 def test_config_roundtrip_and_unknown_key(runner, tmp_path):
     assert runner.invoke(get_app(), ["config", "set", "server.port", "8001"]).exit_code == 0
     assert json.loads(runner.invoke(get_app(), ["config", "get", "server.port"]).output) == 8001
-    assert (tmp_path / "config.json").is_file()
+    assert config_file_path() == tmp_path / "data" / "config.json"
+    assert config_file_path().is_file()
+    assert not (tmp_path / "config.json").exists()
+    path_result = runner.invoke(get_app(), ["config", "path"])
+    assert path_result.exit_code == 0
+    assert path_result.output.strip() == str(config_file_path())
 
     from hoshimi.core.errors import ValidationError
 
@@ -157,4 +163,25 @@ def _offline_lanes(monkeypatch) -> None:
 
 
 def _write_config(payload: dict) -> None:
-    Path("config.json").write_text(json.dumps(payload), encoding="utf-8")
+    target = config_file_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(payload), encoding="utf-8")
+
+
+@pytest.mark.parametrize("command", [
+    ["serve"], ["check"], ["login"], ["models"], ["providers"],
+    ["config", "show"], ["config", "get", "server.port"],
+    ["config", "set", "server.port", "10600"], ["config", "path"],
+])
+def test_config_file_override_option_is_removed(runner, command):
+    result = runner.invoke(get_app(), [*command, "--config", "/external/config.json"])
+    assert result.exit_code == 2
+    assert "No such option" in result.output
+
+
+def test_config_path_is_absolute_before_first_save(runner):
+    assert not config_file_path().exists()
+    result = runner.invoke(get_app(), ["config", "path"])
+    assert result.exit_code == 0
+    assert result.output.strip() == str(config_file_path())
+    assert not config_file_path().exists()

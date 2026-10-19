@@ -11,14 +11,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from hoshimi.core.paths import config_file_path
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 10600
 DEFAULT_MAX_BODY_BYTES = 16 * 1024 * 1024
 DEFAULT_MAX_ACCOUNT_RETRIES = 3
-DEFAULT_CONFIG_PATHS = ("config.json",)
-CONFIG_PATH_ENV = "HOSHIMI_CONFIG"
 
 
 @dataclass
@@ -62,22 +62,6 @@ def validate_settings(settings: Settings) -> str | None:
         return "server.max_body_bytes must be positive."
     if settings.max_account_retries < 1:
         return "server.max_account_retries must be at least 1."
-    return None
-
-
-def find_config_file(explicit: str | None = None) -> Path | None:
-    if explicit:
-        path = Path(explicit).expanduser()
-        return path if path.exists() else None
-    env = os.environ.get(CONFIG_PATH_ENV, "").strip()
-    if env:
-        path = Path(env).expanduser()
-        if path.exists():
-            return path
-    for candidate in DEFAULT_CONFIG_PATHS:
-        path = Path(candidate)
-        if path.exists():
-            return path
     return None
 
 
@@ -140,10 +124,11 @@ def settings_from_dict(data: dict[str, Any], settings: Settings | None = None) -
     return settings
 
 
-def load_settings(config_path: str | None = None, settings: Settings | None = None) -> Settings:
-    settings = settings or Settings()
-    path = find_config_file(config_path)
-    if path is None:
+def load_settings() -> Settings:
+    """Load the data directory's config; a missing file uses the defaults."""
+    settings = Settings()
+    path = config_file_path()
+    if not path.exists():
         return settings
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -230,7 +215,7 @@ def settings_to_dict(settings: Settings) -> dict[str, Any]:
     return data
 
 
-def save_settings(settings: Settings, path: str | Path | None = None) -> Path:
+def save_settings(settings: Settings) -> Path:
     """Write ``settings`` back to the config file (created when missing).
 
     Two things happen around the write that are not the write itself, and
@@ -241,9 +226,7 @@ def save_settings(settings: Settings, path: str | Path | None = None) -> Path:
     half-written config is the one moment this routine can destroy
     something it never read.
     """
-    target = Path(path).expanduser() if path else find_config_file()
-    if target is None:
-        target = Path("config.json")
+    target = config_file_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():
         try:

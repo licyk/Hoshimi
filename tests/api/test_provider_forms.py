@@ -44,7 +44,7 @@ def test_cancelled_login_cannot_persist_late_credentials(tmp_path, monkeypatch):
         released.wait(5)
         return {"api_key": "late"}
     monkeypatch.setattr("hoshimi.core.login.manager._flows", lambda: {"test": flow})
-    manager = LoginManager(Settings(), tmp_path / "config.json", client=httpx.Client())
+    manager = LoginManager(Settings(), client=httpx.Client())
     original = manager._run
     def run(*args):
         try:

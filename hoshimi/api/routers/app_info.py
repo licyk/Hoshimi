@@ -28,7 +28,7 @@ class AppMeta(Record):
     """True when this request comes from the server's own machine."""
     api_prefix: str
     data_dir: str
-    config_path: str | None
+    config_path: str
     default_model: str | None
     providers: int
     accounts: int
@@ -57,7 +57,7 @@ def get_meta(request: Request, services: ServicesDep) -> AppMeta:
         local=bool(client) and (is_loopback(client) or client == "testclient"),
         api_prefix=getattr(request.app.state, "api_prefix", "") or "",
         data_dir=str(services.data_dir),
-        config_path=str(services.config_path) if services.config_path else None,
+        config_path=str(services.config_path),
         default_model=services.settings.default_model,
         providers=len(services.registry.providers),
         accounts=accounts,

@@ -84,11 +84,10 @@ def test_the_helpers_convert_the_shapes_stations_send() -> None:
 
 # -- the write-back ------------------------------------------------------- #
 def _refresher(tmp_path: Any, accounts: list[dict[str, Any]]) -> Refresher:
-    config_path = tmp_path / "config.json"
     settings = Settings(providers={"cline": ProviderConfig(id="cline", enabled=True, accounts=accounts)}, auto_refresh=False)
     provider = ClineLike(settings.providers["cline"].accounts)
     registry = Registry({"cline": provider})
-    return Refresher(settings=settings, registry=registry, config_path=config_path)
+    return Refresher(settings=settings, registry=registry)
 
 
 class ClineLike(Provider):

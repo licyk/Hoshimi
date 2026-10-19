@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from hoshimi.core.config import DEFAULT_PORT, ProviderConfig, Settings, find_config_file, load_settings, save_settings, settings_from_dict, settings_to_dict
+from hoshimi.core.config import DEFAULT_PORT, ProviderConfig, Settings, load_settings, save_settings, settings_from_dict, settings_to_dict
 from hoshimi.core.credentials import collect_provider_accounts
+from hoshimi.core.paths import config_file_path
 
 
 def test_collect_uses_enabled_configured_accounts_and_options():
@@ -47,9 +48,36 @@ def test_old_filename_is_not_discovered_or_overwritten(tmp_path, monkeypatch):
     legacy = tmp_path / "free-model-api.json"
     original = '{"server":{"port":12345}}'
     legacy.write_text(original)
-    assert find_config_file() is None
+    assert not config_file_path().exists()
     assert load_settings().port == DEFAULT_PORT
     saved = save_settings(Settings())
     assert saved.name == "config.json"
     assert legacy.read_text() == original
-    assert find_config_file() == Path("config.json")
+    assert saved == config_file_path()
+
+
+def test_config_ignores_working_directory_and_legacy_environment(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("HOSHIMI_DATA_DIR", str(data_dir))
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    original = '{"server":{"port":12345}}'
+    local = workdir / "config.json"
+    legacy = tmp_path / "legacy.json"
+    local.write_text(original)
+    legacy.write_text(original)
+    monkeypatch.setenv("HOSHIMI_CONFIG", str(legacy))
+
+    assert load_settings().port == DEFAULT_PORT
+    assert not data_dir.exists()
+    saved = save_settings(Settings(port=10999))
+    assert saved == data_dir / "config.json"
+    assert load_settings().port == 10999
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    assert load_settings().port == 10999
+    assert local.read_text() == legacy.read_text() == original
+    assert not (elsewhere / "config.json").exists()

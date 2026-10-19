@@ -6,11 +6,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from hoshimi.core.config import Settings, find_config_file, load_settings
+from hoshimi.core.config import Settings, load_settings
 from hoshimi.core.credentials import collect_provider_accounts
 from hoshimi.core.credits import CHECKIN_FILE_NAME, CheckinStore, CreditsService
 from hoshimi.core.login import LoginManager
-from hoshimi.core.paths import default_data_dir
+from hoshimi.core.paths import config_file_path, default_data_dir
 from hoshimi.core.probe import PROBE_FILE_NAME, ProbeStore
 from hoshimi.core.refresh import Refresher
 from hoshimi.core.registry import Registry, build_registry
@@ -29,7 +29,6 @@ class Services:
 
     settings: Settings
     registry: Registry
-    config_path: Path | None = None
     probe: ProbeStore = field(default_factory=ProbeStore)
     stats: StatsStore = field(default_factory=StatsStore)
     refresher: Refresher | None = None
@@ -39,6 +38,10 @@ class Services:
     @property
     def data_dir(self) -> Path:
         return default_data_dir()
+
+    @property
+    def config_path(self) -> Path:
+        return config_file_path()
 
     def close(self) -> None:
         if self.refresher is not None:
@@ -111,21 +114,14 @@ def pool_inputs(settings: Settings) -> PoolInputs:
     return PoolInputs(accounts=accounts, options=options, disabled=disabled)
 
 
-def build_services(
-    settings: Settings | None = None,
-    *,
-    config_path: str | None = None,
-) -> Services:
+def build_services(settings: Settings | None = None) -> Services:
     """Load this gateway's configuration and build the provider registry.
 
-    ``settings`` (already carrying any command-line overrides) wins over ``config_path``;
-    with neither, ``HOSHIMI_CONFIG`` or ``config.json`` in the working directory is read.
+    Supplied ``settings`` already carry any command-line overrides; otherwise
+    ``config.json`` is read from Hoshimi's data directory.
     """
     if settings is None:
-        settings = load_settings(config_path)
-    # An explicit destination remains the write target before its first save.
-    # Looking up only existing files would send a first login to cwd/config.json.
-    resolved_config_path = Path(config_path).expanduser() if config_path else find_config_file()
+        settings = load_settings()
     pool = pool_inputs(settings)
     registry = build_registry(
         pool.accounts,
@@ -150,10 +146,9 @@ def build_services(
     return Services(
         settings=settings,
         registry=registry,
-        config_path=resolved_config_path,
         probe=ProbeStore(default_data_dir() / PROBE_FILE_NAME),
         stats=StatsStore(default_data_dir() / STATS_FILE_NAME),
-        refresher=Refresher(settings=settings, registry=registry, config_path=resolved_config_path),
+        refresher=Refresher(settings=settings, registry=registry),
         credits=CreditsService(settings=settings, registry=registry, store=CheckinStore(default_data_dir() / CHECKIN_FILE_NAME)),
-        login=LoginManager(settings=settings, config_path=resolved_config_path, on_persist=rebuild_after_login),
+        login=LoginManager(settings=settings, on_persist=rebuild_after_login),
     )

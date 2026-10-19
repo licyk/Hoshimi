@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import threading
 import webbrowser
-from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -20,7 +19,6 @@ def serve(
     port: Annotated[int | None, typer.Option(min=0, max=65535, help="First port to try (default from config; 0 = any free port)")] = None,
     strict_port: Annotated[bool | None, typer.Option("--strict-port/--no-strict-port", help="Fail instead of trying the next port")] = None,
     open_browser: Annotated[bool | None, typer.Option("--open/--no-open", help="Open the web UI in a browser")] = True,
-    config: Annotated[Path | None, typer.Option(help="Path to the config file", resolve_path=True)] = None,
     access_token: Annotated[str | None, typer.Option(help="Access key for the tool UI and management API")] = None,
     model_api_key: Annotated[str | None, typer.Option(help="Independent API key for external /v1/ model requests")] = None,
     default_model: Annotated[str | None, typer.Option(help="Model used when a request omits 'model'")] = None,
@@ -37,7 +35,7 @@ def serve(
     from hoshimi.core.net.ports import PortUnavailableError, bind_first_free_port, is_loopback
     from hoshimi.core.net.runtime_file import remove_runtime_file, write_runtime_file
 
-    settings = load_settings(str(config) if config else None)
+    settings = load_settings()
     if access_token:
         settings.access_token = access_token
     if model_api_key:
@@ -46,7 +44,7 @@ def serve(
         settings.default_model = default_model
     settings.auto_refresh = auto_refresh
     settings.auto_checkin = auto_checkin
-    services = build_services(settings, config_path=str(config) if config else None)
+    services = build_services(settings)
 
     host = host or settings.host
     port = settings.port if port is None else port

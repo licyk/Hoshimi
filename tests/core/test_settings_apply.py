@@ -168,23 +168,21 @@ def test_a_rebuilt_lane_is_swapped_not_mutated() -> None:
 # -- the services holding the settings ------------------------------------ #
 def _services_with_timers(tmp_path: Path) -> Services:
     services = make_services()
-    services.config_path = tmp_path / "config.json"
-    services.refresher = Refresher(settings=services.settings, registry=services.registry, config_path=services.config_path)
+    services.refresher = Refresher(settings=services.settings, registry=services.registry)
     services.credits = CreditsService(
         settings=services.settings,
         registry=services.registry,
         store=CheckinStore(tmp_path / CHECKIN_FILE_NAME),
     )
-    services.login = LoginManager(settings=services.settings, config_path=services.config_path)
+    services.login = LoginManager(settings=services.settings)
     return services
 
 
 def test_a_browser_login_rebuilds_the_running_pool_after_a_settings_save(tmp_path: Path) -> None:
     """The login callback must read the manager's current settings, not boot-time state."""
-    config = tmp_path / "config.json"
     initial = Settings(port=0, providers={"fake": ProviderConfig(id="fake", accounts=[{"id": "fake-0", "access_token": "t"}])})
-    save_settings(initial, config)
-    services = build_services(config_path=str(config))
+    save_settings(initial)
+    services = build_services()
 
     services.apply_settings(_patched(services, {"server": {"port": 1234}}))
     assert services.login is not None

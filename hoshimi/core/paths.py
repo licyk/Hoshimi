@@ -20,3 +20,8 @@ def default_data_dir() -> Path:
     else:
         base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
     return (base / "hoshimi").resolve()
+
+
+def config_file_path() -> Path:
+    """Return the configuration file in Hoshimi's data directory, even before it exists."""
+    return default_data_dir() / "config.json"

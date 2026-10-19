@@ -43,7 +43,7 @@ class SettingsView(Record):
     """Settings as returned to clients: only key presence is disclosed."""
 
     data_dir: str
-    config_path: str | None
+    config_path: str
     server: ServerView
     providers: list[ProviderView]
 
@@ -52,7 +52,7 @@ def _view(services: Services) -> SettingsView:
     settings = services.settings
     return SettingsView(
         data_dir=str(services.data_dir),
-        config_path=str(services.config_path) if services.config_path else None,
+        config_path=str(services.config_path),
         server=ServerView(
             host=settings.host,
             port=settings.port,
@@ -110,7 +110,7 @@ def update_settings(
     problem = _validate(updated)
     if problem:
         raise ValidationError(problem)
-    save_settings(updated, services.config_path)
+    save_settings(updated)
     services.apply_settings(updated)
     return _view(services)
 

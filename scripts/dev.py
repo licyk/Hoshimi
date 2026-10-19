@@ -204,7 +204,6 @@ def dev(options: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="python scripts/dev.py dev", description="Run the API server and web UI together.")
     parser.add_argument("--api-port", type=int, default=DEFAULT_API_PORT, help=f"port for the API server (default: {DEFAULT_API_PORT})")
     parser.add_argument("--web-port", type=int, default=DEFAULT_WEB_PORT, help=f"port for the web UI (default: {DEFAULT_WEB_PORT})")
-    parser.add_argument("--config", type=Path, help="Hoshimi config file to pass to the API server")
     args = parser.parse_args(options)
 
     if shutil.which("bun") is None:
@@ -215,8 +214,6 @@ def dev(options: list[str]) -> int:
         return 1
 
     api_command = [sys.executable, "-m", "hoshimi", "serve", "--no-open", "--no-ui", "--port", str(args.api_port), "--strict-port"]
-    if args.config:
-        api_command += ["--config", str(args.config)]
     api_env = {"PYTHONUNBUFFERED": "1", "PYTHONPATH": str(ROOT) + os.pathsep + os.environ.get("PYTHONPATH", "")}
     web_env = {"HOSHIMI_BACKEND": f"http://127.0.0.1:{args.api_port}", "FORCE_COLOR": "1"}
 

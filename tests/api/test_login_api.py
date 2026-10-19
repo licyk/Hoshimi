@@ -40,7 +40,7 @@ def login_client(tmp_path: Path) -> Iterator[Any]:
     services = Services(
         settings=Settings(host="127.0.0.1", port=0),
         registry=Registry({}),
-        login=LoginManager(settings=Settings(), config_path=tmp_path / "config.json", client=_cline_client()),
+        login=LoginManager(settings=Settings(), client=_cline_client()),
     )
     with TestClient(create_app(services, serve_ui=False), base_url="http://localhost") as test_client:
         yield test_client

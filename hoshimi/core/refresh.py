@@ -84,7 +84,6 @@ class Refresher:
 
     settings: Settings
     registry: Registry
-    config_path: Any = None
     # Per-account bookkeeping, keyed (provider, account).
     failures: dict[tuple[str, str], int] = field(default_factory=dict)
     last_ok: dict[tuple[str, str], float] = field(default_factory=dict)
@@ -161,7 +160,7 @@ class Refresher:
                 changed = True
         if not changed:
             return False
-        save_settings(self.settings, self.config_path)
+        save_settings(self.settings)
         return True
 
     # -- status ------------------------------------------------------------ #

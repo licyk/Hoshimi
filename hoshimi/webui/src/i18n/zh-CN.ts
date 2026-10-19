@@ -60,7 +60,6 @@ export default {
     noProvidersText: '在 config.json 中为提供商添加账号，然后重启服务。',
     dataDir: '数据目录',
     configPath: '配置文件',
-    defaultConfigPath: '默认（与数据目录同级）',
     emptyAccounts: '无账号',
   },
   models: {
@@ -248,7 +247,6 @@ export default {
     version: '版本',
     dataDir: '数据目录',
     configPath: '配置文件',
-    defaultConfigPath: '默认（与数据目录同级）',
     openapi: 'API 文档',
     needsAuthorization: '需授权',
   },

@@ -201,7 +201,7 @@ const providerCards = computed(() => {
           :rows="[
             { label: t('settings.version'), value: version.data.value?.version ?? '—' },
             { label: t('settings.dataDir'), value: s.data_dir, mono: true },
-            { label: t('settings.configPath'), value: s.config_path ?? t('settings.defaultConfigPath'), mono: true },
+            { label: t('settings.configPath'), value: s.config_path, mono: true },
           ]"
         />
       </Surface>

@@ -239,7 +239,7 @@ def add_provider_account(
         cfg.accounts.append(data)
         cfg.enabled = True
 
-    save_settings(candidate, services.config_path)
+    save_settings(candidate)
     services.apply_settings(candidate)
     return AccountAddition(provider=provider_id, account=str(data["id"]), accounts=len(candidate.providers[provider_id].accounts))
 
@@ -269,7 +269,7 @@ def delete_provider_account(provider_id: str, account_id: str, services: Service
     if not removed_from_config and not in_pool:
         raise NotFoundError(f"No account '{account_id}' on provider '{provider_id}'.")
     if removed_from_config:
-        save_settings(services.settings, services.config_path)
+        save_settings(services.settings)
     return AccountRemoval(provider=provider_id, account=account_id, removed_from_config=removed_from_config)
 
 

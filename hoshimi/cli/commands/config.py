@@ -11,17 +11,18 @@ import typer
 from hoshimi.cli.output import console, print_json
 
 
-def _load(config: Path | None) -> tuple[dict[str, Any], Path]:
+def _load() -> tuple[dict[str, Any], Path]:
     """Return the raw config-file dict and the file it came from."""
-    from hoshimi.core.config import find_config_file, load_settings, settings_to_dict
+    from hoshimi.core.config import load_settings, settings_to_dict
+    from hoshimi.core.paths import config_file_path
 
-    path = find_config_file(str(config) if config else None)
-    settings = load_settings(str(config) if config else None)
-    data = settings_to_dict(settings) if path is None else _raw_or_settings(path, settings)
-    return data, path or Path("config.json")
+    path = config_file_path()
+    settings = load_settings()
+    data = _raw_or_settings(path) if path.exists() else settings_to_dict(settings)
+    return data, path
 
 
-def _raw_or_settings(path: Path, settings: Any) -> dict[str, Any]:
+def _raw_or_settings(path: Path) -> dict[str, Any]:
     """Read the file as written, so ``set`` does not drop keys we do not model."""
     import json
 
@@ -93,13 +94,12 @@ def _parse_scalar(raw: str) -> Any:
 
 
 def config_show(
-    config: Annotated[Path | None, typer.Option(help="Path to the config file", resolve_path=True)] = None,
     json_output: Annotated[bool, typer.Option("--json", help="Print JSON")] = False,
 ) -> None:
     """Show the effective configuration (the API key as configured or not)."""
     import json
 
-    data, path = _load(config)
+    data, path = _load()
     masked = _mask(data)
     if json_output:
         print_json(masked)
@@ -110,10 +110,9 @@ def config_show(
 
 def config_get(
     key: Annotated[str, typer.Argument(help="Dotted key, e.g. server.port")],
-    config: Annotated[Path | None, typer.Option(help="Path to the config file", resolve_path=True)] = None,
 ) -> None:
     """Print one setting."""
-    data, _ = _load(config)
+    data, _ = _load()
     try:
         value = _get_dotted(_mask(data), key)
     except KeyError:
@@ -126,13 +125,12 @@ def config_get(
 def config_set(
     key: Annotated[str, typer.Argument(help="Dotted key, e.g. server.port or security.allow_cidrs")],
     value: Annotated[str, typer.Argument(help="New value. JSON is parsed (numbers, true/false, lists); 'null' clears")],
-    config: Annotated[Path | None, typer.Option(help="Path to the config file", resolve_path=True)] = None,
 ) -> None:
     """Change one setting and save it."""
     from hoshimi.core.config import Settings, save_settings, settings_from_dict, validate_settings
     from hoshimi.core.security import validate_security_settings
 
-    data, path = _load(config)
+    data, _ = _load()
     _set_dotted(data, key, _parse_scalar(value))
     try:
         settings = settings_from_dict(data, Settings())
@@ -141,16 +139,13 @@ def config_set(
     problem = validate_settings(settings) or validate_security_settings(settings)
     if problem:
         raise typer.BadParameter(problem)
-    save_settings(settings, path)
+    save_settings(settings)
     shown = _get_dotted(_mask(data), key)
     console.print(f"{key} = {shown if shown is not None else '(cleared)'}")
 
 
-def config_path(
-    config: Annotated[Path | None, typer.Option(help="Path to the config file", resolve_path=True)] = None,
-) -> None:
+def config_path() -> None:
     """Print the path of the config file (where it would be written)."""
-    from hoshimi.core.config import find_config_file
+    from hoshimi.core.paths import config_file_path
 
-    path = find_config_file(str(config) if config else None)
-    print(path or Path("config.json").resolve())
+    print(config_file_path())

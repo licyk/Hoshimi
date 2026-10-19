@@ -49,11 +49,11 @@ def print_table(title: str | None, columns: Sequence[str], rows: Iterable[Sequen
 
 
 @contextmanager
-def open_services(config_path: str | None = None) -> Generator[Services]:
+def open_services() -> Generator[Services]:
     """Build the services for one command and close them afterwards."""
     from hoshimi.core.context import build_services
 
-    services: Services = build_services(config_path=config_path)
+    services: Services = build_services()
     try:
         yield services
     finally:

@@ -50,8 +50,21 @@ Open `http://127.0.0.1:10600` for the web UI. The package includes the built UI;
 no frontend build is needed. The anonymous free lanes work without a config file.
 Add provider accounts in **Channels** and configure the gateway in **Settings**.
 For file-based configuration, use [config.example.json](config.example.json) as a
-reference and save your own `config.json` in the directory where you start Hoshimi,
-or select a file with `hoshimi serve --config /path/to/config.json`.
+reference and save your own `config.json` in Hoshimi's data directory.
+Run `hoshimi config path` to print its absolute path, including before the first save.
+All commands and the web UI use this same file, regardless of the working directory.
+
+| Platform | Default configuration file |
+| --- | --- |
+| Linux | `~/.local/share/hoshimi/config.json` (`$XDG_DATA_HOME/hoshimi/config.json` when set) |
+| Windows | `%APPDATA%\hoshimi\config.json` |
+| macOS | `~/Library/Application Support/hoshimi/config.json` |
+
+Set `HOSHIMI_DATA_DIR` to relocate all Hoshimi data together; the configuration is
+always `<data directory>/config.json`. **Breaking change:** `--config` and
+`HOSHIMI_CONFIG` have been removed. Files in the working directory are no longer
+loaded or migrated automatically. Move an existing configuration to the path printed
+by `hoshimi config path` before starting the upgraded gateway.
 
 `python -m hoshimi` is equivalent to the `hoshimi` script. Useful commands:
 
@@ -85,7 +98,7 @@ Both extras can be installed together with `"hoshimi[google,bedrock]"`.
 See [cloud setup](docs/cloud-providers.md) for account configuration.
 
 `serve` options: `--host`, `--port`, `--strict-port`, `--open/--no-open` (the browser),
-`--ui/--no-ui` (the web UI beside the API), `--config`, `--access-token`, `--model-api-key`,
+`--ui/--no-ui` (the web UI beside the API), `--access-token`, `--model-api-key`,
 `--default-model`. Other commands: `hoshimi version`, `hoshimi env` (the variables it reads),
 `hoshimi config show|get|set|path`.
 
@@ -459,8 +472,8 @@ unmeasurable number must not look like a fast one.
 
 Accounts are stored in Hoshimi's **`config.json`** under
 `providers.<id>.accounts` (see `config.example.json`). Add them through the
-Channels page, `hoshimi login`, or the configuration file. Use `--config` or
-`HOSHIMI_CONFIG` to select a different Hoshimi configuration file.
+Channels page, `hoshimi login`, or the configuration file in the data directory.
+Run `hoshimi config path` to locate it; set `HOSHIMI_DATA_DIR` to relocate the data directory.
 
 Credential renewal runs on a timer (`server.auto_refresh`, on by default): a sweep
 every 30 minutes renews any account whose expiry is within the next hour, and a
@@ -854,7 +867,7 @@ python scripts/dev.py dev
 ```
 
 Vite on `:5173` proxies the API on `:10600`. Options include `--api-port`,
-`--web-port` and `--config`; Ctrl+C stops both processes. To serve the UI directly
+`--web-port`; set `HOSHIMI_DATA_DIR` to choose the shared data directory. Ctrl+C stops both processes. To serve the UI directly
 with `hoshimi serve` from a checkout, build it with `python scripts/dev.py web`.
 Without a UI build, the server logs a warning and serves the API only.
 

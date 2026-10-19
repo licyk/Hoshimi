@@ -157,7 +157,7 @@ def test_typesafe_classifiers_are_discoverable_separately_from_chat(tmp_path):
         return httpx.Response(200, json={"answers": {"q": {"type": "noul", "noul": 0.8}}, "usage": {"input_tokens": 4, "output_tokens": 1}})
     with httpx.Client(transport=httpx.MockTransport(handle)) as upstream:
         lane = TypeSafeProvider(upstream, [Account({"api_key": "key"})])
-        services = Services(settings=Settings(), registry=Registry({"typesafe": lane}), config_path=tmp_path / "config.json")
+        services = Services(settings=Settings(), registry=Registry({"typesafe": lane}))
         with TestClient(create_app(services, serve_ui=False), base_url="http://localhost") as client:
             assert client.get("/v1/models").json()["data"] == []
             assert client.get("/v1/classifiers").json()["data"][0]["id"] == "typesafe/jev-latest"

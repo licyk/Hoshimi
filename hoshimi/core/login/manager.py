@@ -31,8 +31,6 @@ from hoshimi.core.eac_relay import DEFAULT_EAC_ACCOUNT_ID
 from hoshimi.core.login.common import LOGIN_TIMEOUT_SECONDS, LoginError, LoginReporter
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from pathlib import Path
-
     from hoshimi.core.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -135,13 +133,11 @@ class LoginManager:
     def __init__(
         self,
         settings: Settings,
-        config_path: Path | None = None,
         *,
         client: httpx.Client | None = None,
         on_persist: Callable[[LoginManager], None] | None = None,
     ):
         self.settings = settings
-        self.config_path = config_path
         self._client = client or httpx.Client(timeout=30.0)
         self._on_persist = on_persist
         self._sessions: dict[str, LoginSession] = {}
@@ -262,7 +258,7 @@ class LoginManager:
             target.update(updated)
         candidate = copy.copy(self.settings)
         candidate.providers = {**self.settings.providers, provider: cfg}
-        save_settings(candidate, self.config_path)
+        save_settings(candidate)
         self.settings.providers[provider] = cfg
         if self._on_persist is not None:
             self._on_persist(self)

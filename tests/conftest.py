@@ -77,11 +77,7 @@ def make_services(*extra: Provider, **settings_kwargs: Any) -> Services:
     provider ids the gateway knows, so nothing could rebuild them, and the
     tests that pass them never save a config that would try.
 
-    ``config_path`` is left ``None``, which is only safe while nothing here
-    saves: a ``None`` path makes a save fall through to ``find_config_file()``,
-    and that finds the repository's own ``config.json`` and replaces it
-    outright. The ``services`` fixture points it at ``tmp_path``; a test
-    building services by hand that goes on to *save* must do the same.
+    All tests use an isolated data directory through ``isolated_data_dir``.
     """
     providers: dict[str, Provider] = {"fake": FakeProvider()}
     declared: dict[str, ProviderConfig] = {"fake": _declared("fake", providers["fake"])}
@@ -103,19 +99,17 @@ def _declared(provider_id: str, provider: Provider) -> ProviderConfig:
     return ProviderConfig(id=provider_id, enabled=True, accounts=accounts or [{"id": f"{provider_id}-0", "access_token": "t"}])
 
 
-@pytest.fixture
-def services(tmp_path: Path) -> Services:
-    """A fresh gateway whose saves land in a directory pytest is about to delete.
+@pytest.fixture(autouse=True)
+def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Keep configuration and other persisted state away from real user data."""
+    monkeypatch.setenv("HOSHIMI_DATA_DIR", str(tmp_path))
+    return tmp_path
 
-    Without this, ``config_path`` is ``None`` and every settings save falls
-    through to ``find_config_file()`` — which finds the repository's own
-    ``config.json`` and ``os.replace``s it outright. The file is valid JSON, so
-    the write-before-backup guard never fires, and a test that never meant to
-    write a file would quietly destroy a real configuration.
-    """
-    built = make_services()
-    built.config_path = tmp_path / "config.json"
-    return built
+
+@pytest.fixture
+def services() -> Services:
+    """A fresh gateway using the test's isolated data directory."""
+    return make_services()
 
 
 @pytest.fixture

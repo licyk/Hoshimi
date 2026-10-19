@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import time
 import webbrowser
-from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -19,7 +18,6 @@ POLL_INTERVAL_SECONDS = 2.0
 
 def login(
     provider: Annotated[str | None, typer.Argument(help="Station to sign into (omit to list the ones that offer it)")] = None,
-    config: Annotated[Path | None, typer.Option(help="Path to the config file", resolve_path=True)] = None,
     open_browser: Annotated[bool, typer.Option("--open/--no-open", help="Open the station's login page in a browser")] = True,
     manual: Annotated[bool, typer.Option("--manual", help="Prompt for the authorization code or callback URL")] = False,
 ) -> None:
@@ -27,7 +25,7 @@ def login(
     from hoshimi.core.context import build_services
     from hoshimi.core.login import LOGIN_TIMEOUT_SECONDS, LoginError, login_providers
 
-    services = build_services(config_path=str(config) if config else None)
+    services = build_services()
     try:
         if services.login is None:  # pragma: no cover - build_services always builds one
             logger.error("The login service is not available.")

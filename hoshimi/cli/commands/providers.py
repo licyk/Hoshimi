@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -11,13 +10,12 @@ from hoshimi.cli.output import print_json, print_table
 
 
 def providers(
-    config: Annotated[Path | None, typer.Option(help="Path to the config file", resolve_path=True)] = None,
     json_output: Annotated[bool, typer.Option("--json", help="Print JSON")] = False,
 ) -> None:
     """List the configured providers with their accounts and model counts."""
     from hoshimi.cli.output import open_services
 
-    with open_services(str(config) if config else None) as services:
+    with open_services() as services:
         from hoshimi.core.providers import real_account_count
 
         rows = []
