@@ -350,12 +350,11 @@ const expiry = (ms: number | null) => (ms ? new Date(ms).toLocaleString() : '—
 
 <template>
   <div class="channels">
-    <div class="head">
-      <IconButton :icon="icons.RefreshCw" :label="t('common.refresh')" :spin="providers.isFetching.value" @click="providers.refetch()" />
-    </div>
-
     <Surface :level="0" shape="large" class="section">
-      <h2 class="type-title-large">{{ t('channels.automation') }}</h2>
+      <div class="section-head">
+        <h2 class="type-title-large">{{ t('channels.automation') }}</h2>
+        <IconButton :icon="icons.RefreshCw" :label="t('common.refresh')" :spin="providers.isFetching.value" @click="providers.refetch()" />
+      </div>
       <div class="toggles">
         <Switch v-model="autoCheckin" :label="t('channels.autoCheckin')" :supporting-text="t('channels.autoCheckinHelp')" />
         <Switch v-model="autoRefresh" :label="t('channels.autoRefresh')" :supporting-text="t('channels.autoRefreshHelp')" />
@@ -482,7 +481,7 @@ const expiry = (ms: number | null) => (ms ? new Date(ms).toLocaleString() : '—
 
 <style scoped>
 .channels { display: flex; flex-direction: column; gap: var(--app-space-4); width: 100%; padding: var(--app-space-4) var(--app-space-6) var(--app-space-8); }
-.head { display: flex; align-items: center; justify-content: flex-end; }
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--app-space-3); }
 h1, h2, p { margin: 0; }
 .skeletons { display: flex; flex-direction: column; gap: var(--app-space-4); }
 .section { display: flex; flex-direction: column; gap: var(--app-space-3); padding: var(--app-space-4) var(--app-space-6) var(--app-space-6); }
