@@ -1,141 +1,50 @@
+# One automatic entry point: a release push checks and builds once, then publishes those artifacts.
 name: CI
 
 on:
   push:
     branches: [main, hoshimi_main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
-  workflow_call:
-    outputs:
-      version:
-        description: Version of the checked and built distributions
-        value: ${{ jobs.build.outputs.version }}
 
 permissions:
   contents: read
 
-# A Release caller has a different workflow name, so it cannot cancel CI or vice versa.
+# A newer push must not cancel a release that is already checking, building or publishing.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.workflow == 'CI' }}
-
-env:
-  UV_SYSTEM_PYTHON: '1'
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  gate:
-    name: Not already checked by Release
+  plan:
+    name: Release plan
     runs-on: ubuntu-latest
     outputs:
-      run: ${{ steps.check.outputs.run }}
-    steps:
-      - id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-          WORKFLOW: ${{ github.workflow }}
-          BEFORE: ${{ github.event.before }}
-        run: |
-          run=true
-          if [ "$WORKFLOW" = CI ] && [ "$GITHUB_EVENT_NAME" = push ]; then
-            if files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename'); then
-              if grep -qx 'hoshimi/version.py' <<< "$files"; then
-                echo "Release runs the checks and build for this version change."
-                run=false
-              fi
-            fi
-          fi
-          echo "run=$run" >> "$GITHUB_OUTPUT"
-
-  lint:
-    name: Ruff
-    needs: gate
-    if: needs.gate.outputs.run == 'true'
-    runs-on: ubuntu-latest
+      release: ${{ steps.plan.outputs.release }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7.0.0
         with:
-          python-version: '3.11'
-      - uses: astral-sh/setup-uv@v10.2.0
-        with:
-          enable-cache: false
-      - run: uv pip install ruff
-      - run: python scripts/dev.py lint
+          fetch-depth: 0
+      - id: plan
+        run: python3 scripts/ci.py
 
-  types:
-    name: ty / Python ${{ matrix.python }} / ${{ matrix.os }}
-    needs: gate
-    if: needs.gate.outputs.run == 'true'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python: ['3.10', '3.11', '3.12', '3.13', '3.14']
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7.0.0
-        with:
-          python-version: ${{ matrix.python }}
-      - uses: astral-sh/setup-uv@v10.2.0
-        with:
-          enable-cache: false
-      - run: uv pip install -e '.[dev,google,bedrock]'
-      - name: Check Python types
-        shell: bash
-        run: |
-          platform=$(python -c "import sys; print({'win32': 'win32', 'darwin': 'darwin'}.get(sys.platform, 'linux'))")
-          python scripts/dev.py typecheck-py --python-version "${{ matrix.python }}" --python-platform "$platform" --output-format github --error-on-warning
-
-  tests:
-    name: pytest / Python ${{ matrix.python }}
-    needs: gate
-    if: needs.gate.outputs.run == 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ['3.10', '3.12', '3.14']
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7.0.0
-        with:
-          python-version: ${{ matrix.python }}
-      - uses: astral-sh/setup-uv@v10.2.0
-        with:
-          enable-cache: false
-      - run: uv pip install -e '.[dev,google,bedrock]'
-      - run: python scripts/dev.py test-py
-
-  web:
-    name: Web UI and API contract
-    needs: gate
-    if: needs.gate.outputs.run == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7.0.0
-        with:
-          python-version: '3.11'
-      - uses: astral-sh/setup-uv@v10.2.0
-        with:
-          enable-cache: false
-      - uses: actions/setup-node@v7.1.0
-        with:
-          node-version: '24'
-          package-manager-cache: false
-      - uses: oven-sh/setup-bun@v2.2.0
-        with:
-          bun-version: '1.4.2'
-      - run: uv pip install -e '.[dev]'
-      - run: bun install --frozen-lockfile
-        working-directory: hoshimi/webui
-      - run: python scripts/dev.py test-web
-      - run: python scripts/dev.py typegen-check
-      - run: python scripts/dev.py web
+  checks:
+    name: Checks
+    uses: ./.github/workflows/checks.yml
 
   build:
     name: Distribution
-    needs: [gate, lint, types, tests, web]
-    if: needs.gate.outputs.run == 'true'
+    needs: [plan, checks]
     uses: ./.github/workflows/build.yml
+
+  release:
+    name: Release
+    needs: [plan, build]
+    if: needs.plan.outputs.release == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      version: ${{ needs.build.outputs.version }}
+    secrets: inherit

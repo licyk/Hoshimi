@@ -318,6 +318,17 @@ python scripts/dev.py check        # 完整检查
 python scripts/dev.py wheel        # 构建前端及 wheel / sdist
 ```
 
+自动工作流统一由 `ci.yml` 触发：覆盖 `main`、`hoshimi_main` 的推送、`v*` 标签及 PR。
+先运行一次共享的 `checks.yml`，再由 `build.yml` 构建前端、wheel 和 sdist，并检查安装后的发行包。
+分支推送修改 `hoshimi/version.py` 或推送版本标签时，CI 会调用 `release.yml`，将同一份产物发布到 PyPI；
+标签还会创建 GitHub Release。Release 不再单独监听推送，同一次推送不会重复执行检查和构建。
+发行计划直接读取 Git 历史；新分支首次推送的 `before` 为全零时，使用最早推送提交的父提交进行比较，
+不再依赖 GitHub 比较 API。
+
+手动运行 Release 时仍会先执行共享检查和构建，`publish` 默认关闭，仅生成经过检查的产物。
+共享检查提供 `CI passed` 汇总结果；自动发布须等待检查、构建及安装验证全部通过。
+后续推送不会取消已在执行的自动发行。
+
 前端 API 类型从服务端 OpenAPI 定义生成：
 
 ```bash

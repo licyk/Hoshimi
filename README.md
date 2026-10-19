@@ -884,6 +884,22 @@ python scripts/dev.py wheel        # web build + wheel/sdist in dist/
 `dev.py` also has `format`, `typecheck-py`, `web-install`, `web`, `web-dev`, `dev`,
 `openapi`, `typegen`, and `typegen-check`. Run it without arguments to see the full list.
 
+CI uses one automatic entry point, `ci.yml`, for pushes to `main` and `hoshimi_main`,
+`v*` tags and pull requests. It runs the shared `checks.yml` once, then `build.yml`
+builds the Web UI, wheel and source distribution and checks installed packages.
+When a branch push changes `hoshimi/version.py`, or a version tag is pushed, CI
+calls `release.yml` to publish those same artifacts to PyPI; tags also create a
+GitHub release. Release has no separate push trigger, so one push never starts
+a second copy of the checks or build. The release plan reads local Git history,
+including the oldest pushed commit's parent for a new branch with an all-zero
+`before` SHA, without depending on the compare API.
+
+A manual Release run performs the same shared checks and build first. Its
+`publish` switch defaults to off, producing checked artifacts only. The shared
+checks expose a `CI passed` result; automatic releases wait for both the checks
+and the installed-package checks in the build. A newer push does not cancel an
+automatic release already in progress.
+
 The web UI's TypeScript types come from the server's OpenAPI document:
 
 ```bash

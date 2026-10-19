@@ -1,10 +1,13 @@
+# Called by CI with its checked artifacts; manual runs check and build before publishing.
 name: Release
 
 on:
-  push:
-    branches: [main, hoshimi_main]
-    tags: ['v*']
-    paths: ['hoshimi/version.py']
+  workflow_call:
+    inputs:
+      version:
+        description: Version of the distributions already checked and built by CI
+        type: string
+        required: true
   workflow_dispatch:
     inputs:
       publish:
@@ -25,14 +28,23 @@ env:
 
 jobs:
   checks:
-    name: Checks and build
-    uses: ./.github/workflows/ci.yml
+    name: Checks
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/checks.yml
+
+  build:
+    name: Distribution
+    needs: checks
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/build.yml
 
   publish:
     name: Publish to PyPI
-    needs: checks
+    needs: [checks, build]
     if: >-
-      (github.event_name != 'workflow_dispatch' || inputs.publish) &&
+      !cancelled() &&
+      (github.event_name != 'workflow_dispatch' ||
+       (inputs.publish && needs.checks.result == 'success' && needs.build.result == 'success')) &&
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/hoshimi_main' || github.ref_type == 'tag')
     runs-on: ubuntu-latest
     environment:
@@ -63,7 +75,7 @@ jobs:
           python -m twine upload dist/* --skip-existing --non-interactive
       - name: Verify availability on PyPI
         env:
-          PACKAGE_VERSION: ${{ needs.checks.outputs.version }}
+          PACKAGE_VERSION: ${{ needs.build.outputs.version || inputs.version }}
         run: |
           python - <<'PY'
           import json
@@ -91,8 +103,8 @@ jobs:
 
   github-release:
     name: GitHub release
-    needs: [checks, publish]
-    if: github.ref_type == 'tag'
+    needs: publish
+    if: ${{ !cancelled() && needs.publish.result == 'success' && github.ref_type == 'tag' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

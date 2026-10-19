@@ -1,0 +1,103 @@
+# Shared checks for CI and a manually requested release. Packaging runs afterwards.
+name: Checks
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  UV_SYSTEM_PYTHON: '1'
+
+jobs:
+  lint:
+    name: Ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false
+      - run: uv pip install ruff
+      - run: python scripts/dev.py lint
+
+  types:
+    name: ty / Python ${{ matrix.python }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ['3.10', '3.11', '3.12', '3.13', '3.14']
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false
+      - run: uv pip install -e '.[dev,google,bedrock]'
+      - name: Check Python types
+        shell: bash
+        run: |
+          platform=$(python -c "import sys; print({'win32': 'win32', 'darwin': 'darwin'}.get(sys.platform, 'linux'))")
+          python scripts/dev.py typecheck-py --python-version "${{ matrix.python }}" --python-platform "$platform" --output-format github --error-on-warning
+
+  tests:
+    name: pytest / Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.12', '3.14']
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false
+      - run: uv pip install -e '.[dev,google,bedrock]'
+      - run: python scripts/dev.py test-py
+
+  web:
+    name: Web UI and API contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: '1.4.2'
+      - run: uv pip install -e '.[dev]'
+      - run: bun install --frozen-lockfile
+        working-directory: hoshimi/webui
+      - run: python scripts/dev.py test-web
+      - run: python scripts/dev.py typegen-check
+
+  passed:
+    name: CI passed
+    needs: [lint, types, tests, web]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: $RESULTS"
+          case " $RESULTS " in *" failure "*|*" cancelled "*|*" skipped "*) exit 1 ;; esac
