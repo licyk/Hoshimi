@@ -1,0 +1,113 @@
+name: Release
+
+on:
+  push:
+    branches: [main, hoshimi_main]
+    tags: ['v*']
+    paths: ['hoshimi/version.py']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the checked distributions to PyPI (off builds artifacts only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Serialize releases, including a version push followed by its tag.
+concurrency:
+  group: hoshimi-pypi-release
+  cancel-in-progress: false
+
+env:
+  UV_SYSTEM_PYTHON: '1'
+
+jobs:
+  checks:
+    name: Checks and build
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Publish to PyPI
+    needs: checks
+    if: >-
+      (github.event_name != 'workflow_dispatch' || inputs.publish) &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/hoshimi_main' || github.ref_type == 'tag')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/hoshimi
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false
+      - run: uv pip install --upgrade twine
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: distributions
+          path: dist/
+      - name: Publish
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
+        run: |
+          if [ -z "$TWINE_PASSWORD" ]; then
+            echo "::error::Set TWINE_PASSWORD in the pypi environment or repository secrets."
+            exit 1
+          fi
+          python -m twine upload dist/* --skip-existing --non-interactive
+      - name: Verify availability on PyPI
+        env:
+          PACKAGE_VERSION: ${{ needs.checks.outputs.version }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import time
+          from pathlib import Path
+          from urllib.error import URLError
+          from urllib.request import urlopen
+          version = os.environ["PACKAGE_VERSION"]
+          expected = {path.name for path in Path("dist").iterdir() if path.is_file()}
+          assert len(expected) == 2, "Expected wheel and source distribution"
+          for attempt in range(6):
+              try:
+                  with urlopen(f"https://pypi.org/pypi/hoshimi/{version}/json", timeout=15) as response:
+                      available = {row["filename"] for row in json.load(response)["urls"] if not row.get("yanked")}
+                  if expected <= available:
+                      print(f"Verified hoshimi {version} on PyPI")
+                      break
+              except (URLError, ValueError):
+                  pass
+              if attempt == 5:
+                  raise SystemExit("PyPI does not expose both non-yanked distribution files")
+              time.sleep(5)
+          PY
+
+  github-release:
+    name: GitHub release
+    needs: [checks, publish]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: distributions
+          path: dist/
+      - name: Attach the checked distributions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
+          fi

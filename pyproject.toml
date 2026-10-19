@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=77", "pip", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hoshimi"
+description = "An OpenAI-compatible gateway in front of the free model stations (Cline, TRAE, ZCode, Qoder, MiniMax, Gemini, CodeBuddy, ...)"
+authors = [{ name = "variante" }]
+readme = "README.md"
+requires-python = ">=3.10"
+dynamic = ["version"]
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
+dependencies = [
+    "fastapi",
+    # Imported directly (static files, middleware, ASGI types), not only through FastAPI.
+    "starlette",
+    "uvicorn",
+    "pydantic",
+    "typer>=0.26.7",
+    "rich",
+    # The providers' own HTTP calls; also what FastAPI's TestClient needs.
+    "httpx",
+    # CodeArts' DPoP proof on the token exchange is an ES256 JWS.
+    "cryptography",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "ty", "build"]
+google = ["google-auth[requests]"]
+bedrock = ["boto3"]
+
+[project.scripts]
+hoshimi = "hoshimi.cli.app:main"
+
+[tool.setuptools]
+# Include only explicitly declared package data, including the prebuilt Web UI.
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hoshimi*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+"hoshimi.webui" = ["dist/**/*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "hoshimi.version.VERSION" }
+
+[tool.ruff]
+line-length = 180
+indent-width = 4
+extend-exclude = ["hoshimi/webui/dist", "hoshimi/webui/node_modules"]
+lint.extend-select = ["TID252"]
+lint.ignore = [
+    "E402" # module-import-not-at-top-of-file
+]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ty.environment]
+python-version = "3.10"
+
+[tool.ty.terminal]
+output-format = "concise"
+
+[tool.ty.src]
+include = ["hoshimi"]
+exclude = ["hoshimi/webui/dist", "hoshimi/webui/node_modules"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# ``tests/_pytest_tmp`` is the runtime artefact older session-scoped tests
+# left behind; skipping it keeps ``pytest tests/`` from trying to collect
+# what is not a test root.
+norecursedirs = ["tests/_pytest_tmp", "tests/_tmp"]

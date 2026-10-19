@@ -1,0 +1,378 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 10600,
+    "access_token": "tool-access-key",
+    "model_api_key": "model-api-key",
+    "max_body_bytes": 16777216,
+    "max_account_retries": 3,
+    "auto_refresh": true,
+    "auto_checkin": true
+  },
+  "security": {
+    "allow_cidrs": [
+      "192.168.0.0/16"
+    ],
+    "allow_hosts": [],
+    "allow_origins": [
+      "http://localhost:3000"
+    ]
+  },
+  "providers": {
+    "cline": {
+      "enabled": true,
+      "accounts": [
+        {
+          "id": "cline-1",
+          "access_token": "<access token>",
+          "refresh_token": "<refresh token>"
+        }
+      ]
+    },
+    "codex": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "codex-1",
+          "access_token": "<oauth access token>",
+          "refresh_token": "<oauth refresh token>",
+          "account_id": "<ChatGPT account id>",
+          "client_id": "<oauth client id>",
+          "expires_at": "<epoch milliseconds>"
+        }
+      ]
+    },
+    "loomy": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "loomy-1",
+          "access_token": "<session token>",
+          "userid": "<iFlytek user id>",
+          "expires_at": "<epoch milliseconds>"
+        }
+      ]
+    },
+    "raccoon": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "raccoon-1",
+          "access_token": "<jwt access token>",
+          "refresh_token": "<refresh token>",
+          "device_id": "<device id>",
+          "office_identity": "<org code>",
+          "expires_at": "<epoch milliseconds>"
+        }
+      ]
+    },
+    "trae": {
+      "enabled": true,
+      "accounts": [
+        {
+          "id": "trae-1",
+          "access_token": "<access token>",
+          "refresh_token": "<refresh token>",
+          "device_id": "<device id>",
+          "machine_id": "<machine id>",
+          "uid": "<user id>"
+        }
+      ],
+      "options": {
+        "channel": "solo_work_lite"
+      }
+    },
+    "codearts": {
+      "enabled": true,
+      "accounts": [
+        {
+          "id": "codearts-1",
+          "access_key_id": "<AK>",
+          "secret_access_key": "<SK>",
+          "security_token": "<temporary token>"
+        }
+      ],
+      "options": {
+        "benefit_models": [
+          "glm-5.3-flash",
+          "deepseek-v4.1-flash"
+        ]
+      }
+    },
+    "gemini": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "gemini-1",
+          "access_token": "<oauth access token>",
+          "refresh_token": "<oauth refresh token>"
+        }
+      ],
+      "options": {
+        "client_id": "<google oauth client id>",
+        "client_secret": "<google oauth client secret>"
+      }
+    },
+    "eac": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "eac-default",
+          "relay": "bundled"
+        }
+      ]
+    },
+    "agg": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "openrouter",
+          "base_url": "https://openrouter.ai/api/v1",
+          "api_key": "<your OpenRouter key>",
+          "models": [
+            "openrouter/auto"
+          ]
+        },
+        {
+          "id": "siliconflow",
+          "base_url": "https://api.siliconflow.cn/v1",
+          "api_key": "<your SiliconFlow key>",
+          "options": {
+            "model_specs": {
+              "Qwen/Qwen3-8B": {
+                "reasoning": true,
+                "context_window": 131072
+              }
+            }
+          }
+        }
+      ]
+    },
+    "zhipu": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "zhipu-1",
+          "api_key": "<your bigmodel.cn API key>"
+        }
+      ]
+    },
+    "nvidia": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "nvidia-1",
+          "api_key": "<NVIDIA API key>"
+        }
+      ]
+    },
+    "openrouter": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "openrouter-1",
+          "api_key": "<OpenRouter key>"
+        }
+      ]
+    },
+    "minimax-api": {
+      "enabled": false,
+      "accounts": [
+        {
+          "api_key": "<MiniMax public API key>"
+        }
+      ]
+    },
+    "google": {
+      "enabled": false,
+      "accounts": [
+        {
+          "api_key": "<Gemini Developer API key>",
+          "protocol": "gemini"
+        }
+      ]
+    },
+    "google-vertex": {
+      "enabled": false,
+      "accounts": [
+        {
+          "auth": "adc",
+          "project": "my-project",
+          "location": "global",
+          "models": [
+            "<authorized publisher model>"
+          ],
+          "protocol": "gemini"
+        }
+      ]
+    },
+    "amazon-bedrock": {
+      "enabled": false,
+      "accounts": [
+        {
+          "auth": "aws",
+          "region": "us-east-1",
+          "models": [
+            "<authorized model or inference profile>"
+          ]
+        }
+      ]
+    },
+    "azure": {
+      "enabled": false,
+      "accounts": [
+        {
+          "api_key": "<Azure key>",
+          "resource": "my-resource",
+          "models": [
+            "my-model"
+          ],
+          "deployments": {
+            "my-model": "my-deployment"
+          }
+        }
+      ]
+    },
+    "cloudflare-workers-ai": {
+      "enabled": false,
+      "accounts": [
+        {
+          "api_key": "<Cloudflare token>",
+          "account_id": "<Cloudflare account id>"
+        }
+      ]
+    },
+    "cloudflare-ai-gateway": {
+      "enabled": false,
+      "accounts": [
+        {
+          "api_key": "<Cloudflare gateway token>",
+          "account_id": "<Cloudflare account id>",
+          "gateway_id": "my-gateway",
+          "models": [
+            "openai/my-model"
+          ]
+        }
+      ]
+    },
+    "radius": {
+      "enabled": false,
+      "accounts": [
+        {
+          "api_key": "<Radius key>"
+        }
+      ]
+    },
+    "typesafe": {
+      "enabled": false,
+      "accounts": [
+        {
+          "api_key": "<TypeSafe key>",
+          "classifiers": [
+            "jev-latest"
+          ]
+        }
+      ]
+    },
+    "alibaba-cloud": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "alibaba-cloud-1",
+          "api_key": "<DashScope international key>"
+        }
+      ]
+    },
+    "qwen-coding-plan-intl": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "qwen-coding-plan-intl-1",
+          "api_key": "<Qwen international Coding Plan key>"
+        }
+      ]
+    },
+    "featherless": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "featherless-1",
+          "api_key": "<Featherless key>"
+        }
+      ]
+    },
+    "siliconflow": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "siliconflow-1",
+          "api_key": "<SiliconFlow international key>"
+        }
+      ]
+    },
+    "cohere": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "cohere-1",
+          "api_key": "<Cohere key>"
+        }
+      ]
+    },
+    "cline-pass": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "cline-pass-1",
+          "api_key": "<ClinePass key>"
+        }
+      ]
+    },
+    "minimax-chat": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "minimax-chat-1",
+          "api_key": "<MiniMax public API key>"
+        }
+      ]
+    },
+    "bedrock-mantle": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "bedrock-mantle-1",
+          "api_key": "<regional Bedrock bearer key>",
+          "base_url": "https://bedrock-mantle.us-east-1.api.aws/v1"
+        }
+      ]
+    },
+    "lmstudio": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "lmstudio-1",
+          "base_url": "http://localhost:1234/v1"
+        }
+      ]
+    },
+    "llamacpp": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "llamacpp-1",
+          "base_url": "http://localhost:8080/v1"
+        }
+      ]
+    },
+    "ollama": {
+      "enabled": false,
+      "accounts": [
+        {
+          "id": "ollama-1",
+          "base_url": "http://localhost:11434/v1"
+        }
+      ]
+    }
+  }
+}

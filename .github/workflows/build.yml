@@ -1,0 +1,84 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      version:
+        description: Built package version
+        value: ${{ jobs.build.outputs.version }}
+
+permissions:
+  contents: read
+
+env:
+  UV_SYSTEM_PYTHON: '1'
+
+jobs:
+  build:
+    name: Wheel, source distribution and installed-package checks
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: '1.4.2'
+      - run: uv pip install --upgrade build twine
+      - name: Check the release version
+        id: version
+        run: |
+          version=$(python -c "from hoshimi.version import VERSION; print(VERSION)")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match hoshimi/version.py ($version)."
+            exit 1
+          fi
+      - name: Build the Web UI and Python distributions
+        run: python scripts/build_wheel.py --ci
+      - name: Check contents and metadata
+        run: |
+          python -m twine check --strict dist/*
+          python - <<'PY'
+          from pathlib import Path
+          import tarfile
+          import zipfile
+          wheel = next(Path("dist").glob("*.whl"))
+          with zipfile.ZipFile(wheel) as archive:
+              names = archive.namelist()
+              assert "hoshimi/webui/dist/index.html" in names, "wheel has no Web UI"
+              assert "hoshimi/webui/dist/favicon.svg" in names, "wheel has no favicon"
+              assert any(name.startswith("hoshimi/webui/dist/assets/") and name.endswith(".js") for name in names), "wheel has no UI bundle"
+          with tarfile.open(next(Path("dist").glob("*.tar.gz"))) as archive:
+              assert any(name.endswith("/hoshimi/webui/dist/index.html") for name in archive.getnames()), "sdist has no Web UI"
+          print(f"Verified Web UI in {wheel.name} and source distribution")
+          PY
+      - name: Install the wheel in an isolated environment
+        run: |
+          uv venv "$RUNNER_TEMP/wheel-probe"
+          uv pip install --python "$RUNNER_TEMP/wheel-probe/bin/python" dist/*.whl
+          "$RUNNER_TEMP/wheel-probe/bin/hoshimi" version
+          "$RUNNER_TEMP/wheel-probe/bin/python" -I scripts/smoke_install.py
+      - name: Rebuild and install from the source distribution
+        run: |
+          python -m pip wheel --no-deps dist/*.tar.gz --wheel-dir "$RUNNER_TEMP/sdist-wheel"
+          uv venv "$RUNNER_TEMP/sdist-probe"
+          uv pip install --python "$RUNNER_TEMP/sdist-probe/bin/python" "$RUNNER_TEMP"/sdist-wheel/*.whl
+          "$RUNNER_TEMP/sdist-probe/bin/python" -I scripts/smoke_install.py
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14

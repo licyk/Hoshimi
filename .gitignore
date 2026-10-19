@@ -1,0 +1,33 @@
+# 克隆进来的外部仓库，不纳入本仓库跟踪
+dsh-our-free-model/
+codex-api/
+Hanaikada/
+hanaikada_docs/
+pi-free/
+KohakuTerrarium/
+pi/
+free-claude-code/
+
+# 本地凭据（config.example.json 是模板）
+config.json
+free-model-api.json
+
+# Python / 工具缓存
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+# Local pytest temp dirs left behind by sandboxed test runs where the
+# platform tmp is locked. They cannot be cleaned by an unprivileged
+# process; ignore them so they never enter the repo.
+tests/_pytest_tmp/
+tests/_tmp/
+
+# Local pytest stray output files (sandbox-blocked; not committed)
+tests/test_eac_output.txt
+
