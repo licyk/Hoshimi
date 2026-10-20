@@ -5,6 +5,7 @@ export const keys = {
   health: ['app', 'health'] as const,
   settings: ['settings'] as const,
   providers: ['providers'] as const,
+  network: ['network', 'diagnostics'] as const,
   catalog: ['catalog'] as const,
   stats: ['stats'] as const,
   probe: ['probe'] as const,

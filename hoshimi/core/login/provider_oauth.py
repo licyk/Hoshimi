@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from hoshimi.core.login.common import LOGIN_TIMEOUT_SECONDS, CallbackServer, LoginError, LoginReporter, jwt_claims, ms_timestamp, pkce_pair
+from hoshimi.core.net.responses import refresh_token_rejected
 
 
 @dataclass(frozen=True)
@@ -263,7 +264,7 @@ def refresh_provider_account(provider: str, client: httpx.Client, account: Any) 
                 response = client.post(url, data=fields, timeout=30)
             payload = {} if response.status_code in (401, 403) else json_object(response)
             credential = {} if response.is_error else credential_from_tokens(payload, refresh=refresh, client_id=client_id)
-        if response.status_code in (401, 403) or payload.get("error") == "invalid_grant":
+        if refresh_token_rejected(response):
             raise RefreshTokenRejected(response.status_code, f"{provider}: authorization expired; sign in again")
         if response.is_error or not credential:
             return False

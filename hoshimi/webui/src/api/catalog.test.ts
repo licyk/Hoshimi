@@ -78,11 +78,11 @@ describe('incremental provider catalogues', () => {
 
   it('keeps registry priority for duplicate IDs regardless of completion order', () => {
     const catalog: CatalogSnapshot = { levels: [], done: false, providers: [
-      { id: 'slow', status: 'loading', data: [] },
-      { id: 'fast', status: 'ready', data: [model('same', 'fast')] },
+      { id: 'slow', status: 'loading', data: [], error: null, last_success: null, retry_at: null, source: 'live' },
+      { id: 'fast', status: 'ready', data: [model('same', 'fast')], error: null, last_success: null, retry_at: null, source: 'live' },
     ] };
     expect(catalogSpecs(catalog).data[0].provider).toBe('fast');
-    catalog.providers[0] = { id: 'slow', status: 'ready', data: [model('same', 'slow')] };
+    catalog.providers[0] = { id: 'slow', status: 'ready', data: [model('same', 'slow')], error: null, last_success: null, retry_at: null, source: 'live' };
     expect(catalogSpecs(catalog).data.map((m) => m.provider)).toEqual(['slow']);
   });
 

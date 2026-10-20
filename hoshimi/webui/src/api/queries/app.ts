@@ -14,6 +14,9 @@ export const useHealth = () => useQuery({ queryKey: keys.health, queryFn: () => 
 export const useSettings = () => useQuery({ queryKey: keys.settings, queryFn: () => unwrap(api.GET('/api/v1/settings')) });
 
 export const useProviders = () => useQuery({ queryKey: keys.providers, queryFn: () => unwrap(api.GET('/api/v1/providers')) });
+export const useNetworkDiagnostics = () => useQuery({
+  queryKey: keys.network, queryFn: () => unwrap(api.GET('/api/v1/network/diagnostics')), refetchInterval: 10_000,
+});
 
 /** The capability catalogue: every id with its effort menu and its last availability verdict. */
 export const useModelSpecs = () => useCatalog(catalogSpecs);

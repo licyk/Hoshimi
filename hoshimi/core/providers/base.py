@@ -16,6 +16,7 @@ from hoshimi.core.catalog import ModelSpec, default_spec
 from hoshimi.core.errors import UpstreamError
 from hoshimi.core.failure import AccountCooler, is_recoverable, parse_reset_after
 from hoshimi.core.modelsdev import enrich_spec
+from hoshimi.core.net.client import operation
 
 logger = logging.getLogger(__name__)
 
@@ -253,9 +254,15 @@ class Provider(ABC):
         self.options = options or {}
         self._lock = threading.Lock()
         self._models_cache: list[str] | None = None
+        self._restored_specs: dict[str, ModelSpec] = {}
         self._models_expires_at = 0.0
         self._models_shrunk = False
         self.catalog_failed = False
+        self.catalog_authoritative = False
+        self.catalog_error: str | None = None
+        self.catalog_last_success: float | None = None
+        self.catalog_retry_at = 0.0
+        self.catalog_source = "fallback"
         self.cooler = AccountCooler()
 
     # -- credentials ------------------------------------------------------ #
@@ -295,22 +302,26 @@ class Provider(ABC):
     def models(self) -> list[str]:
         now = time.time()
         cached = self._models_cache
-        if cached is not None and now < self._models_expires_at:
+        if cached is not None and now < max(self._models_expires_at, self.catalog_retry_at):
             return list(cached)
         with self._lock:
-            if self._models_cache is not None and time.time() < self._models_expires_at:
+            if self._models_cache is not None and time.time() < max(self._models_expires_at, self.catalog_retry_at):
                 return list(self._models_cache)
             previous = self._models_cache
             self.catalog_failed = False
+            self.catalog_authoritative = False
+            self.catalog_error = None
             try:
-                fetched = self.fetch_models()
-            except Exception:  # noqa: BLE001 - model discovery is best-effort
+                with operation("catalog"):
+                    fetched = self.fetch_models()
+            except Exception as exc:  # noqa: BLE001 - model discovery is best-effort
                 self.catalog_failed = True
+                self.catalog_error = str(getattr(exc, "code", "invalid_response"))
                 fetched = previous or []
             if self.catalog_failed and previous is not None:
                 fetched = previous
             fresh = _dedupe(fetched or [])
-            if not fresh:
+            if not fresh and not self.catalog_authoritative:
                 # Nothing came back at all. That already has an answer — the
                 # lane's own list — and it is never held back by the guard
                 # below, because a static list is not a shrunk answer.
@@ -321,7 +332,17 @@ class Provider(ABC):
             else:
                 self._models_shrunk = False
             self._models_cache = fresh
-            self._models_expires_at = time.time() + _MODELS_TTL_SECONDS
+            if self.catalog_failed:
+                self.catalog_error = self.catalog_error or "catalog_failed"
+                self.catalog_retry_at = time.time() + 30.0
+                self._models_expires_at = self.catalog_retry_at
+                self.catalog_source = "cache" if previous is not None else "fallback"
+            else:
+                if fetched or self.catalog_authoritative:
+                    self.catalog_last_success = time.time()
+                self.catalog_retry_at = 0.0
+                self._models_expires_at = time.time() + _MODELS_TTL_SECONDS
+                self.catalog_source = "live" if fetched or self.catalog_authoritative else "fallback"
             return list(self._models_cache)
 
     def _refuse_shrink(self, previous: list[str], fresh: list[str]) -> tuple[list[str], bool]:
@@ -447,7 +468,8 @@ class Provider(ABC):
                 iterator = send(account, model, body)
                 while True:
                     try:
-                        chunk = next(iterator)
+                        with operation("inference"):
+                            chunk = next(iterator)
                     except StopIteration:
                         break
                     emitted = True
@@ -569,7 +591,8 @@ class Provider(ABC):
             if account.auth_revision != expected_revision:
                 return True
             try:
-                changed = self.refresh_account(account)
+                with operation("token_refresh"):
+                    changed = self.refresh_account(account)
             except RefreshTokenRejected:
                 account.needs_login = True
                 raise

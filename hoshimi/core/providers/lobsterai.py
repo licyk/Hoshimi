@@ -8,6 +8,7 @@ from typing import Any, ClassVar
 import httpx
 
 from hoshimi.core.expiry import set_from_seconds
+from hoshimi.core.net.responses import refresh_token_rejected
 from hoshimi.core.providers.base import (
     CLAIM_ALREADY,
     CLAIM_CLAIMED,
@@ -75,9 +76,11 @@ class LobsteraiProvider(OpenAiCompatProvider):
         models: list[str] = []
         entries: Any = data
         if isinstance(data, dict):
-            entries = data.get("data") or data.get("models") or data
+            entries = data.get("data", data.get("models", data))
         if isinstance(entries, dict):
-            entries = entries.get("models") or entries.get("list") or []
+            entries = entries.get("models", entries.get("list"))
+        if not isinstance(entries, list):
+            raise TypeError("Invalid LobsterAI catalogue response")
         if isinstance(entries, list):
             for item in entries:
                 if isinstance(item, str):
@@ -108,7 +111,7 @@ class LobsteraiProvider(OpenAiCompatProvider):
             )
         except httpx.HTTPError:
             return False
-        if response.status_code in (401, 403):
+        if refresh_token_rejected(response):
             raise RefreshTokenRejected(response.status_code, f"{self.id}: the station refused the refresh token")
         if response.status_code >= 400:
             return False

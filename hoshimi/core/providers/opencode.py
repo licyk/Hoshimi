@@ -269,6 +269,8 @@ class OpencodeProvider(OpenAiCompatProvider):
             ids = []
         if ids and self._anonymous():
             ids = [model_id for model_id in ids if is_free_lane(model_id)]
+        if not ids:
+            self.catalog_authoritative = False
         # A transient discovery failure must not replace a verified live roster
         # with historical fallback ids. The fallback is for a first cold start.
         return ids or list(self._models_cache or [])

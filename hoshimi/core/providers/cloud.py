@@ -242,21 +242,23 @@ class VertexProvider(GoogleProvider):
         try:
             import google.auth
             from google.auth.exceptions import GoogleAuthError, TransportError
-            from google.auth.transport.requests import Request
+
+            from hoshimi.core.net.sdk import google_request
         except ImportError:
             raise ProviderError(400, 'Install hoshimi[google] to use Vertex ADC/service accounts') from None
         try:
             with self._credentials_lock:
+                request = google_request(self.client)
                 credentials = self._google_credentials.get(account.id)
                 if credentials is None:
                     scopes = ["https://www.googleapis.com/auth/cloud-platform"]
                     if account.get("service_account_file"):
-                        credentials, _ = google.auth.load_credentials_from_file(str(account.get("service_account_file")), scopes=scopes)
+                        credentials, _ = google.auth.load_credentials_from_file(str(account.get("service_account_file")), scopes=scopes, request=request)
                     else:
-                        credentials, _ = google.auth.default(scopes=scopes)
+                        credentials, _ = google.auth.default(scopes=scopes, request=request)
                     self._google_credentials[account.id] = credentials
                 if not credentials.valid:
-                    credentials.refresh(Request())
+                    credentials.refresh(request)
                 token = credentials.token
         except TransportError:
             raise ProviderError(503, "Vertex credential service is temporarily unavailable", retryable=True) from None

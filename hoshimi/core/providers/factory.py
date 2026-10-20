@@ -6,6 +6,7 @@ from typing import Any
 
 import httpx
 
+from hoshimi.core.net.client import NetworkClient
 from hoshimi.core.providers.agg import AggProvider
 from hoshimi.core.providers.base import Account, Provider
 from hoshimi.core.providers.bedrock import BedrockProvider
@@ -113,7 +114,9 @@ def build_providers(
             if not cls.keyless:
                 continue
             accounts = [anonymous_account(provider_id)]
-        provider = cls(client, accounts, provider_options.get(provider_id, {}))
+        options = provider_options.get(provider_id, {})
+        selected = client.for_provider(provider_id, options) if isinstance(client, NetworkClient) else client
+        provider = cls(selected, accounts, options)
         # A provider may drop accounts it cannot use at all (the aggregator
         # lane wants a base_url and a key); with none left it is not a lane.
         if not provider.enabled():
@@ -127,7 +130,9 @@ def build_providers(
         cls = PROVIDER_CLASSES.get(provider_id)
         if cls is None or provider_id in providers or provider_id in disabled or not cls.keyless:
             continue
-        provider = cls(client, [anonymous_account(provider_id)], provider_options.get(provider_id, {}))
+        options = provider_options.get(provider_id, {})
+        selected = client.for_provider(provider_id, options) if isinstance(client, NetworkClient) else client
+        provider = cls(selected, [anonymous_account(provider_id)], options)
         provider.max_retries = max_retries  # type: ignore[attr-defined]
         providers[provider_id] = provider
     return providers

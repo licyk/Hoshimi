@@ -15,6 +15,7 @@ from hoshimi.core.effort import apply_effort
 from hoshimi.core.errors import ModelNotFoundError, ModelUnavailableError
 from hoshimi.core.failure import DeadModelStore
 from hoshimi.core.native_messages import MessagesRequest, stream_native_messages
+from hoshimi.core.net.client import NetworkClient
 from hoshimi.core.providers import PROVIDER_ORDER, build_providers
 from hoshimi.core.providers.base import Account, ModelGone, Provider
 
@@ -238,10 +239,9 @@ class Registry:
 
         Three things survive here that a full restart would not:
 
-        - *the HTTP client*. It is shared by every lane, and a turn already
-          streaming holds a provider object that would go dead the instant its
-          client closed — an operator adding an account must not be a reason to
-          cut off an answer in flight.
+        - *the HTTP clients*. The registry owns each lane's isolated client.
+          A turn already streaming retains its connection while new requests
+          use the updated policy.
         - *lanes whose own configuration did not move*. A provider carries what
           only memory knows: which accounts are out of rotation because their
           refresh token was refused, which are under a rate-limit hold, and
@@ -267,16 +267,23 @@ class Registry:
         inputs = lane_inputs(provider_accounts, options, rebuilt)
         for provider_id in rebuilt:
             kept = previous.get(provider_id)
-            if kept is not None and previous_inputs.get(provider_id) == inputs[provider_id]:
+            before = previous_inputs.get(provider_id)
+            after = inputs[provider_id]
+            route_only = before is not None and before[0] == after[0] and (
+                {key: value for key, value in before[1].items() if key != "network"}
+                == {key: value for key, value in after[1].items() if key != "network"}
+            )
+            if kept is not None and (before == after or route_only):
+                kept.options = options.get(provider_id, {})
                 rebuilt[provider_id] = kept
-            elif kept is not None and kept.client is not client:
+            elif kept is not None and kept.client is not client and not isinstance(kept.client, NetworkClient):
                 _close_quietly(provider_id, kept.client)
         self.providers = rebuilt
         self._inputs = inputs
         self.default_model = default_model
         for provider_id in set(previous) - set(rebuilt):
             dropped_client = previous[provider_id].client
-            if dropped_client is not client:
+            if dropped_client is not client and not isinstance(dropped_client, NetworkClient):
                 _close_quietly(provider_id, dropped_client)
 
 
@@ -288,12 +295,8 @@ def _close_quietly(provider_id: str, client: httpx.Client) -> None:
 
 
 def new_client(timeout: float = 600.0) -> httpx.Client:
-    """The one HTTP client every lane of a registry shares."""
-    return httpx.Client(
-        timeout=httpx.Timeout(timeout, connect=15.0),
-        follow_redirects=True,
-        http2=False,
-    )
+    """The root client owning isolated provider connections and shared policy."""
+    return NetworkClient(timeout=timeout)
 
 
 def lane_inputs(

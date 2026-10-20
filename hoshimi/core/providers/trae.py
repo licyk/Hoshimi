@@ -11,6 +11,7 @@ import httpx
 
 from hoshimi.core.catalog import ModelSpec, trae_spec
 from hoshimi.core.expiry import set_from_ms
+from hoshimi.core.net.responses import refresh_token_rejected
 from hoshimi.core.providers.base import (
     CLAIM_CLAIMED,
     CLAIM_FAILED,
@@ -126,7 +127,7 @@ class TraeProvider(Provider):
             )
         except httpx.HTTPError:
             return False
-        if response.status_code in (401, 403):
+        if refresh_token_rejected(response):
             raise RefreshTokenRejected(response.status_code, f"{self.id}: the station refused the refresh token")
         if response.status_code >= 400:
             return False

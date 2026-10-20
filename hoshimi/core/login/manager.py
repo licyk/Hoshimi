@@ -29,6 +29,8 @@ import httpx
 
 from hoshimi.core.eac_relay import DEFAULT_EAC_ACCOUNT_ID
 from hoshimi.core.login.common import LOGIN_TIMEOUT_SECONDS, LoginError, LoginReporter
+from hoshimi.core.net.client import NetworkClient, operation
+from hoshimi.core.providers.base import ProviderError
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from hoshimi.core.config import Settings
@@ -138,11 +140,16 @@ class LoginManager:
         on_persist: Callable[[LoginManager], None] | None = None,
     ):
         self.settings = settings
-        self._client = client or httpx.Client(timeout=30.0)
+        self._client = client
         self._on_persist = on_persist
         self._sessions: dict[str, LoginSession] = {}
         self._lock = threading.Lock()
         self._persist_lock = threading.RLock()
+        self._diagnostics: dict[str, list[dict[str, Any]]] = {}
+
+    def diagnostics(self) -> list[tuple[str, dict[str, Any]]]:
+        with self._lock:
+            return [(pid, dict(row)) for pid, rows in self._diagnostics.items() for row in rows]
 
     # -- the sessions ------------------------------------------------------ #
     def start(self, provider: str) -> LoginSession:
@@ -158,6 +165,12 @@ class LoginManager:
             if account is None:
                 raise LoginError("eac: configured accounts have no usable relay; select the bundled relay or configure a worker relay")
             flow = partial(start_eac_login, account=account)
+        if provider == "cline":
+            cfg = self.settings.providers.get(provider)
+            if cfg is not None and cfg.options.get("client_profile") == "extension":
+                from hoshimi.core.login.cline_browser import start_cline_browser_login
+
+                flow = start_cline_browser_login
         self._prune()
         session = LoginSession(id=secrets.token_hex(8), provider=provider)
         with self._lock:
@@ -177,7 +190,8 @@ class LoginManager:
                     session.cancelled.set()
                     session.status = STATUS_FAILED
                     session.message = "Login cancelled"
-        self._client.close()
+        if self._client is not None:
+            self._client.close()
 
     def submit(self, session_id: str, value: str) -> None:
         session = self.poll(session_id)
@@ -204,9 +218,14 @@ class LoginManager:
                 setattr(session, key, value)
 
         report = LoginReporter(update, inputs=session.inputs, cancelled=session.cancelled)
-
+        cfg = self.settings.providers.get(session.provider)
+        client = self._client or NetworkClient(
+            provider=session.provider, network=self.settings.network,
+            options=cfg.options if cfg else {}, timeout=30.0, login=True,
+        )
         try:
-            credential = flow(self._client, report)
+            with operation("login"):
+                credential = flow(client, report)
             if session.login_url == "":
                 raise LoginError("the station returned no login URL")
             with self._persist_lock:
@@ -217,7 +236,7 @@ class LoginManager:
                 account_id = self._persist(session.provider, credential)
                 session.status = STATUS_SUCCEEDED
                 session.account_id = account_id
-        except LoginError as exc:
+        except (LoginError, ProviderError) as exc:
             session.status = STATUS_FAILED
             session.message = str(exc)
             return
@@ -226,6 +245,12 @@ class LoginManager:
             session.status = STATUS_FAILED
             session.message = f"login failed unexpectedly: {exc}"
             return
+        finally:
+            if isinstance(client, NetworkClient):
+                with self._lock:
+                    self._diagnostics[session.provider] = client.diagnostics()
+            if self._client is None:
+                client.close()
 
     # -- the write-back ---------------------------------------------------- #
     def _persist(self, provider: str, credential: dict[str, Any]) -> str:

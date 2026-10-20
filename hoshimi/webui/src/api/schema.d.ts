@@ -258,6 +258,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/network/diagnostics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Network Diagnostics */
+        get: operations["network_diagnostics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/playground/chat/completions": {
         parameters: {
             query?: never;
@@ -817,8 +834,19 @@ export interface components {
         CatalogProvider: {
             /** Data */
             data: components["schemas"]["ModelSpecObject"][];
+            /** Error */
+            error: string | null;
             /** Id */
             id: string;
+            /** Last Success */
+            last_success: number | null;
+            /** Retry At */
+            retry_at: number | null;
+            /**
+             * Source
+             * @default live
+             */
+            source: string;
             /**
              * Status
              * @enum {string}
@@ -1243,6 +1271,41 @@ export interface components {
              */
             wire: string;
         };
+        /** NetworkDiagnostic */
+        NetworkDiagnostic: {
+            /** At */
+            at: number;
+            /** Host */
+            host: string;
+            /** Kind */
+            kind: string;
+            /** Operation */
+            operation: string;
+            /** Provider */
+            provider: string;
+            /** Route */
+            route: string;
+            /** Status */
+            status: number | null;
+        };
+        /** NetworkView */
+        NetworkView: {
+            /**
+             * Mode
+             * @default auto
+             */
+            mode: string;
+            /**
+             * Proxy Configured
+             * @default false
+             */
+            proxy_configured: boolean;
+            /**
+             * System Proxy
+             * @default false
+             */
+            system_proxy: boolean;
+        };
         /**
          * PassiveCounters
          * @description What the station's answers say about the connection: counts, never bodies.
@@ -1384,10 +1447,13 @@ export interface components {
         ProviderView: {
             /** Accounts */
             accounts: number;
+            /** Client Profile */
+            client_profile: string | null;
             /** Enabled */
             enabled: boolean;
             /** Id */
             id: string;
+            network: components["schemas"]["NetworkView"];
             /** Options */
             options: string[];
         };
@@ -1529,6 +1595,7 @@ export interface components {
             config_path: string;
             /** Data Dir */
             data_dir: string;
+            network: components["schemas"]["NetworkView"];
             /** Providers */
             providers: components["schemas"]["ProviderView"][];
             server: components["schemas"]["ServerView"];
@@ -2157,6 +2224,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UnavailableReset"];
+                };
+            };
+        };
+    };
+    network_diagnostics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworkDiagnostic"][];
                 };
             };
         };

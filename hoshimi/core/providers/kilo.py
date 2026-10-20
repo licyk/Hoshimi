@@ -67,7 +67,7 @@ class KiloProvider(OpenAiCompatProvider):
     def parse_models_response(self, data: Any) -> list[str]:
         rows = data.get("data") if isinstance(data, dict) else data
         if not isinstance(rows, list):
-            return []
+            raise TypeError("Invalid Kilo catalogue response")
         ids: list[str] = []
         free_rows: list[dict[str, Any]] = []
         for row in rows:

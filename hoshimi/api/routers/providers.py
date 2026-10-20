@@ -14,12 +14,37 @@ from hoshimi.api.errors import ERROR_RESPONSES
 from hoshimi.core.config import ProviderConfig, save_settings
 from hoshimi.core.errors import ConflictError, NotFoundError
 from hoshimi.core.login import login_providers
+from hoshimi.core.net.client import NetworkClient
 from hoshimi.core.presets import PRESETS
 from hoshimi.core.provider_forms import credential_forms
 from hoshimi.core.providers import PROVIDER_CLASSES, real_account_count
 from hoshimi.core.record import Record
 
 router = APIRouter(prefix="/v1", tags=["providers"])
+
+
+class NetworkDiagnostic(Record):
+    provider: str
+    operation: str
+    kind: str
+    status: int | None = None
+    at: float
+    host: str
+    route: str
+
+
+@router.get("/network/diagnostics", operation_id="network_diagnostics")
+def network_diagnostics(services: ServicesDep) -> list[NetworkDiagnostic]:
+    rows = [
+        NetworkDiagnostic(provider=pid, **row)
+        for pid, provider in services.registry.ordered_providers()
+        if isinstance(provider.client, NetworkClient)
+        for row in provider.client.diagnostics()
+    ]
+    if services.login is not None:
+        rows.extend(NetworkDiagnostic(provider=pid, **row) for pid, row in services.login.diagnostics())
+    latest = {(row.provider, row.operation): row for row in sorted(rows, key=lambda row: row.at)}
+    return list(latest.values())
 
 
 class ProviderSummary(Record):

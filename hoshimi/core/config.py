@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from hoshimi.core.net.policy import NetworkPolicy, parse_policy
 from hoshimi.core.paths import config_file_path
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ class ProviderConfig:
 
 @dataclass
 class Settings:
+    network: NetworkPolicy = field(default_factory=NetworkPolicy)
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
     access_token: str | None = None
@@ -56,6 +58,14 @@ class Settings:
 
 def validate_settings(settings: Settings) -> str | None:
     """Reject values the server could not run with; None when the settings are usable."""
+    try:
+        parse_policy(settings.network.as_dict())
+        for cfg in settings.providers.values():
+            parse_policy(cfg.options.get("network"), inherited=settings.network)
+            if cfg.id == "cline" and cfg.options.get("client_profile", "sdk") not in ("sdk", "extension"):
+                return "cline client_profile must be sdk or extension"
+    except (TypeError, ValueError) as exc:
+        return str(exc)
     if not 0 <= settings.port <= 65535:
         return f"server.port must be between 0 and 65535 (got {settings.port})."
     if settings.max_body_bytes <= 0:
@@ -75,6 +85,8 @@ def _split_list(value: Any) -> list[str]:
 
 def settings_from_dict(data: dict[str, Any], settings: Settings | None = None) -> Settings:
     settings = settings or Settings()
+    if "network" in data:
+        settings.network = parse_policy(data["network"])
     server_raw = data.get("server")
     security_raw = data.get("security")
     server: dict[str, Any] = server_raw if isinstance(server_raw, dict) else {}
@@ -183,6 +195,7 @@ def _restrict_permissions(path: Path) -> None:
 def settings_to_dict(settings: Settings) -> dict[str, Any]:
     """Serialize settings back to the config-file shape, so a save round-trips."""
     data: dict[str, Any] = {
+        "network": settings.network.as_dict(),
         "server": {
             "host": settings.host,
             "port": settings.port,

@@ -10,6 +10,7 @@ from typing import Any, ClassVar
 import httpx
 
 from hoshimi.core.failure import body_says_model_gone, is_model_gone, is_model_saturation, is_policy_block, is_recoverable, parse_retry_after
+from hoshimi.core.net.responses import reject_interception
 from hoshimi.core.providers.base import Account, AuthFailed, ModelGone, ModelSaturated, PolicyBlocked, Provider, ProviderError, QuotaExceeded
 from hoshimi.core.quota import observe_response
 from hoshimi.core.sse import iter_sse
@@ -68,8 +69,13 @@ def _classify(provider: str, status: int | None, text: str, *, retry_after: floa
         raise ModelSaturated(status or 429, f"{provider}: {text}", retryable=True, retry_after=retry_after)
     if is_policy_block(status, text):
         raise PolicyBlocked(status or 403, f"{provider}: {text}", retryable=True, retry_after=retry_after)
-    if status in (401, 403):
+    if status == 401 or (status == 403 and _looks_like_auth(text)):
         raise AuthFailed(status, f"{provider}: {text}", retryable=True, retry_after=retry_after)
+    if status == 403:
+        error = ProviderError(403, f"{provider}: permission denied", retryable=False)
+        error.code = "permission_denied"
+        error.should_retry = False
+        raise error
     if _looks_like_quota(status, text):
         raise QuotaExceeded(status or 200, f"{provider}: {text}", retryable=True, retry_after=retry_after)
     if _looks_like_auth(text):
@@ -86,6 +92,7 @@ def raise_for_status(response: httpx.Response, *, provider: str) -> None:
     does not say what they mean — and for the two that a number actively
     hides (see :func:`_classify`).
     """
+    reject_interception(response, provider=provider)
     status = response.status_code
     if status < 400:
         return
@@ -359,12 +366,14 @@ class OpenAiCompatProvider(Provider):
         except httpx.HTTPError:
             self.catalog_failed = True
             return []
-        if response.status_code >= 400:
-            self.catalog_failed = True
-            return []
-        return self.parse_models_response(response.json())
+        raise_for_status(response, provider=self.id)
+        result = self.parse_models_response(response.json())
+        self.catalog_authoritative = True
+        return result
 
     def parse_models_response(self, data: Any) -> list[str]:
+        if not isinstance(data, list) and not (isinstance(data, dict) and isinstance(data.get("data"), list)):
+            raise TypeError("Invalid model catalogue response")
         return model_ids(model_rows(data))
 
 

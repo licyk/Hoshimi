@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { useProviders, useSettings, useUpdateSettings, useVersion } from '@/api/queries/app';
+import { useNetworkDiagnostics, useProviders, useSettings, useUpdateSettings, useVersion } from '@/api/queries/app';
 import { useI18n } from '@/i18n';
+import NetworkSettings from '@/components/NetworkSettings.vue';
 import { usePreferencesStore } from '@/stores/preferences';
 import { AppButton, Badge, DataList, SegmentedButton, SelectField, Skeleton, Slider, Surface, Switch, TextField, TokenField, icons, useSnackbar } from '@/ui';
 
 const { t, localeOptions } = useI18n();
 const settings = useSettings();
 const providers = useProviders();
+const diagnostics = useNetworkDiagnostics();
 const update = useUpdateSettings();
 const version = useVersion();
 const snackbar = useSnackbar();
@@ -41,6 +43,8 @@ const availableProviderCards = computed(() => {
     display_name: runtime.get(cfg.id)?.display_name ?? cfg.id,
     accounts: cfg.accounts,
     options: cfg.options,
+    network: cfg.network,
+    client_profile: cfg.client_profile,
     enabled: cfg.enabled,
     requires_authorization: runtime.get(cfg.id)?.requires_authorization ?? false,
   }));
@@ -51,6 +55,8 @@ const availableProviderCards = computed(() => {
       display_name: lane.display_name,
       accounts: lane.accounts,
       options: [],
+      network: { mode: 'inherit', proxy_configured: false, system_proxy: false },
+      client_profile: null,
       enabled: lane.enabled,
       requires_authorization: lane.requires_authorization,
     });
@@ -78,6 +84,10 @@ const providerCards = computed(() => {
   <div class="settings">
     <div v-if="!s" class="skeletons"><Skeleton v-for="i in 3" :key="i" height="160px" shape="medium" /></div>
     <template v-else>
+      <Surface :level="0" shape="large" class="section">
+        <h2 class="type-title-large">{{ t('network.title') }}</h2>
+        <NetworkSettings :value="s.network" @save="save({ network: $event })" />
+      </Surface>
       <Surface :level="0" shape="large" class="section">
         <h2 class="type-title-large">{{ t('settings.sections.server') }}</h2>
         <div class="grid">
@@ -165,6 +175,19 @@ const providerCards = computed(() => {
                 {{ t('settings.providerAccounts', { n: p.accounts }) }}
                 <template v-if="p.options.length"> · {{ p.options.join(', ') }}</template>
               </span>
+              <details class="provider-network">
+                <summary>{{ t('network.title') }}</summary>
+                <NetworkSettings :value="p.network" provider @save="save({ providers: { [p.id]: { options: { network: $event } } } })" />
+                <SelectField
+                  v-if="p.id === 'cline'" :model-value="p.client_profile ?? 'sdk'" :label="t('network.clineProfile')"
+                  :options="[{ value: 'sdk', label: t('network.deviceLogin') }, { value: 'extension', label: t('network.browserLogin') }]"
+                  @update:model-value="save({ providers: { cline: { options: { client_profile: $event } } } })"
+                />
+                <p v-for="entry in diagnostics.data.value?.filter((entry) => entry.provider === p.id)" :key="entry.operation" class="type-body-small muted">
+                  {{ t(`network.operations.${entry.operation}`) }} · {{ t(`network.errors.${entry.kind}`) }}
+                  <template v-if="entry.status"> · HTTP {{ entry.status }}</template>
+                </p>
+              </details>
             </div>
             <Switch :model-value="p.enabled" :label="t('common.enabled')" @update:model-value="saveProvider(p.id, $event)" />
           </div>

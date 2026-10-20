@@ -9,12 +9,14 @@ const { t } = useI18n();
 const total = computed(() => catalog.data.value?.providers.length ?? 0);
 const loaded = computed(() => catalog.data.value?.providers.filter((p) => p.status !== 'loading').length ?? 0);
 const failed = computed(() => catalog.data.value?.providers.filter((p) => p.status === 'failed' || p.status === 'timeout').map((p) => p.id).join(', ') ?? '');
+const reasons = computed(() => catalog.data.value?.providers.filter((p) => p.error).map((p) => `${p.id}: ${t(`network.errors.${p.error}`)}`).join(' · ') ?? '');
 </script>
 
 <template>
   <div v-if="catalog.isFetching.value || failed || catalog.isError.value" class="catalog-status" role="status" aria-live="polite">
     <span v-if="catalog.isFetching.value">{{ t('catalog.loading', { loaded, total }) }}</span>
     <span v-if="failed" class="failures">{{ t('catalog.failed', { providers: failed }) }}</span>
+    <span v-if="reasons" class="failures">{{ reasons }}</span>
     <span v-if="catalog.isError.value" class="failures">{{ t('catalog.interrupted') }}</span>
     <AppButton v-if="!catalog.isFetching.value" variant="text" @click="catalog.refetch()">{{ t('common.retry') }}</AppButton>
   </div>

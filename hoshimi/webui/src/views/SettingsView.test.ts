@@ -13,6 +13,7 @@ const providers = ref([runtime('zeta', true), runtime('alpha', false), runtime('
 vi.mock('@/api/queries/app', () => ({
   useSettings: () => ({ data: settings, isFetching: { value: false } }),
   useProviders: () => ({ data: providers }),
+  useNetworkDiagnostics: () => ({ data: { value: [] } }),
   useMeta: () => ({ data: { value: { auth_required: true } } }),
   useVersion: () => ({ data: { value: { version: 'test' } } }),
   useUpdateSettings: () => ({ mutate: state.update }),

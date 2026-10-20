@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, ClassVar
 
 import httpx
 
 from hoshimi.core.catalog import ModelSpec, cline_spec
 from hoshimi.core.expiry import set_from_iso, set_from_ms
+from hoshimi.core.net.profiles import cline_headers
+from hoshimi.core.net.responses import refresh_token_rejected
 from hoshimi.core.providers.base import Account, BalanceOutcome, RefreshTokenRejected
-from hoshimi.core.providers.openai_compat import OpenAiCompatProvider
+from hoshimi.core.providers.openai_compat import OpenAiCompatProvider, raise_for_status
 
 CLINE_API_BASE = "https://api.cline.bot"
 
@@ -27,16 +30,23 @@ class ClineProvider(OpenAiCompatProvider):
     ]
 
     def build_headers(self, account: Account, model: str) -> dict[str, str]:
-        headers = super().build_headers(account, model)
-        headers.update(
-            {
-                "HTTP-Referer": "https://cline.bot",
-                "X-Title": "Cline",
-                "X-IS-MULTIROOT": "false",
-                "X-CLIENT-TYPE": "cline-sdk",
-            }
-        )
+        headers = cline_headers(profile=str(account.get("client_profile", self.options.get("client_profile", "sdk"))),
+                                accept="text/event-stream", task_id=uuid.uuid4().hex)
+        token = str(account.get("access_token", ""))
+        headers["Authorization"] = f"Bearer {token if token.startswith('workos:') else 'workos:' + token}"
         return headers
+
+    def fetch_models(self) -> list[str]:
+        # This endpoint is public. An expired account token must not turn model
+        # discovery into an authentication failure.
+        response = self.client.get(f"{self.base_url}{self.models_path}", headers=cline_headers(), timeout=30.0)
+        raise_for_status(response, provider=self.id)
+        payload = response.json()
+        inner = payload.get("data", payload) if isinstance(payload, dict) else None
+        if not isinstance(inner, dict) or not isinstance(inner.get("free"), list):
+            raise TypeError("cline: invalid model catalog")
+        self.catalog_authoritative = True
+        return self.parse_models_response(payload)
 
     def parse_models_response(self, data: Any) -> list[str]:
         if isinstance(data, dict):
@@ -58,19 +68,12 @@ class ClineProvider(OpenAiCompatProvider):
             response = self.client.post(
                 f"{self.base_url}/api/v1/auth/refresh",
                 json={"refreshToken": refresh_token, "grantType": "refresh_token"},
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                    "HTTP-Referer": "https://cline.bot",
-                    "X-Title": "Cline",
-                    "X-IS-MULTIROOT": "false",
-                    "X-CLIENT-TYPE": "cline-sdk",
-                },
+                headers=cline_headers(profile=str(account.get("client_profile", self.options.get("client_profile", "sdk")))),
                 timeout=30.0,
             )
         except httpx.HTTPError:
             return False
-        if response.status_code in (401, 403):
+        if refresh_token_rejected(response):
             raise RefreshTokenRejected(response.status_code, f"{self.id}: the station refused the refresh token")
         if response.status_code >= 400:
             return False
@@ -109,14 +112,8 @@ class ClineProvider(OpenAiCompatProvider):
         # The stored token carries the `workos:` prefix (chat sends it verbatim);
         # only add it when a bare JWT slipped through, never twice.
         token = str(account.get("access_token") or "").removeprefix("workos:")
-        headers = {
-            "Authorization": f"Bearer workos:{token}",
-            "Accept": "application/json",
-            "HTTP-Referer": "https://cline.bot",
-            "X-Title": "Cline",
-            "X-IS-MULTIROOT": "false",
-            "X-CLIENT-TYPE": "cline-sdk",
-        }
+        headers = cline_headers(profile=str(account.get("client_profile", self.options.get("client_profile", "sdk"))))
+        headers["Authorization"] = f"Bearer workos:{token}"
         url = f"{CLINE_API_BASE}/api/v1/users/{user_id}/balance"
         try:
             response = self.client.get(url, headers=headers, timeout=30.0)

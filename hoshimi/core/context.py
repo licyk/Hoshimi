@@ -10,6 +10,8 @@ from hoshimi.core.config import Settings, load_settings
 from hoshimi.core.credentials import collect_provider_accounts
 from hoshimi.core.credits import CHECKIN_FILE_NAME, CheckinStore, CreditsService
 from hoshimi.core.login import LoginManager
+from hoshimi.core.modelsdev import MODELSDEV
+from hoshimi.core.net.client import NetworkClient
 from hoshimi.core.paths import config_file_path, default_data_dir
 from hoshimi.core.probe import PROBE_FILE_NAME, ProbeStore
 from hoshimi.core.refresh import Refresher
@@ -22,7 +24,7 @@ class Services:
     """Everything a command or a request handler needs.
 
     ``settings`` is the effective configuration (config file + CLI overrides), ``registry``
-    owns one HTTP client and the enabled providers, ``probe`` holds the last
+    owns provider HTTP clients and the enabled providers, ``probe`` holds the last
     availability verdict per model, ``stats`` counts what the gateway served,
     and ``refresher`` renews credentials on a timer.
     """
@@ -34,6 +36,9 @@ class Services:
     refresher: Refresher | None = None
     credits: CreditsService | None = None
     login: LoginManager | None = None
+
+    def __post_init__(self) -> None:
+        MODELSDEV.network = self.settings.network
 
     @property
     def data_dir(self) -> Path:
@@ -75,6 +80,9 @@ class Services:
         before = pool_inputs(self.settings)
         after = pool_inputs(settings)
         self.settings = settings
+        MODELSDEV.network = settings.network
+        if isinstance(self.registry.client, NetworkClient):
+            self.registry.client.network = settings.network
         if self.refresher is not None:
             self.refresher.settings = settings
         if self.credits is not None:
@@ -90,6 +98,8 @@ class Services:
             max_account_retries=settings.max_account_retries,
             disabled=after.disabled,
         )
+        if isinstance(self.registry.client, NetworkClient):
+            self.registry.client.network = settings.network
         return True
 
 
@@ -130,6 +140,8 @@ def build_services(settings: Settings | None = None) -> Services:
         max_account_retries=settings.max_account_retries,
         disabled=pool.disabled,
     )
+    if isinstance(registry.client, NetworkClient):
+        registry.client.network = settings.network
 
     def rebuild_after_login(login: LoginManager) -> None:
         """Adopt an account the moment a browser login files it in settings."""

@@ -110,6 +110,7 @@ class KeyedProvider(OpenAiCompatProvider):
                 # success must not discard its previously learned models.
                 continue
             self._account_rows[account.id] = found
+        self.catalog_authoritative = not self.catalog_failed
         combined: dict[str, dict[str, Any]] = {}
         for account in self.accounts:
             for model, row in self._account_rows.get(account.id, {}).items():
@@ -141,4 +142,6 @@ class KeyedProvider(OpenAiCompatProvider):
         return list(self.listing_rows)
 
     def specs(self) -> dict[str, ModelSpec]:
-        return {model: spec_from_row(model, self.id, self.listing_rows.get(model, {})) for model in self.models()}
+        models = self.models()
+        return {model: self._restored_specs[model] if self.catalog_failed and model in self._restored_specs
+                else spec_from_row(model, self.id, self.listing_rows.get(model, {})) for model in models}

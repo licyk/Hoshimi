@@ -9,6 +9,7 @@ import httpx
 
 from hoshimi.core.catalog import ModelSpec, gemini_spec
 from hoshimi.core.expiry import set_from_iso, set_from_seconds
+from hoshimi.core.net.responses import refresh_token_rejected
 from hoshimi.core.providers.base import Account, BalanceOutcome, Provider, RefreshTokenRejected
 from hoshimi.core.providers.openai_compat import raise_for_status
 from hoshimi.core.quota import observe_response
@@ -23,14 +24,6 @@ from hoshimi.core.translate.gemini import (
     iter_gemini_chunks,
     marshal_envelope,
 )
-
-_SPENT_TOKEN_MARKERS = ("invalid_grant", "invalid_client", "expired", "revoked", "unauthorized")
-
-
-def _looks_like_spent_token(text: str) -> bool:
-    """A body that says the refresh token itself is gone, not the network."""
-    lowered = text.lower()
-    return any(marker in lowered for marker in _SPENT_TOKEN_MARKERS)
 
 
 class GeminiProvider(Provider):
@@ -100,7 +93,7 @@ class GeminiProvider(Provider):
             return False
         if response.status_code >= 400:
             # Google answers a spent refresh token as `invalid_grant`.
-            if _looks_like_spent_token(response.text):
+            if refresh_token_rejected(response):
                 raise RefreshTokenRejected(response.status_code, "gemini: the refresh token was rejected")
             return False
         try:

@@ -9,6 +9,7 @@ import httpx
 
 from hoshimi.core.catalog import ModelSpec, minimax_efforts_for, minimax_spec
 from hoshimi.core.expiry import set_from_seconds
+from hoshimi.core.net.responses import refresh_token_rejected
 from hoshimi.core.providers.base import (
     CLAIM_ALREADY,
     CLAIM_CLAIMED,
@@ -38,15 +39,7 @@ MINIMAX_MODELS = [
     "MiniMax-M2.7",
 ]
 
-_SPENT_TOKEN_MARKERS = ("invalid_grant", "expired", "revoked")
-
-
-def _looks_like_spent_token(text: str) -> bool:
-    """A body that says the refresh token itself is gone, not the network."""
-    lowered = text.lower()
-    return any(marker in lowered for marker in _SPENT_TOKEN_MARKERS)
-
-# This family requires thinking.type="adaptive" even when no effort was requested.
+# This family requires adaptive thinking even without an explicit effort.
 _ADAPTIVE_ONLY_PREFIX = "MiniMax-M3.1"
 
 
@@ -124,7 +117,7 @@ class MinimaxProvider(Provider):
             return False
         if response.status_code >= 400:
             # The station answers a spent refresh token as `invalid_grant`.
-            if _looks_like_spent_token(response.text):
+            if refresh_token_rejected(response):
                 raise RefreshTokenRejected(response.status_code, "minimax: the refresh token was rejected")
             return False
         try:

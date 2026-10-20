@@ -8,6 +8,7 @@ import httpx
 
 from hoshimi.core.catalog import ModelSpec, raccoon_spec
 from hoshimi.core.expiry import set_from_jwt
+from hoshimi.core.net.responses import refresh_token_rejected
 from hoshimi.core.providers.base import Account, BalanceOutcome, RefreshTokenRejected
 from hoshimi.core.providers.openai_compat import OpenAiCompatProvider
 
@@ -58,7 +59,7 @@ class RaccoonProvider(OpenAiCompatProvider):
             return False
         # 401 (or the station's own "session expired" code) means the refresh
         # token itself is spent: renewing again cannot help.
-        if response.status_code == 401:
+        if refresh_token_rejected(response):
             raise RefreshTokenRejected(401, "raccoon: the refresh token was rejected")
         if response.status_code >= 400:
             return False

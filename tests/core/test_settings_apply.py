@@ -146,11 +146,13 @@ def test_a_rebuild_keeps_the_shared_http_client() -> None:
     registry = build_registry({"cline": [{"id": "c1", "access_token": "t"}]})
     client = registry.client
     assert client is not None
+    provider_client = registry.providers["cline"].client
 
     registry.rebuild({"cline": [{"id": "c1", "access_token": "t"}, {"id": "c2", "access_token": "u"}]})
 
     assert registry.client is client
-    assert registry.providers["cline"].client is client
+    assert registry.providers["cline"].client is provider_client
+    assert not provider_client.is_closed
     assert [a.id for a in registry.providers["cline"].accounts] == ["c1", "c2"]
 
 

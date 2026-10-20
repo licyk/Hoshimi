@@ -67,6 +67,76 @@ contains demonstration credentials and is not a ready-to-run account bundle.
 | `providers.<id>.enabled` | `false` disables the provider entirely (this is also how the keyless lanes are turned off) |
 | `providers.<id>.accounts` | [provider accounts](providers.md) |
 | `providers.<id>.options` | provider-specific options |
+| `network` | global upstream connection policy |
+| `providers.<id>.options.network` | provider override; defaults to inheriting the global policy |
+
+## Upstream connections and blocked requests
+
+Settings includes global network controls and an override on each provider.
+The same policy covers model discovery, inference, login, token refresh, balance
+and check-in calls made by the gateway. For example:
+
+```json
+{
+  "network": {"mode": "proxy", "proxy": "http://127.0.0.1:7890"},
+  "providers": {
+    "cline": {"options": {"network": {"mode": "inherit"}, "client_profile": "extension"}},
+    "ollama": {"options": {"network": {"mode": "direct"}}}
+  }
+}
+```
+
+- `auto` (default) reads `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY`;
+  lowercase variables take precedence. `system_proxy: true` enables Windows
+  system proxy fallback when no environment proxy is selected.
+- `direct` disables proxy selection. `proxy` requires a valid HTTP(S) or SOCKS5
+  URL in `proxy`. A configured proxy failure never falls back to direct access.
+- Provider mode `inherit` uses the global policy. An explicit provider policy
+  replaces it. Loopback destinations always stay local; `NO_PROXY` applies to
+  automatic selection, not an explicitly configured proxy.
+
+Proxy URLs may contain credentials. They are stored in the local configuration;
+the Settings API only returns whether one is configured, and CLI output masks
+them. Clearing a proxy in Settings returns to automatic selection (or inheritance).
+Changes apply to new requests while active streams finish on their original
+connections. Ordinary API clients do not retain response cookies; each login has
+its own isolated cookie session.
+
+Browser pages use the browser's own network configuration. Vertex Google Auth
+HTTP calls use the provider policy. Supplementary models.dev metadata uses the
+global policy. Bedrock SDK service calls receive the selected
+HTTP(S) proxy; the AWS credential discovery chain remains controlled by the AWS
+SDK. SOCKS proxies are supported by HTTPX calls, not by the Bedrock SDK transport.
+Gateway diagnostics cover HTTPX calls, not internal AWS SDK requests.
+
+HTML block pages, Cloudflare challenges, client restrictions, region restrictions
+and signature refusals are classified before token handling. They do not
+invalidate stored refresh tokens. A bare HTTP 403 is not treated as expired
+credentials. No automatic browser challenge solver or TLS fingerprint emulation
+is provided.
+
+Settings displays the latest result per provider and operation.
+`GET /api/v1/network/diagnostics` exposes the same management-only data: operation,
+host, route source, timestamp, status and failure category. It excludes request
+paths, query strings, headers, bodies, cookies and proxy URLs.
+
+Cline loads its free model catalogue from the public recommended-models endpoint.
+`providers.cline.options.client_profile` selects the login method: `sdk` (default)
+keeps WorkOS device authorization; `extension` uses browser authorization with a
+local callback on ports 48801–48811. New credentials record the selected profile,
+so existing accounts retain the identity used when they logged in. Changing the
+selector applies to subsequent logins. A failed single-use code exchange requires
+a new login rather than replaying the code.
+
+Successful model catalogues are saved under `<data directory>/catalog-cache`.
+Snapshots are keyed by a hash of the provider, options and account configuration;
+the files contain model metadata and account identifiers, not credentials.
+Only snapshots at most seven days old are restored. Account or endpoint changes
+do not reuse another configuration's snapshot. Failed refreshes retain the last
+good catalogue and impose a 30-second retry cooldown; the existing shrink guard
+still requires a second successful listing before accepting a large removal.
+The catalogue API includes source, last-success time, failure category and retry
+time. Cache files can be deleted to discard saved model metadata.
 
 ## CLI changes
 
@@ -88,8 +158,9 @@ append rather than replace credentials, validate the account before saving, and
 enable the corresponding provider. Account deletion also updates the live pool.
 
 Only pools whose inputs changed are rebuilt. Editing another provider or a server
-field preserves unrelated account holds and login state. The shared HTTP client
-is retained so in-flight streams can finish. Rebuilding a provider recreates its
+field preserves unrelated account holds and login state. Network-only edits also
+preserve account state. Provider HTTP clients are retained so in-flight streams
+can finish. Other provider rebuilds recreate their
 in-memory account state, including `needs_login`. Listening address and port
 changes require restarting the server to rebind its socket.
 

@@ -39,9 +39,9 @@ import threading
 import time
 from dataclasses import dataclass, replace
 
-import httpx
-
 from hoshimi.core.catalog import ModelSpec
+from hoshimi.core.net.client import NetworkClient, operation
+from hoshimi.core.net.policy import NetworkPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +100,7 @@ class ModelsDevStore:
         self._index: dict[str, tuple[bool, bool]] = {}
         self._fetched_at = 0.0
         self._refreshing = False
+        self.network = NetworkPolicy()
 
     # -- the live half ----------------------------------------------------- #
     def facts(self, model_id: str) -> ModelFacts | None:
@@ -152,8 +153,8 @@ class ModelsDevStore:
         threading.Thread(target=work, name="hoshimi-models-dev", daemon=True).start()
 
     def _fetch_index(self) -> dict[str, tuple[bool, bool]]:
-        with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
-            response = client.get(self.url, headers={"User-Agent": "hoshimi/1.0"})
+        with NetworkClient(provider="models.dev", network=self.network, timeout=self.timeout) as client, operation("catalog"):
+            response = client.get(self.url, headers={"User-Agent": "hoshimi/1.0"}, follow_redirects=True)
             response.raise_for_status()
             payload = response.json()
         return _index_of(payload)

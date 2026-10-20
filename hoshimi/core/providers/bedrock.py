@@ -11,6 +11,7 @@ from urllib.parse import quote
 import httpx
 
 from hoshimi.core.errors import ValidationError
+from hoshimi.core.net.sdk import bedrock_config
 from hoshimi.core.providers.base import Account, ProviderError
 from hoshimi.core.providers.keyed import KeyedProvider, account_token
 from hoshimi.core.providers.openai_compat import raise_for_status
@@ -130,7 +131,8 @@ class BedrockProvider(KeyedProvider):
         for account in self.accounts:
             if account_token(account):
                 continue  # Bearer keys do not authorize a control-plane listing.
-            with self._session(boto3, account).client("bedrock", region_name=self._region(account)) as sdk:
+            with self._session(boto3, account).client("bedrock", region_name=self._region(account),
+                                                   config=bedrock_config(self.client, "bedrock", self._region(account))) as sdk:
                 for row in sdk.list_foundation_models(byOutputModality="TEXT")["modelSummaries"]:
                     if row.get("responseStreamingSupported") is not True:
                         continue
@@ -176,7 +178,8 @@ class BedrockProvider(KeyedProvider):
                 yield from bedrock_chunks(events())
             return
         try:
-            with self._session(boto3, account).client("bedrock-runtime", region_name=self._region(account)) as sdk:
+            with self._session(boto3, account).client("bedrock-runtime", region_name=self._region(account),
+                                                   config=bedrock_config(self.client, "bedrock-runtime", self._region(account))) as sdk:
                 response = sdk.converse_stream(**bedrock_payload(body, model))
                 stream = response["stream"]
                 try:

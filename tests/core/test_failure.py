@@ -111,10 +111,11 @@ def test_retryable_is_decided_by_the_table_not_by_the_caller() -> None:
 
 
 def test_a_credential_failure_is_never_read_as_anything_else() -> None:
-    """The pool's first move is renewal, so 401/403 must not become a 5xx."""
+    """A 401 permits renewal; an unexplained 403 must preserve credentials."""
     assert classify_status(401) == UNRECOVERABLE
     assert isinstance(_error(401), AuthFailed)
-    assert isinstance(_error(403), AuthFailed)
+    assert not isinstance(_error(403), AuthFailed)
+    assert _error(403).code == "permission_denied"
     # A body that talks about quota does not rename the credential statuses.
     assert isinstance(_error(401, "rate limit exceeded"), AuthFailed)
 

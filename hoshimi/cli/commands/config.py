@@ -43,7 +43,7 @@ def _mask(data: dict[str, Any]) -> dict[str, Any]:
             if server.get(key):
                 server[key] = "***"
     sensitive = {"api_key", "access_token", "refresh_token", "token", "security_oauth_token", "secret_access_key", "security_token", "user_token",
-                 "aws_access_key_id", "aws_secret_access_key", "aws_session_token", "client_secret", "code_verifier", "dpop_private_key_jwk"}
+                 "aws_access_key_id", "aws_secret_access_key", "aws_session_token", "client_secret", "code_verifier", "dpop_private_key_jwk", "proxy"}
     def redact(value: Any) -> None:
         if isinstance(value, dict):
             for key, item in value.items():
@@ -55,6 +55,7 @@ def _mask(data: dict[str, Any]) -> dict[str, Any]:
             for item in value:
                 redact(item)
     redact(out.get("providers"))
+    redact(out.get("network"))
     return out
 
 

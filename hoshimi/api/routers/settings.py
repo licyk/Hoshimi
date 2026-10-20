@@ -6,6 +6,7 @@ import copy
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body
+from pydantic import Field
 
 from hoshimi.api.deps import ServicesDep
 from hoshimi.api.errors import ERROR_RESPONSES
@@ -32,11 +33,23 @@ class ServerView(Record):
     auto_checkin: bool
 
 
+class NetworkView(Record):
+    mode: str = "auto"
+    proxy_configured: bool = False
+    system_proxy: bool = False
+
+
 class ProviderView(Record):
     id: str
     enabled: bool
     accounts: int
     options: list[str]
+    network: NetworkView = Field(default_factory=lambda: NetworkView(mode="inherit"))
+    client_profile: str | None = None
+
+
+def _network_view(raw: dict[str, Any], default: str = "auto") -> NetworkView:
+    return NetworkView(mode=raw.get("mode", default), proxy_configured=bool(raw.get("proxy")), system_proxy=bool(raw.get("system_proxy")))
 
 
 class SettingsView(Record):
@@ -46,6 +59,7 @@ class SettingsView(Record):
     config_path: str
     server: ServerView
     providers: list[ProviderView]
+    network: NetworkView = Field(default_factory=NetworkView)
 
 
 def _view(services: Services) -> SettingsView:
@@ -53,6 +67,7 @@ def _view(services: Services) -> SettingsView:
     return SettingsView(
         data_dir=str(services.data_dir),
         config_path=str(services.config_path),
+        network=_network_view(settings.network.as_dict()),
         server=ServerView(
             host=settings.host,
             port=settings.port,
@@ -68,7 +83,9 @@ def _view(services: Services) -> SettingsView:
             auto_checkin=settings.auto_checkin,
         ),
         providers=[
-            ProviderView(id=pid, enabled=cfg.enabled, accounts=len(cfg.accounts), options=sorted(cfg.options))
+            ProviderView(id=pid, enabled=cfg.enabled, accounts=len(cfg.accounts), options=sorted(cfg.options),
+                         network=_network_view(cfg.options.get("network") or {}, "inherit"),
+                         client_profile=cfg.options.get("client_profile", "sdk") if pid == "cline" else None)
             for pid, cfg in sorted(settings.providers.items())
         ],
     )

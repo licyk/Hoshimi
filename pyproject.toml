@@ -20,7 +20,7 @@ dependencies = [
     "typer>=0.26.7",
     "rich",
     # The providers' own HTTP calls; also what FastAPI's TestClient needs.
-    "httpx",
+    "httpx[socks]",
     # CodeArts' DPoP proof on the token exchange is an ES256 JWS.
     "cryptography",
 ]

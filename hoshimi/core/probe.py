@@ -29,6 +29,7 @@ from typing import Any
 
 import httpx
 
+from hoshimi.core.net.client import NetworkClient
 from hoshimi.core.providers.base import Provider, QuotaExceeded
 
 STATE_AVAILABLE = "available"
@@ -205,7 +206,11 @@ def probe_catalog(
                 provider, model = targets[cursor]
                 cursor += 1
             try:
-                result = probe_model(_clone(provider, client), model)
+                if isinstance(provider.client, NetworkClient):
+                    with NetworkClient(provider=provider.id, network=provider.client.policy, timeout=timeout) as probe_client:
+                        result = probe_model(_clone(provider, probe_client), model)
+                else:
+                    result = probe_model(_clone(provider, client), model)
             except Exception as exc:  # noqa: BLE001 - cloning can fail on a custom provider
                 result = _result(STATE_UNKNOWN, time.monotonic(), detail=_detail(exc))
             with lock:

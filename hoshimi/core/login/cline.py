@@ -18,6 +18,8 @@ from typing import Any
 import httpx
 
 from hoshimi.core.login.common import LOGIN_TIMEOUT_SECONDS, POLL_MAX_NETWORK_FAILURES, LoginError, poll_pause
+from hoshimi.core.net.profiles import cline_headers
+from hoshimi.core.net.responses import reject_interception
 
 WORK_OS_BASE = "https://api.workos.com"
 WORK_OS_CLIENT_ID = "client_01K3A541FN8TA3EPPHTD2325AR"
@@ -27,12 +29,7 @@ CLINE_API_BASE = "https://api.cline.bot"
 REGISTER_PATH = "/api/v1/auth/register"
 TOKEN_PREFIX = "workos:"
 
-CLIENT_HEADERS = {
-    "HTTP-Referer": "https://cline.bot",
-    "X-Title": "Cline",
-    "X-IS-MULTIROOT": "false",
-    "X-CLIENT-TYPE": "cline-sdk",
-}
+CLIENT_HEADERS = cline_headers()
 
 _FORM = {"Content-Type": "application/x-www-form-urlencoded"}
 
@@ -125,8 +122,9 @@ def start_cline_login(client: httpx.Client, report: Callable[[str], None]) -> di
                 raise LoginError("cline: WorkOS answered without the token pair")
             tokens = {"access_token": access, "refresh_token": refresh}
             break
+        reject_interception(polled, provider="cline")
         error = _str(body, "error")
-        if error in ("authorization_pending", ""):
+        if error == "authorization_pending":
             continue
         if error == "slow_down":
             interval += 1.0
@@ -161,6 +159,7 @@ def start_cline_login(client: httpx.Client, report: Callable[[str], None]) -> di
     if not access:
         raise LoginError("cline: registration returned no access token")
     credential: dict[str, Any] = {
+        "client_profile": "sdk",
         # The station wants the prefix on every request; store it as sent.
         "access_token": access if access.startswith(TOKEN_PREFIX) else TOKEN_PREFIX + access,
         "refresh_token": _str(data, "refreshToken", "refresh_token") or tokens["refresh_token"],
