@@ -126,6 +126,14 @@ separately. TypeSafe exposes classification, not chat.
 
 ## Provider options and integration limits
 
+Conventional providers select native Messages using the actual account protocol.
+`options.messages_passthrough: false` forces compatibility conversion;
+`options.messages_count_tokens: true` declares a native counting endpoint
+(enabled by default for Anthropic). For a translating Chat/Responses upstream,
+`options.structured_outputs: true` declares JSON Schema support. Enable it only
+for models that implement that format. See [Claude Code and Messages](anthropic-api.md)
+for feature boundaries, header preservation and client setup.
+
 - TRAE: `channel` (default `solo_work_lite`), `user_agent`, `app_id`, `ide_version`,
   `ide_version_code`, `os_version`, `device_brand`.
 - ZCode: `app_version` (default `3.14.3`).

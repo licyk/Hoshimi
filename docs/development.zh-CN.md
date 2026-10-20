@@ -30,6 +30,11 @@ python scripts/dev.py wheel        # 构建前端及 wheel / sdist
 其他任务包括 `format`、`typecheck-py`、`web-install`、`web`、`web-dev`、`dev`、
 `openapi`、`typegen`、`typegen-check`，不带参数运行脚本可查看完整列表。
 
+开发依赖包含官方 Anthropic SDK。Messages 回归使用本地模拟上游，由 SDK 消费 JSON
+与流式结果，无需真实凭据；心跳和取消测试单独检查时序及完整 SSE 边界。
+安装了 Claude Code 时，可按[客户端配置](anthropic-api.zh-CN.md#claude-code-配置)
+对网关进行实际接入验证。
+
 ## CI 与发布
 
 自动工作流统一由 `ci.yml` 触发：覆盖 `main`、`hoshimi_main` 的推送、`v*` 标签及 PR。

@@ -44,6 +44,10 @@ station-specific filtering, capability and free-status differences.
 
 ## Reasoning effort
 
+The policy below applies to translated requests. Native Anthropic Messages
+retains the caller's thinking/output configuration and token budget for upstream
+validation rather than running it through the Chat effort policy.
+
 An explicit `reasoning_effort` or `reasoning.effort` activates the effort policy.
 Without a selected level, the policy leaves the body untouched; provider-specific
 protocol translation can still apply its own defaults. Playground's Auto sends

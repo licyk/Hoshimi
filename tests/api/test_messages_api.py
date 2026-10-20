@@ -110,6 +110,25 @@ def test_late_errors_never_send_a_successful_message_stop(client, services, monk
         assert response.json()["error"]["type"] == "api_error"
 
 
+def test_a_quota_error_after_content_never_rotates_and_duplicates_a_turn(client, services, monkeypatch):
+    from hoshimi.core.providers.base import Account, QuotaExceeded
+
+    lane = services.registry.providers["fake"]
+    lane.accounts.append(Account({"id": "second", "access_token": "second"}, provider_id="fake"))
+    calls = []
+
+    def fail(account, model, request):
+        calls.append(account.id)
+        yield {"type": "text_delta", "text": "partial"}
+        raise QuotaExceeded(429, "limit after partial output")
+
+    monkeypatch.setattr(lane, "stream_raw", fail)
+    response = client.post("/v1/messages", json=body(stream=True))
+    assert frames(response)[-1]["type"] == "error"
+    assert len(calls) == 1
+    assert lane.cooler.blocked(lane.id, calls[0])
+
+
 @pytest.mark.parametrize("headers", [{"x-api-key": "relay"}, {"x-api-key": "admin"}, {"Authorization": "Bearer relay"}])
 def test_sdk_credentials_do_not_open_management_routes(services, headers):
     services.settings.access_token = "admin"
@@ -197,6 +216,13 @@ def test_native_provider_preserves_configuration_and_uses_only_its_own_key(servi
             {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 3}},
             {"type": "message_stop"},
         ]
+        if not sent.get("stream"):
+            return httpx.Response(200, json={
+                "id": "msg_native", "type": "message", "role": "assistant", "model": sent["model"],
+                "content": [{"type": "thinking", "thinking": "reason", "signature": "native-signature"}, {"type": "text", "text": "answer"}],
+                "stop_reason": "end_turn", "stop_sequence": None,
+                "usage": {"input_tokens": 2, "cache_read_input_tokens": 9, "output_tokens": 3},
+            })
         return httpx.Response(200, text="".join("data: " + json.dumps(frame) + "\n\n" for frame in native), headers={"content-type": "text/event-stream"})
 
     upstream = httpx.Client(transport=httpx.MockTransport(handle))

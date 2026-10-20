@@ -117,6 +117,10 @@ class Turn:
             self._ok = False
             self.finish()
             raise
+        finally:
+            close = getattr(chunks, "close", None)
+            if close is not None:
+                close()
         self.finish()
 
     def fail(self) -> None:

@@ -42,7 +42,7 @@ def _text(value: Any, field: str) -> str:
     return value
 
 
-def _parts(content: Any, *, native: bool = False) -> list[dict[str, Any]]:
+def _parts(content: Any, *, native: bool = False, definitions: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Convert text/images without fetching user-supplied URLs."""
     if isinstance(content, str):
         return [{"type": "text", "text": content}]
@@ -70,12 +70,22 @@ def _parts(content: Any, *, native: bool = False) -> list[dict[str, Any]]:
             else:
                 raise ValidationError("Unsupported image source.")
             result.append({"type": "image_url", "image_url": {"url": url}})
+        elif kind == "tool_reference" and definitions is not None:
+            name = block.get("tool_name")
+            definition = definitions.get(name) if isinstance(name, str) else None
+            _require(isinstance(definition, dict), f"Unknown tool_reference: {name!r}.")
+            result.append({"type": "text", "text": "Available tool: " + json.dumps(definition, ensure_ascii=False)})
+        elif kind == "document":
+            source = block.get("source")
+            _require(isinstance(source, dict) and source.get("type") == "text" and isinstance(source.get("data"), str),
+                     "This upstream requires native Messages for document sources other than plain text.")
+            result.append({"type": "text", "text": source["data"]})
         else:
             raise ValidationError(f"Unsupported content block: {kind!r}.")
     return result
 
 
-def _message(message: Any, *, native: bool) -> list[dict[str, Any]]:
+def _message(message: Any, *, native: bool, definitions: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     _require(isinstance(message, dict), "Messages must be objects.")
     role = message.get("role")
     _require(role in ("user", "assistant"), "Messages roles must be user or assistant; use top-level system.")
@@ -103,13 +113,13 @@ def _message(message: Any, *, native: bool) -> list[dict[str, Any]]:
             call_id = _text(block.get("tool_use_id"), "tool_result.tool_use_id")
             _require(bool(call_id), "tool_result requires tool_use_id.")
             value = block.get("content", "")
-            result: dict[str, Any] = {"role": "tool", "tool_call_id": call_id, "content": value if isinstance(value, str) else _parts(value, native=native)}
+            result: dict[str, Any] = {"role": "tool", "tool_call_id": call_id, "content": value if isinstance(value, str) else _parts(value, native=native, definitions=definitions)}
             if "is_error" in block:
                 _require(isinstance(block["is_error"], bool), "is_error must be a boolean.")
                 if native:
                     result["is_error"] = block["is_error"]
                 elif block["is_error"]:
-                    result["content"] = [{"type": "text", "text": "Tool execution failed."}, *_parts(value)]
+                    result["content"] = [{"type": "text", "text": "Tool execution failed."}, *_parts(value, definitions=definitions)]
             results.append(result)
         elif kind in ("thinking", "redacted_thinking"):
             _require(role == "assistant", "Thinking belongs in assistant messages.")
@@ -139,7 +149,22 @@ def _message(message: Any, *, native: bool) -> list[dict[str, Any]]:
     return results
 
 
-def messages_to_chat(body: dict[str, Any], *, native: bool = False, count_only: bool = False) -> dict[str, Any]:
+def validate_messages_request(body: dict[str, Any], *, count_only: bool = False) -> None:
+    """Validate the envelope while leaving native extension schemas to the upstream."""
+    _require(isinstance(body.get("model"), str) and bool(body["model"].strip()), "model is required.")
+    _require(isinstance(body.get("messages"), list) and bool(body["messages"]), "messages must be a non-empty array.")
+    _require(isinstance(body.get("stream", False), bool), "stream must be a boolean.")
+    if not count_only:
+        maximum = body.get("max_tokens")
+        _require(isinstance(maximum, int) and not isinstance(maximum, bool) and maximum >= 0, "max_tokens must be a non-negative integer.")
+    for message in body["messages"]:
+        _require(isinstance(message, dict) and isinstance(message.get("role"), str), "Messages require role and content.")
+        _require(isinstance(message.get("content"), (str, list)), "Message content must be a string or an array.")
+    if "tools" in body:
+        _require(isinstance(body["tools"], list), "tools must be an array.")
+
+
+def messages_to_chat(body: dict[str, Any], *, native: bool = False, count_only: bool = False, structured_output: bool = False) -> dict[str, Any]:
     """Keep upstream model IDs and tool identities; reject unsupported agent features."""
     _require(isinstance(body.get("model"), str) and bool(body["model"].strip()), "model is required.")
     maximum = body.get("max_tokens")
@@ -148,14 +173,17 @@ def messages_to_chat(body: dict[str, Any], *, native: bool = False, count_only: 
     _require(isinstance(body.get("messages"), list) and bool(body["messages"]), "messages must be a non-empty array.")
     _require(isinstance(body.get("stream", False), bool), "stream must be a boolean.")
     for unsupported in ("mcp_servers", "container", "context_management"):
-        _require(not body.get(unsupported), f"{unsupported} is not supported by this stateless endpoint.")
+        _require(not body.get(unsupported), f"{unsupported} requires a native Messages upstream.")
+    source_tools = body.get("tools", [])
+    _require(isinstance(source_tools, list), "tools must be an array.")
+    definitions = {tool["name"]: tool for tool in source_tools if isinstance(tool, dict) and isinstance(tool.get("name"), str)}
     messages: list[dict[str, Any]] = []
     if body.get("system") is not None:
         system = _parts(body["system"], native=native)
         _require(all(part["type"] == "text" for part in system), "system supports text only.")
         messages.append({"role": "system", "content": system})
     for message in body["messages"]:
-        messages.extend(_message(message, native=native))
+        messages.extend(_message(message, native=native, definitions=definitions))
     result: dict[str, Any] = {"model": body["model"], "messages": messages, "stream": body.get("stream", False)}
     if maximum is not None:
         result["max_tokens"] = maximum
@@ -173,7 +201,7 @@ def messages_to_chat(body: dict[str, Any], *, native: bool = False, count_only: 
     _require(isinstance(tools, list), "tools must be an array.")
     mapped: list[dict[str, Any]] = []
     for tool in tools:
-        _require(isinstance(tool, dict) and tool.get("type") in (None, "custom"), "Only client function tools are supported.")
+        _require(isinstance(tool, dict) and tool.get("type") in (None, "custom"), "tools containing server tool types require a native Messages upstream.")
         _require(isinstance(tool.get("name"), str) and bool(tool["name"]) and isinstance(tool.get("input_schema"), dict), "Tools require name and input_schema.")
         fn = {"name": tool["name"], "parameters": deepcopy(tool["input_schema"])}
         for field in ("description", "strict"):
@@ -210,8 +238,13 @@ def messages_to_chat(body: dict[str, Any], *, native: bool = False, count_only: 
             _require(count_only or budget < maximum, "thinking.budget_tokens must be less than max_tokens.")
     if output is not None:
         _require(isinstance(output, dict), "output_config must be an object.")
-        _require(not output.get("format"), "Structured output is not supported by this endpoint.")
-        _require(output.get("effort") in (None, "low", "medium", "high", "max"), "Unsupported output_config.effort.")
+        _require(not output.get("format") or structured_output, "output_config.format requires native Messages or a provider with options.structured_outputs enabled.")
+        _require(not output.get("task_budget"), "output_config.task_budget requires a native Messages upstream.")
+        _require(output.get("effort") in (None, "low", "medium", "high", "xhigh", "max"), "Unsupported output_config.effort.")
+        if output.get("format"):
+            shape = output["format"]
+            _require(isinstance(shape, dict) and shape.get("type") == "json_schema" and isinstance(shape.get("schema"), dict), "Invalid output_config.format JSON schema.")
+            result["response_format"] = {"type": "json_schema", "json_schema": {"name": "response", "schema": deepcopy(shape["schema"]), "strict": True}}
     if native:
         for field in ("thinking", "output_config", "metadata"):
             if body.get(field) is not None:

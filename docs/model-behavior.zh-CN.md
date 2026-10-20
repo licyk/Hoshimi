@@ -31,6 +31,9 @@ models.dev 仅补充未声明 ID 的视觉与思考能力，不提供上下文�
 
 ## 思考强度
 
+以下策略用于转换请求。原生 Anthropic Messages 保留调用方思考、输出配置和 Token
+预算，由上游校验，不再经过 Chat 强度策略重写。
+
 只有显式传入 `reasoning_effort` 或 `reasoning.effort` 才应用强度策略。
 未选择档位时策略不修改请求体，但供应商协议转换仍可能应用自身默认值。
 Playground 自动模式不发送档位；调用方已有 Token 限制参与预算计算。

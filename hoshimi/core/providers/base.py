@@ -7,7 +7,7 @@ import random
 import threading
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any, ClassVar
 
 import httpx
@@ -36,6 +36,9 @@ class ProviderError(UpstreamError):
         # retryable and names no time, a 401 names none either, and only a
         # rate limit speaks about both.
         self.retry_after = retry_after
+        self.response_body: bytes | None = None
+        self.response_headers: dict[str, str] = {}
+        self.should_retry: bool | None = None
         if 400 <= status < 600:
             # Pass a meaningful upstream status through to the client.
             self.http_status = status
@@ -285,6 +288,10 @@ class Provider(ABC):
         cached = self._models_cache
         return len(cached) if cached is not None else None
 
+    def cached_model_ids(self) -> list[str]:
+        """Read the last catalogue without starting discovery or taking its lock."""
+        return list(self._models_cache or [])
+
     def models(self) -> list[str]:
         now = time.time()
         cached = self._models_cache
@@ -380,7 +387,26 @@ class Provider(ABC):
 
     def stream(self, model: str, body: dict[str, Any]) -> Iterator[dict[str, Any]]:
         """Yield normalized chunks, rotating accounts on quota/auth errors."""
-        candidates = self._stream_candidates(model)
+        return self.stream_using(model, body, self.stream_raw)
+
+    def messages_endpoint(self, account: Account, model: str, *, count_only: bool = False) -> str | None:
+        """Return an account's native Messages URL, or require translation."""
+        return None
+
+    def messages_headers(self, account: Account, model: str) -> dict[str, str]:
+        """Supply upstream credentials for a supported native Messages endpoint."""
+        return {}
+
+    def stream_using(
+        self,
+        model: str,
+        body: dict[str, Any],
+        send: Callable[[Account, str, dict[str, Any]], Iterator[dict[str, Any]]],
+        *,
+        candidates: list[Account] | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        """Share credential rotation and retry policy between inference protocols."""
+        candidates = self._stream_candidates(model) if candidates is None else candidates
         if not candidates:
             raise ProviderError(401, f"No accounts configured for provider {self.id!r}.")
 
@@ -414,10 +440,11 @@ class Provider(ABC):
             elif len(tried) >= attempts:
                 break
             tried.add(account.id)
+            iterator: Iterator[dict[str, Any]] | None = None
             try:
                 # Consume lazily; quota errors can also surface mid-stream.
                 revision = account.auth_revision
-                iterator = self.stream_raw(account, model, body)
+                iterator = send(account, model, body)
                 while True:
                     try:
                         chunk = next(iterator)
@@ -434,14 +461,17 @@ class Provider(ABC):
                 raise
             except ProviderError as exc:
                 last_error = exc
+                stop = emitted or exc.should_retry is False
                 if isinstance(exc, PolicyBlocked):
                     # Account-scoped, and the credential is not the problem:
                     # rotate, do not renew, and hold the account back or the
                     # next turn picks it first and burns the same round again.
                     self.cooler.hold(self.id, account.id, self.policy_block_seconds, reason="policy_blocked")
+                    if stop:
+                        raise
                     continue
                 if isinstance(exc, AuthFailed):
-                    if emitted:
+                    if stop:
                         raise  # A second account would duplicate the partial answer.
                     # Account-scoped by definition: the credentials are what
                     # failed, so renewal or another account is the answer.
@@ -469,7 +499,11 @@ class Provider(ABC):
                         self.quota_hold_seconds if held is None else held,
                         reason="rate_limited",
                     )
+                    if stop:
+                        raise
                     continue
+                if stop:
+                    raise
                 if isinstance(exc, ModelGone):
                     # Id-scoped: keep asking, because a station with a
                     # per-account catalogue may still carry it for someone else.
@@ -480,6 +514,10 @@ class Provider(ABC):
                 if not is_recoverable(exc.status):
                     break
                 continue
+            finally:
+                close = getattr(iterator, "close", None)
+                if close is not None:
+                    close()
 
         if last_error is not None:
             raise last_error

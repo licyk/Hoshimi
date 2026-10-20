@@ -20,6 +20,9 @@ def request_payload(body: dict[str, Any], model: str, wire: str) -> dict[str, An
         return build_anthropic_body(body, model=model, extra=extra)
     if wire == "responses":
         payload = chat_to_responses(body, model=model)
+        response_format = body.get("response_format")
+        if isinstance(response_format, dict) and response_format.get("type") == "json_schema":
+            payload["text"] = {"format": {"type": "json_schema", **response_format["json_schema"]}}
         for key in ("reasoning", "include", "text", "parallel_tool_calls", "prompt_cache_key", "service_tier"):
             if key in body:
                 payload[key] = body[key]

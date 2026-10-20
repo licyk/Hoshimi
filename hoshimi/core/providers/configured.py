@@ -128,6 +128,21 @@ class ConfiguredProvider(KeyedProvider):
             headers["x-opencode-session"] = session_for_conversation(str(body.get("session_id") or body.get("user") or "global"))
         yield from stream_http(self.client, provider=self.id, url=f"{self.endpoint_base(account)}{suffix}", headers=headers, payload=payload, wire=wire)
 
+    def messages_endpoint(self, account: Account, model: str, *, count_only: bool = False) -> str | None:
+        # Dedicated subclasses own different envelopes/URLs. A Messages model
+        # spec alone is not authority to bypass their protocol adapters.
+        if self.id not in REGULAR_IDS or self.wire_for(model, account) != "messages":
+            return None
+        if self.options.get("messages_passthrough") is False:
+            return None
+        if count_only and not self.options.get("messages_count_tokens", self.id == "anthropic"):
+            return None
+        suffix = "/v1/messages" if self.id == "github-copilot" else "/messages"
+        return f"{self.endpoint_base(account)}{suffix}{'/count_tokens' if count_only else ''}"
+
+    def messages_headers(self, account: Account, model: str) -> dict[str, str]:
+        return self.build_headers(account, model)
+
     def specs(self) -> dict[str, ModelSpec]:
         rows = {model: replace(spec_from_row(model, self.id, self.listing_rows.get(model, {})), wire=self.wire_for(model, next((a for a in self.accounts if model in self._account_rows.get(a.id, {})), None))) for model in self.models()}
         profile = CHAT_PROFILES.get(self.id)

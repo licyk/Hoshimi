@@ -26,8 +26,8 @@ accepts `x-api-key`. See [authentication](authentication.md) for key boundaries.
 | --- | --- |
 | `POST /v1/chat/completions` | Streaming by default; `stream: false` returns JSON |
 | `POST /v1/responses` | Stateless Responses translated internally to Chat |
-| `POST /v1/messages` | Anthropic Messages; JSON by default, SSE with `stream: true` |
-| `POST /v1/messages/count_tokens` | Local input-token estimate |
+| `POST /v1/messages` | Native forwarding where supported, otherwise protocol conversion; JSON by default, SSE with `stream: true` |
+| `POST /v1/messages/count_tokens` | Native counting where declared, otherwise a marked local estimate |
 | `GET /v1/models` | JSON model catalogue |
 | `GET /v1/classifiers`, `POST /v1/classify` | TypeSafe classification |
 | `GET /health` | Public liveness probe |
@@ -37,6 +37,11 @@ with `400`; send the full conversation history. Tools, supported input conversio
 and streaming events pass through the protocol translator. Compatibility with one
 protocol does not imply that every upstream model supports every feature.
 See [Anthropic agents](anthropic-api.md) for Messages-specific behavior.
+Native Messages retains upstream extension fields and protocol/error metadata.
+Converted structured output requires the provider's explicit `structured_outputs`
+option; this does not change the direct `/v1/responses` limitations above.
+`GET /v1/models?limit=1000` provides bounded startup discovery and display names
+for Claude Code while retaining the OpenAI-compatible `data` list.
 
 ## Model routing
 

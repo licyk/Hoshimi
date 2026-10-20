@@ -116,6 +116,12 @@ LM Studio 使用已加载上下文并做粗略超限检查，Ollama 读取原生
 
 ## 供应商选项与限制
 
+常规供应商根据实际账户协议选择原生 Messages。`options.messages_passthrough: false`
+强制兼容转换，`options.messages_count_tokens: true` 声明原生计数端点（Anthropic 默认
+开启）。转换到 Chat 或 Responses 时，`options.structured_outputs: true` 声明 JSON
+Schema 支持，仅对确实支持该格式的模型开启。能力边界、协议头和客户端配置见
+[Claude Code 与 Messages](anthropic-api.zh-CN.md)。
+
 - TRAE：`channel`（默认 `solo_work_lite`）、`user_agent`、`app_id`、`ide_version`、
   `ide_version_code`、`os_version`、`device_brand`。
 - ZCode：`app_version`（默认 `3.14.3`）。

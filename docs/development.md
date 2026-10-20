@@ -31,6 +31,12 @@ python scripts/dev.py wheel        # web build + wheel/sdist in dist/
 `dev.py` also has `format`, `typecheck-py`, `web-install`, `web`, `web-dev`, `dev`,
 `openapi`, `typegen`, and `typegen-check`. Run it without arguments to see the full list.
 
+The development extra includes the official Anthropic SDK. Messages regression
+tests use SDK JSON and stream helpers against a local mock upstream; no real
+provider credentials are required. Heartbeat/cancellation tests separately check
+timing and complete SSE-frame boundaries. Real Claude Code can also be exercised
+against a configured gateway using the [client setup](anthropic-api.md#claude-code-configuration).
+
 ## CI and releases
 
 CI uses one automatic entry point, `ci.yml`, for pushes to `main` and `hoshimi_main`,

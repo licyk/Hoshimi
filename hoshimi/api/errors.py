@@ -12,11 +12,12 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import Field
 
 from hoshimi.api.paths import route_path
 from hoshimi.core.errors import HoshimiError, ModelNotFoundError, UpstreamError, ValidationError
+from hoshimi.core.providers.base import ProviderError
 from hoshimi.core.record import Record
 
 # Domain code -> the ``type`` OpenAI clients expect.
@@ -84,9 +85,11 @@ def error_response(status: int, code: str, message: str, detail: dict[str, Any] 
     return JSONResponse(status_code=status, content={"code": code, "message": message, "detail": detail or {}}, headers=headers)
 
 
-async def _domain_error(request: Request, exc: Exception) -> JSONResponse:
+async def _domain_error(request: Request, exc: Exception) -> Response:
     assert isinstance(exc, HoshimiError)
     if is_messages_path(route_path(request.scope)):
+        if isinstance(exc, ProviderError) and exc.response_body is not None:
+            return Response(content=exc.response_body, status_code=exc.http_status, headers=exc.response_headers)
         return JSONResponse(status_code=exc.http_status, content=anthropic_error(exc.message, exc.http_status))
     if route_path(request.scope).startswith("/v1/"):
         payload = openai_error(exc.message, error_type_for(exc), code=exc.code if exc.code != "internal_error" else None)

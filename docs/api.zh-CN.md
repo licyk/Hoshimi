@@ -26,8 +26,8 @@ curl http://127.0.0.1:10600/v1/chat/completions \
 | --- | --- |
 | `POST /v1/chat/completions` | 默认流式输出，`stream: false` 返回 JSON |
 | `POST /v1/responses` | 无状态 Responses，内部转换为 Chat |
-| `POST /v1/messages` | Anthropic Messages，默认 JSON，`stream: true` 使用 SSE |
-| `POST /v1/messages/count_tokens` | 本地输入 Token 估算 |
+| `POST /v1/messages` | 支持时原生转发，否则协议转换；默认 JSON，`stream: true` 使用 SSE |
+| `POST /v1/messages/count_tokens` | 已声明时调用原生计数，否则标识为本地估算 |
 | `GET /v1/models` | JSON 模型目录 |
 | `GET /v1/classifiers`、`POST /v1/classify` | TypeSafe 分类 |
 | `GET /health` | 公开健康检查 |
@@ -36,6 +36,10 @@ Responses 不支持 `previous_response_id` 和结构化输出 `text.format`，�
 `400`，请发送完整历史。工具、支持的输入和流式事件通过协议转换器处理。
 接口兼容不代表每个上游模型都支持所有功能。
 Messages 详见 [Anthropic Agent 接入](anthropic-api.zh-CN.md)。
+原生 Messages 保留上游扩展字段和协议、错误元信息。转换结构化输出需要供应商显式开启
+`structured_outputs`，不改变上述直接 `/v1/responses` 的限制。
+`GET /v1/models?limit=1000` 为 Claude Code 提供有等待上限的启动发现和展示名，
+同时保留 OpenAI 兼容的 data 列表。
 
 ## 模型路由
 

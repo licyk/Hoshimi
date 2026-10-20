@@ -1126,9 +1126,15 @@ export interface components {
         };
         /** MessageUsage */
         MessageUsage: {
-            /** Cache Creation Input Tokens */
+            /**
+             * Cache Creation Input Tokens
+             * @default 0
+             */
             cache_creation_input_tokens: number;
-            /** Cache Read Input Tokens */
+            /**
+             * Cache Read Input Tokens
+             * @default 0
+             */
             cache_read_input_tokens: number;
             /** Input Tokens */
             input_tokens: number;
@@ -1152,6 +1158,11 @@ export interface components {
              * @default 0
              */
             created: number;
+            /**
+             * Display Name
+             * @default
+             */
+            display_name: string;
             /** Free */
             free: boolean | null;
             /** Id */
@@ -2187,7 +2198,9 @@ export interface operations {
     };
     list_playground_models: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2201,6 +2214,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModelList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -2952,7 +2974,9 @@ export interface operations {
     };
     list_models: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2966,6 +2990,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModelList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

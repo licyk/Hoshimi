@@ -215,3 +215,62 @@ def test_tool_error_metadata_is_portable_for_chat():
     result = chat["messages"][0]
     assert "is_error" not in result
     assert result["content"] == [{"type": "text", "text": "Tool execution failed."}, {"type": "text", "text": "failed"}]
+
+
+def test_deferred_client_tools_and_references_expand_for_chat_without_execution():
+    definition = {"name": "Read", "description": "Read a file", "input_schema": {"type": "object"}, "defer_loading": True}
+    body = request(tools=[definition], messages=[{"role": "user", "content": [{
+        "type": "tool_result", "tool_use_id": "toolu_search", "content": [{"type": "tool_reference", "tool_name": "Read"}],
+    }]}])
+    translated = messages_to_chat(body)
+    assert translated["tools"][0]["function"]["name"] == "Read"
+    assert json.loads(translated["messages"][0]["content"][0]["text"].removeprefix("Available tool: ")) == definition
+    body["messages"][0]["content"][0]["content"][0]["tool_name"] = "Missing"
+    with pytest.raises(ValidationError, match="Unknown tool_reference"):
+        messages_to_chat(body)
+
+
+def test_xhigh_and_plain_text_documents_translate_for_chat():
+    translated = messages_to_chat(request(output_config={"effort": "xhigh"}, messages=[{"role": "user", "content": [{
+        "type": "document", "source": {"type": "text", "media_type": "text/plain", "data": "file contents"},
+    }]}]))
+    assert translated["reasoning_effort"] == "xhigh"
+    assert translated["messages"][0]["content"] == [{"type": "text", "text": "file contents"}]
+
+
+def test_structured_output_needs_declared_support_and_maps_to_each_upstream_wire():
+    body = request(output_config={"format": {"type": "json_schema", "schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}}}})
+    with pytest.raises(ValidationError, match="options.structured_outputs"):
+        messages_to_chat(body)
+    translated = messages_to_chat(body, structured_output=True)
+    assert request_payload(translated, "model", "chat")["response_format"]["json_schema"]["schema"] == body["output_config"]["format"]["schema"]
+    assert request_payload(translated, "model", "responses")["text"]["format"]["schema"] == body["output_config"]["format"]["schema"]
+
+
+def test_counting_envelope_accepts_native_blocks_without_applying_chat_constraints():
+    from hoshimi.core.translate.messages import validate_messages_request
+
+    validate_messages_request({"model": "m", "messages": [{"role": "user", "content": [{"type": "document", "source": {"type": "base64", "data": "opaque"}}]}]}, count_only=True)
+
+
+def test_gateway_discovery_does_not_wait_for_a_slow_provider(services, monkeypatch):
+    import threading
+    import time
+
+    release = threading.Event()
+    provider = services.registry.providers["fake"]
+    provider.accounts[0].set("models", ["declared-claude"])
+
+    def slow():
+        release.wait(2)
+        return {}
+
+    monkeypatch.setattr(provider, "specs", slow)
+    try:
+        started = time.monotonic()
+        rows = services.registry.quick_models(timeout=0.01)
+        assert time.monotonic() - started < 0.5
+        assert rows == [("declared-claude", "fake", None)]
+    finally:
+        release.set()
+        services.close()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Iterator
+from concurrent.futures import wait
 from typing import Any
 
 import httpx
@@ -13,8 +14,9 @@ from hoshimi.core.discovery import CatalogDiscovery
 from hoshimi.core.effort import apply_effort
 from hoshimi.core.errors import ModelNotFoundError, ModelUnavailableError
 from hoshimi.core.failure import DeadModelStore
+from hoshimi.core.native_messages import MessagesRequest, stream_native_messages
 from hoshimi.core.providers import PROVIDER_ORDER, build_providers
-from hoshimi.core.providers.base import ModelGone, Provider
+from hoshimi.core.providers.base import Account, ModelGone, Provider
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +122,32 @@ class Registry:
             self.dead_models.strike(key[0], key[1], reason=f"HTTP {exc.status}")
             raise
 
+    def native_messages(self, model: str, context: MessagesRequest) -> Iterator[dict[str, Any]] | None:
+        """Route native requests through compatible accounts without Chat conversion."""
+        provider, upstream_model = self.resolve(model)
+        candidates = [account for account in provider._stream_candidates(upstream_model)
+                      if provider.messages_endpoint(account, upstream_model, count_only=context.count_only) is not None]
+        if not candidates:
+            return None
+        if not context.count_only and self.dead_models.is_dead(provider.id, upstream_model):
+            raise ModelUnavailableError(f"{provider.id}/{upstream_model} is temporarily unavailable.")
+
+        def send(account: Account, selected: str, _body: dict[str, Any]) -> Iterator[dict[str, Any]]:
+            return stream_native_messages(provider, account, selected, context)
+
+        def guarded() -> Iterator[dict[str, Any]]:
+            try:
+                for chunk in provider.stream_using(upstream_model, context.body, send, candidates=candidates):
+                    if chunk.get("type") == "messages_response" and not context.count_only:
+                        self.dead_models.clear(provider.id, upstream_model)
+                    yield chunk
+            except ModelGone as exc:
+                if not context.count_only:
+                    self.dead_models.strike(provider.id, upstream_model, reason=f"HTTP {exc.status}")
+                raise
+
+        return guarded()
+
     def spec(self, model: str) -> ModelSpec | None:
         """The capability spec behind a requested model, or None when unroutable."""
         try:
@@ -167,6 +195,27 @@ class Registry:
                 seen.add(model_id)
                 out.append(spec)
         return out
+
+    def quick_models(self, *, timeout: float = 2.0) -> list[tuple[str, str, ModelSpec | None]]:
+        """Bound startup discovery, retaining cached and configured IDs on timeout."""
+        providers = self.ordered_providers()
+        pending = [self.discovery.submit(provider) for _id, provider in providers]
+        if pending:
+            wait(pending, timeout=timeout)
+        result: list[tuple[str, str, ModelSpec | None]] = []
+        seen: set[str] = set()
+        for provider_id, provider in providers:
+            specs = self.discovery.cached(provider).specs
+            declared = []
+            for account in provider.accounts:
+                models = account.get("models", provider.options.get("models", []))
+                if isinstance(models, list):
+                    declared.extend(model for model in models if isinstance(model, str))
+            for model in list(specs) or provider.cached_model_ids() or declared or provider.fallback_models():
+                if model not in seen:
+                    seen.add(model)
+                    result.append((model, provider_id, specs.get(model)))
+        return result
 
     def close(self) -> None:
         self.discovery.close()
