@@ -3,8 +3,12 @@ import { ref } from 'vue';
 import AppIcon from '@/ui/AppIcon.vue';
 import { Search, X } from '@/ui/icons';
 
-/** A pill-shaped search bar. Emits ``search`` on Enter; v-model follows every keystroke. */
-defineProps<{ placeholder?: string; label?: string }>();
+/**
+ * A pill-shaped search bar. Emits ``search`` on Enter; v-model follows every keystroke. ``compact``
+ * is the 40px bar that sits in a row of filter chips under a section's title, rather than the
+ * 56px bar that heads a page.
+ */
+withDefaults(defineProps<{ placeholder?: string; label?: string; compact?: boolean }>(), { placeholder: undefined, label: undefined, compact: false });
 const model = defineModel<string>({ default: '' });
 const emit = defineEmits<{ search: [string] }>();
 const input = ref<HTMLInputElement | null>(null);
@@ -18,8 +22,8 @@ defineExpose({ focus: () => input.value?.focus() });
 </script>
 
 <template>
-  <label class="search state-layer">
-    <AppIcon :icon="Search" :size="24" class="lead" />
+  <label class="search state-layer" :class="{ compact }">
+    <AppIcon :icon="Search" :size="compact ? 20 : 24" class="lead" />
     <input
       ref="input"
       v-model="model"
@@ -41,11 +45,14 @@ defineExpose({ focus: () => input.value?.focus() });
   border-radius: var(--md-sys-shape-corner-full); background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface-variant);
   min-width: 0; cursor: text;
 }
+.search.compact { height: 40px; padding: 0 var(--app-space-1) 0 var(--app-space-3); }
+.search.compact .clear { width: 32px; height: 32px; }
 .search:focus-within { outline: 2px solid var(--md-sys-color-primary); outline-offset: -2px; }
 input {
   flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--md-sys-color-on-surface);
   font: inherit; font-size: var(--md-sys-typescale-body-large-size);
 }
+.compact input { font-size: var(--md-sys-typescale-body-medium-size); }
 input::-webkit-search-cancel-button { display: none; }
 /* An example, not a value: lighter than typed text, as in TextField. */
 input::placeholder { color: var(--md-sys-color-outline); opacity: 1; }

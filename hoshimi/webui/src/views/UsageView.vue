@@ -248,7 +248,8 @@ const callColumns = computed<Column[]>(() => [
   { key: 'at', label: t('usage.at'), width: '96px' },
   { key: 'model', label: t('usage.model') },
   { key: 'route', label: t('usage.route'), width: 'minmax(0, 0.8fr)', minWidth: 760 },
-  { key: 'tokens', label: t('usage.tokens'), align: 'end', width: '80px' },
+  // Left out on a phone before the model is: there the time, the model and the status are what fit.
+  { key: 'tokens', label: t('usage.tokens'), align: 'end', width: '80px', minWidth: 440 },
   { key: 'cache_read', label: t('usage.cachedShort'), align: 'end', width: '72px', minWidth: 900 },
   { key: 'ttft_ms', label: t('usage.ttft'), align: 'end', width: '80px', minWidth: 560 },
   { key: 'elapsed_ms', label: t('usage.elapsed'), align: 'end', width: '80px', minWidth: 640 },
@@ -443,11 +444,15 @@ watch(slice, () => (detailOpen.value = false));
 
       <div ref="callsSection" class="anchor">
         <PageSection :title="t('usage.calls')" :subtitle="t('usage.callsHint')" :icon="icons.ListChecks">
-          <template #actions>
-            <SearchField v-model="callSearch" class="call-search" :label="t('usage.searchCalls')" :placeholder="t('usage.searchCalls')" />
-            <Chip :label="t('usage.failedOnly')" :icon="icons.CircleX" :selected="failedOnly" @click="failedOnly = !failedOnly" />
-            <Chip v-if="narrowed" :label="focusLabel" selected removable @remove="clearFocus" @click="clearFocus" />
-          </template>
+          <!-- The list's own filters: a row under the title, the search first and widest, then the
+               chips that narrow it. Not in the title's actions, which hold a few compact buttons. -->
+          <div class="call-filters" role="search" :aria-label="t('usage.searchCalls')">
+            <SearchField v-model="callSearch" compact class="call-search" :label="t('usage.searchCalls')" :placeholder="t('usage.searchCalls')" />
+            <div class="call-chips">
+              <Chip :label="t('usage.failedOnly')" :icon="icons.CircleX" :selected="failedOnly" @click="failedOnly = !failedOnly" />
+              <Chip v-if="narrowed" :label="focusLabel" selected removable @remove="clearFocus" @click="clearFocus" />
+            </div>
+          </div>
           <FadeSwap>
             <DataTable
               :key="callsKey"
@@ -507,7 +512,10 @@ watch(slice, () => (detailOpen.value = false));
 .day-nav { display: inline-flex; align-items: center; gap: var(--app-space-1); }
 .day-button { min-width: 0; }
 .note { margin: 0; padding: var(--app-space-6) 0; text-align: center; }
-.call-search { width: min(260px, 100%); }
+.call-filters { display: flex; flex-wrap: wrap; align-items: center; gap: var(--app-space-2) var(--app-space-3); }
+/* Grows to a comfortable width, then stops; on a narrow screen it takes the row and the chips wrap under it. */
+.call-search { flex: 1 1 240px; max-width: 400px; }
+.call-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--app-space-2); min-width: 0; }
 .now { position: relative; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--app-space-3); }
 .speed { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--app-space-4); }
 .speed-chart { display: flex; flex-direction: column; gap: var(--app-space-2); min-width: 0; }
