@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -151,19 +152,59 @@ def test_balance_skips_lanes_without_an_endpoint(tmp_path: Any) -> None:
     assert rows[0].available == 5000
 
 
-def test_the_store_survives_a_restart_and_ignores_corruption(tmp_path: Any) -> None:
-    path = tmp_path / CHECKIN_FILE_NAME
-    store = CheckinStore(path)
+def test_the_store_survives_a_restart(tmp_path: Any) -> None:
+    store = CheckinStore(tmp_path / CHECKIN_FILE_NAME)
     store.doc.last_date = "2026-10-11"
     store.doc.last_result = "1 claimed"
     store.save()
+    store.close()
 
-    reloaded = CheckinStore(path)
+    reloaded = CheckinStore(tmp_path / CHECKIN_FILE_NAME)
     assert reloaded.doc.last_date == "2026-10-11"
+    assert reloaded.doc.last_result == "1 claimed"
 
-    path.write_text("{ not json", encoding="utf-8")
-    fresh = CheckinStore(path)
+
+def test_a_checkin_json_is_imported_once_and_a_corrupt_one_ignored(tmp_path: Any) -> None:
+    path = tmp_path / CHECKIN_FILE_NAME
+    path.write_text(json.dumps({"last_date": "2026-10-11", "last_result": "2 claimed", "last_at": 5.0, "channels": [{"provider": "cline", "text": "ok"}]}), encoding="utf-8")
+    store = CheckinStore(path)
+    assert (store.doc.last_date, store.doc.last_result, store.doc.last_at) == ("2026-10-11", "2 claimed", 5.0)
+    assert store.doc.channels == [{"provider": "cline", "text": "ok"}]
+    assert not path.exists() and (tmp_path / f"{CHECKIN_FILE_NAME}.migrated").is_file()
+
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / CHECKIN_FILE_NAME).write_text("{ not json", encoding="utf-8")
+    fresh = CheckinStore(other / CHECKIN_FILE_NAME)
     assert fresh.doc.last_date == ""
+    assert (other / f"{CHECKIN_FILE_NAME}.corrupt").is_file()
+
+
+def test_every_claim_lands_in_the_history(tmp_path: Any) -> None:
+    service, provider = _service(tmp_path, [{"id": "a", "access_token": "t"}, {"id": "b", "access_token": "t"}])
+    provider.claim_result = ClaimOutcome("cline", "a", CLAIM_CLAIMED, credits=100, message="+100")
+    service.run_daily()
+    provider.claim_result = ClaimOutcome("cline", "b", CLAIM_FAILED, message="network down")
+    service.claim("cline")  # an on-demand claim is history too
+    provider.claim_result = ClaimOutcome("cline", "a", CLAIM_UNSUPPORTED)
+    service.claim()  # "no endpoint" is not an outcome worth a row
+
+    rows = service.store.history()
+    assert [(row["status"], row["ok"], row["message"]) for row in rows[:2]] == [("failed", False, "network down"), ("failed", False, "network down")]
+    assert [(row["status"], row["ok"], row["credits"], row["message"]) for row in rows[2:]] == [("claimed", True, 100, "+100"), ("claimed", True, 100, "+100")]
+    assert all(row["date"] == utc8_today(row["at"]) for row in rows)
+    assert service.store.history("other") == []
+    assert len(service.store.history(limit=1)) == 1
+    assert [len(rows) for rows in service.store.recent_by_provider(3).values()] == [3]
+
+
+def test_history_keeps_a_year(tmp_path: Any) -> None:
+    store = CheckinStore(tmp_path / CHECKIN_FILE_NAME)
+    now = time.time()
+    store.record([ClaimOutcome("cline", "a", CLAIM_ALREADY)], at=now - 400 * 86400)
+    store.record([ClaimOutcome("cline", "a", CLAIM_ALREADY)], at=now - 300 * 86400)
+    store.record([ClaimOutcome("cline", "a", CLAIM_CLAIMED)], at=now)
+    assert [row["status"] for row in store.history()] == ["claimed", "already"]
 
 
 def test_the_timer_starts_and_stops(tmp_path: Any) -> None:

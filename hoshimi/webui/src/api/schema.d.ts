@@ -115,6 +115,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/credits/checkins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Checkins
+         * @description Check-in outcomes (daily rounds and on-demand claims), newest first; kept 365 days.
+         */
+        get: operations["list_checkins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/credits/claim": {
         parameters: {
             query?: never;
@@ -553,9 +573,12 @@ export interface paths {
          * Get Stats
          * @description Totals, a zero-filled series and breakdowns for one range, plus the lifetime totals.
          *
-         *     ``24h`` reads hourly buckets (kept 72 hours); the others read daily
-         *     buckets (kept 120 days). ``previous`` is the equal-length span just
-         *     before, as far as the buckets still reach.
+         *     ``24h`` reads hourly buckets (kept 120 days); ``7d``/``30d``/``90d`` read
+         *     daily buckets (kept forever); ``previous`` is the equal-length span just
+         *     before. ``day`` is one local calendar day (``date``) in hours, 23 or 25
+         *     across a DST change; its ``previous`` is the day before — only up to the
+         *     same time of day when ``date`` is today. A future or malformed ``date``
+         *     is a 400.
          */
         get: operations["get_stats"];
         put?: never;
@@ -579,9 +602,29 @@ export interface paths {
         };
         /**
          * List Stats Calls
-         * @description The recent-call ring (last 1000 calls), newest first.
+         * @description Recorded calls, newest first, over the whole retention (``server.stats_keep_days``).
          */
         get: operations["list_stats_calls"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stats/days": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Usage Days
+         * @description Every local day with any usage, oldest first — what a calendar marks.
+         */
+        get: operations["list_usage_days"];
         put?: never;
         post?: never;
         delete?: never;
@@ -901,7 +944,7 @@ export interface components {
         };
         /**
          * CallRecord
-         * @description One served call from the recent-call ring; ``seq`` is the paging cursor.
+         * @description One recorded call; ``seq`` is the paging cursor and never repeats, even across a reset.
          */
         CallRecord: {
             /**
@@ -1124,6 +1167,8 @@ export interface components {
             /** Options */
             options: string[];
             quota: components["schemas"]["PassiveQuota"] | null;
+            /** Recent Checkins */
+            recent_checkins: components["schemas"]["CheckinRecord"][];
             /**
              * Requires Authorization
              * @default false
@@ -1146,6 +1191,47 @@ export interface components {
             /** Channels */
             channels: components["schemas"]["ChannelView"][];
             checkin: components["schemas"]["CheckinState"];
+        };
+        /** CheckinHistory */
+        CheckinHistory: {
+            /** Items */
+            items: components["schemas"]["CheckinRecord"][];
+        };
+        /**
+         * CheckinRecord
+         * @description One station/account outcome of a check-in round, as the history keeps it.
+         *
+         *     ``at`` is an ISO local datetime; ``date`` is the station day (UTC+8) the
+         *     round ran for. ``ok`` is true for ``claimed`` and ``already`` — the day
+         *     is covered either way — and ``message`` is the station's short answer or
+         *     the status itself.
+         */
+        CheckinRecord: {
+            /** Account */
+            account: string;
+            /** At */
+            at: string;
+            /**
+             * Credits
+             * @default 0
+             */
+            credits: number;
+            /** Date */
+            date: string;
+            /**
+             * Message
+             * @default
+             */
+            message: string;
+            /** Ok */
+            ok: boolean;
+            /** Provider */
+            provider: string;
+            /**
+             * Status
+             * @default
+             */
+            status: string;
         };
         /**
          * CheckinState
@@ -1348,6 +1434,28 @@ export interface components {
             ttft_p50_ms: number | null;
             /** Ttft P95 Ms */
             ttft_p95_ms: number | null;
+        };
+        /**
+         * ListeningView
+         * @description The socket this process actually serves on.
+         *
+         *     ``port`` is the bound port and ``requested_port`` the one the search
+         *     started from (``server.port``, or ``serve --port``). ``fallback`` says the
+         *     requested port was taken and the search moved on — a fact about this run,
+         *     not a pending change, so it never sets ``restart_required``.
+         */
+        ListeningView: {
+            /**
+             * Fallback
+             * @default false
+             */
+            fallback: boolean;
+            /** Host */
+            host: string;
+            /** Port */
+            port: number;
+            /** Requested Port */
+            requested_port: number;
         };
         /**
          * LiveCall
@@ -1898,7 +2006,10 @@ export interface components {
             /** Provider */
             provider?: string | null;
         };
-        /** ServerView */
+        /**
+         * ServerView
+         * @description ``server.*`` as configured. ``port`` is the configured first port; the bound one is ``SettingsView.listening``.
+         */
         ServerView: {
             /** Access Token Configured */
             access_token_configured: boolean;
@@ -1924,6 +2035,16 @@ export interface components {
             model_api_key_configured: boolean;
             /** Port */
             port: number;
+            /**
+             * Stats Keep Days
+             * @default 90
+             */
+            stats_keep_days: number;
+            /**
+             * Strict Port
+             * @default false
+             */
+            strict_port: boolean;
         };
         /**
          * SettingsView
@@ -1942,6 +2063,7 @@ export interface components {
             config_path: string;
             /** Data Dir */
             data_dir: string;
+            listening: components["schemas"]["ListeningView"] | null;
             network: components["schemas"]["NetworkView"];
             /** Providers */
             providers: components["schemas"]["ProviderView"][];
@@ -2060,6 +2182,41 @@ export interface components {
             ttft_p95_ms: number | null;
         };
         /**
+         * UsageDay
+         * @description One local calendar day with usage; ``tokens`` is input plus output.
+         */
+        UsageDay: {
+            /**
+             * Calls
+             * @default 0
+             */
+            calls: number;
+            /** Date */
+            date: string;
+            /**
+             * Failed
+             * @default 0
+             */
+            failed: number;
+            /**
+             * Tokens
+             * @default 0
+             */
+            tokens: number;
+        };
+        /**
+         * UsageDays
+         * @description Every day with usage, oldest first; ``first`` is the oldest (null when none) and ``today`` the server's local date.
+         */
+        UsageDays: {
+            /** Days */
+            days: components["schemas"]["UsageDay"][];
+            /** First */
+            first: string | null;
+            /** Today */
+            today: string;
+        };
+        /**
          * UsagePoint
          * @description One bucket of the series: ``start`` is ``YYYY-MM-DD`` for days, an ISO local datetime for hours.
          */
@@ -2106,7 +2263,18 @@ export interface components {
             /** Ttft Avg Ms */
             ttft_avg_ms: number | null;
         };
-        /** UsageReport */
+        /**
+         * UsageReport
+         * @description One range of usage.
+         *
+         *     ``since`` and ``until`` bound the range as ISO local datetimes (``until``
+         *     exclusive); ``date`` is the calendar day of a ``day`` range, else null.
+         *     ``hourly`` says the series has real hours behind it: false for the day
+         *     ranges (``7d``…) and for a ``day`` whose hours are gone — pruned, or
+         *     imported from a ``stats.json`` that only kept days — in which case its
+         *     totals and breakdowns are still exact and only the series is empty.
+         *     ``server_time`` is the moment the report was taken.
+         */
         UsageReport: {
             /** By Account */
             by_account: components["schemas"]["UsageBreakdownRow"][];
@@ -2116,6 +2284,8 @@ export interface components {
             by_origin: components["schemas"]["UsageBreakdownRow"][];
             /** By Provider */
             by_provider: components["schemas"]["UsageBreakdownRow"][];
+            /** Date */
+            date: string | null;
             /** Failures */
             failures: number;
             /**
@@ -2123,6 +2293,8 @@ export interface components {
              * @enum {string}
              */
             granularity: "hour" | "day";
+            /** Hourly */
+            hourly: boolean;
             latency: components["schemas"]["LatencyStats"];
             lifetime: components["schemas"]["UsageTotals"];
             previous: components["schemas"]["UsageTotals"];
@@ -2132,9 +2304,13 @@ export interface components {
             requests: number;
             /** Series */
             series: components["schemas"]["UsagePoint"][];
+            /** Server Time */
+            server_time: string;
             /** Since */
             since: string;
             totals: components["schemas"]["UsageTotals"];
+            /** Until */
+            until: string;
         };
         /**
          * UsageTotals
@@ -2322,6 +2498,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BalanceReport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_checkins: {
+        parameters: {
+            query?: {
+                provider?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckinHistory"];
                 };
             };
             /** @description Validation Error */
@@ -3225,7 +3433,9 @@ export interface operations {
     get_stats: {
         parameters: {
             query?: {
-                range?: "24h" | "7d" | "30d" | "90d";
+                range?: "24h" | "day" | "7d" | "30d" | "90d";
+                /** @description The calendar day of `range=day`, `YYYY-MM-DD` in the server's local time (default today). */
+                date?: string | null;
             };
             header?: never;
             path?: never;
@@ -3240,6 +3450,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UsageReport"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -3285,6 +3531,12 @@ export interface operations {
                 account?: string | null;
                 origin?: string | null;
                 ok?: boolean | null;
+                /** @description Calls at or after this ISO 8601 datetime (with an offset; without one, server local time). */
+                since?: string | null;
+                /** @description Calls before this ISO 8601 datetime (exclusive). */
+                until?: string | null;
+                /** @description Case-insensitive text in the model, provider, account, error code, error message or finish reason. */
+                q?: string | null;
             };
             header?: never;
             path?: never;
@@ -3308,6 +3560,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_usage_days: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageDays"];
                 };
             };
         };

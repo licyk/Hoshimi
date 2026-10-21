@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -53,5 +53,23 @@ const BOUNDED: [file: string, component: string][] = [
 describe('lists that can grow without bound', () => {
   it.each(BOUNDED)('%s keeps its list in a %s', (file, component) => {
     expect(readFileSync(join(SRC, file), 'utf8')).toContain(component);
+  });
+});
+
+/**
+ * Every scrolling area wears ``.app-scroll`` (tokens.css), which gives its scrollbar a lane of its
+ * own beside the content instead of floating over it. A component that scrolls by its own
+ * ``overflow: auto`` would bring the overlay back; one that sets ``scrollbar-width`` or
+ * ``scrollbar-color`` would switch the lane off in Chromium (which then ignores the styled
+ * scrollbar). Only the rail hides its scrollbar on purpose.
+ */
+const VUE_FILES = (readdirSync(SRC, { recursive: true }) as string[]).filter((f) => f.endsWith('.vue'));
+const HIDDEN_SCROLLBAR = new Set(['ui/NavigationRail.vue']);
+describe('scrolling areas', () => {
+  it.each(VUE_FILES)('%s scrolls only through .app-scroll', (file) => {
+    const source = readFileSync(join(SRC, file), 'utf8');
+    const css = source.slice(source.indexOf('<style'));
+    expect(css, 'an overflow that scrolls belongs to .app-scroll').not.toMatch(/overflow(-[xy])?:\s*(auto|scroll)\b(?![^;]*hidden)/);
+    if (!HIDDEN_SCROLLBAR.has(file.replace(/\\/g, '/'))) expect(css).not.toMatch(/scrollbar-(width|color|gutter)\s*:/);
   });
 });

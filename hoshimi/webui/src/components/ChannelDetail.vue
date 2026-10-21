@@ -7,7 +7,7 @@ import type { ChannelAccount, ChannelView } from '@/api/types';
 import AddAccountDialog from '@/components/AddAccountDialog.vue';
 import LoginDialog from '@/components/LoginDialog.vue';
 import NetworkSettings from '@/components/NetworkSettings.vue';
-import { compact, percent, ratio, relative } from '@/format';
+import { compact, percent, ratio, relative, when } from '@/format';
 import { useI18n } from '@/i18n';
 import {
   AppButton,
@@ -25,6 +25,7 @@ import {
   Switch,
   TRANSITIONS,
   Tooltip,
+  TweenNumber,
   icons,
   keepLeavingInPlace,
   useSnackbar,
@@ -214,10 +215,10 @@ const today = computed(() => c.value.usage_today);
 
     <PageSection :title="t('channels.today')" :icon="icons.BarChart3">
       <dl class="today">
-        <div><dt class="type-label-medium muted">{{ t('usage.tokens') }}</dt><dd class="type-title-large">{{ compact(today.input + today.output) }}</dd></div>
-        <div><dt class="type-label-medium muted">{{ t('usage.calls') }}</dt><dd class="type-title-large">{{ compact(today.calls) }}</dd></div>
+        <div><dt class="type-label-medium muted">{{ t('usage.tokens') }}</dt><dd class="type-title-large"><TweenNumber :value="today.input + today.output" :format="compact" /></dd></div>
+        <div><dt class="type-label-medium muted">{{ t('usage.calls') }}</dt><dd class="type-title-large"><TweenNumber :value="today.calls" :format="compact" /></dd></div>
         <div><dt class="type-label-medium muted">{{ t('usage.cacheHit') }}</dt><dd class="type-title-large">{{ percent(ratio(today.cache_read, today.input)) }}</dd></div>
-        <div><dt class="type-label-medium muted">{{ t('usage.failed') }}</dt><dd class="type-title-large">{{ compact(today.failed) }}</dd></div>
+        <div><dt class="type-label-medium muted">{{ t('usage.failed') }}</dt><dd class="type-title-large"><TweenNumber :value="today.failed" :format="compact" /></dd></div>
       </dl>
     </PageSection>
 
@@ -237,6 +238,20 @@ const today = computed(() => c.value.usage_today);
           { label: t('channels.serverErrors'), value: quota.counters.server_errors },
         ]"
       />
+    </PageSection>
+
+    <PageSection v-if="c.recent_checkins.length" :title="t('channels.recentCheckins')" :subtitle="t('channels.recentCheckinsHint')" :icon="icons.CalendarCheck">
+      <ul class="checkins">
+        <li v-for="k in c.recent_checkins" :key="`${k.at}${k.account}`" class="checkin">
+          <Badge :tone="k.ok ? 'primary' : 'error'" :value="k.ok ? t('channels.checkinOk') : t('channels.checkinFailed')" />
+          <span class="checkin-text">
+            <span class="type-body-medium mono id" :title="k.account">{{ k.account || '—' }}</span>
+            <span v-if="k.message" class="type-body-small muted line" :title="k.message">{{ k.message }}</span>
+          </span>
+          <span v-if="k.credits" class="type-label-large num">+{{ compact(k.credits) }}</span>
+          <time class="type-body-small muted" :datetime="k.at" :title="when(k.at)">{{ relative(Date.parse(k.at) - Date.now(), locale) }}</time>
+        </li>
+      </ul>
     </PageSection>
 
     <PageSection :title="t('network.title')" :subtitle="t('channels.networkHint')" :icon="icons.Network">
@@ -295,6 +310,10 @@ const today = computed(() => c.value.usage_today);
 .account-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .id, .line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-usage { display: flex; flex-direction: column; align-items: flex-end; text-align: end; }
+.checkins { display: flex; flex-direction: column; gap: var(--app-space-2); margin: 0; padding: 0; list-style: none; }
+.checkin { display: flex; align-items: center; gap: var(--app-space-3); min-width: 0; }
+.checkin-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.checkin-text .id, .checkin-text .line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .today { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--app-space-3); margin: 0; }
 .today div { display: flex; flex-direction: column; min-width: 0; }
 .today dd { margin: 0; }

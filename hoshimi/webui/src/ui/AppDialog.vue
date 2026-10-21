@@ -43,7 +43,7 @@ watch(
             <slot name="header"><h2 class="type-headline-small title">{{ title }}</h2></slot>
             <IconButton :icon="X" :label="closeLabel" @click="open = false" />
           </header>
-          <div class="body"><slot /></div>
+          <div class="body app-scroll"><slot /></div>
           <footer v-if="$slots.actions" class="actions"><slot name="actions" /></footer>
         </section>
       </div>
@@ -67,7 +67,7 @@ watch(
 .head { display: flex; align-items: center; justify-content: space-between; gap: var(--app-space-2); padding: var(--app-space-4) var(--app-space-4) 0 var(--app-space-6); }
 /* A model name can be one long unbroken word: break it, and keep the header at two lines. */
 .title { margin: 0; overflow: hidden; text-overflow: ellipsis; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
-.body { padding: var(--app-space-4) var(--app-space-6); overflow: auto; flex: 1; }
+.body { padding: var(--app-space-4) var(--app-space-6); flex: 1; }
 .actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--app-space-2); padding: 0 var(--app-space-6) var(--app-space-6); }
 @media (max-width: 599px) {
   .layer { padding: 0; align-items: end; }

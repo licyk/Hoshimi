@@ -78,8 +78,8 @@ model spec for each ID's menu and budget rather than assuming universal levels.
 ## Availability probes
 
 `POST /api/v1/probe` starts a low-concurrency background round; `GET` reads it.
-Results are also attached to management model rows and persisted in data-directory
-`probe.json`. Default rounds target `opencode`; Kilo's free roster is already
+Results are also attached to management model rows and persisted in the data
+directory's `hoshimi.db`. Default rounds target `opencode`; Kilo's free roster is already
 filtered by that upstream. To probe specific providers or IDs, send:
 
 ```json
@@ -139,8 +139,9 @@ automatically replayed.**
 
 `GET /api/v1/credits` reads balances, holds and check-in state;
 `POST /api/v1/credits/claim` claims credits. With `server.auto_checkin` enabled,
-a serial sweep runs daily after a short startup delay. Results persist in
-`checkin.json`. Providers without a balance/check-in endpoint are skipped.
+a serial sweep runs daily after a short startup delay. The day's state persists in
+`hoshimi.db`, and every outcome (daily or on demand) joins a 365-day history:
+`GET /api/v1/credits/checkins`. Providers without a balance/check-in endpoint are skipped.
 
 Upstream responses also supply passive quota without an extra request. The first
 parsable remaining/limit pair is used, in this order:
@@ -165,14 +166,18 @@ header values. Passive quota is in memory and observation cannot fail generation
 `GET /api/v1/stats?range=24h|7d|30d|90d` reports one range: totals, the previous
 equal-length period, a zero-filled hourly (24h) or daily series, TTFT average/p50/p95,
 generation speed, and breakdowns by model, provider, account and origin. Lifetime
-totals and request/failure counts ride along. `GET /api/v1/stats/calls` pages the
-last 1000 calls (newest first, `before` cursor), each with the account that answered,
+totals and request/failure counts ride along. `range=day&date=YYYY-MM-DD` reports one
+local calendar day by the hour, compared with the day before (up to the same time of
+day when it is today); `GET /api/v1/stats/days` lists the days that have usage.
+`GET /api/v1/stats/calls` pages every recorded call (newest first, `before` cursor;
+`since`/`until` and a `q` text search), each with the account that answered,
 attempts, cache reads/writes, finish reason and a short error. `GET /api/v1/stats/live`
-streams the calls in flight; `DELETE /api/v1/stats` clears everything.
+streams the calls in flight; `DELETE /api/v1/stats` clears everything (the call
+cursor keeps counting).
 
-`stats.json` (version 2; a version 1 file is migrated in place) survives restart and is
-written at most every two seconds, plus on shutdown. Hourly buckets are kept 72 hours,
-daily buckets 120 days; lifetime rows remain. Cache writes are read from
+Statistics live in `hoshimi.db` (an old `stats.json` is imported once), written about
+once a second, plus on shutdown. Calls are kept `server.stats_keep_days` days (default
+90), hourly buckets 120 days, daily buckets and lifetime rows forever. Cache writes are read from
 `prompt_tokens_details.cache_write_tokens` (or `cache_creation_tokens`, Anthropic's
 `cache_creation_input_tokens`); DeepSeek's `prompt_cache_hit_tokens` counts as a cache read.
 

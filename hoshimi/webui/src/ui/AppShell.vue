@@ -25,7 +25,7 @@ defineExpose({ content });
       <TopAppBar :title="title"><template #actions><slot name="actions" /></template></TopAppBar>
       <!-- The frame (background, corners) belongs to the shell and never animates; the scroller inside
            it is the page, the only thing a navigation fades through. -->
-      <div class="frame"><main ref="content" class="content"><slot /></main></div>
+      <div class="frame"><main ref="content" class="content app-scroll"><slot /></main></div>
     </div>
     <NavigationBar v-if="compact" :items="[...items, ...footer]" class="bottom" />
     <Snackbar />
@@ -42,9 +42,9 @@ defineExpose({ content });
   background: var(--md-sys-color-surface-container-low); border-radius: var(--md-sys-shape-corner-large); overflow: hidden;
 }
 .content {
-  position: relative; flex: 1; min-height: 0; overflow: auto;
-  /* Reserve the scrollbar's width so content does not jump when it appears. */
-  scrollbar-gutter: stable;
+  position: relative; flex: 1; min-height: 0;
+  /* The scrollbar's lane (.app-scroll) is reserved; its thumb stays clear of the frame's round corners. */
+  --app-scroll-inset: var(--app-space-3);
   /* Pages choose their columns by the space they have here (@container app-content), not by the
      window: the rail, a side sheet or the window size all change it. */
   container: app-content / inline-size;

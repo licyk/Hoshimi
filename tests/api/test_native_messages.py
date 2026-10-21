@@ -87,13 +87,13 @@ def test_native_extensions_and_error_metadata_are_not_rebuilt(services):
             "x-api-key": "gateway-key", "anthropic-beta": "future-capability-2026,another-beta",
             "anthropic-version": "2023-06-01", "anthropic-future": "yes",
         })
+        sample = services.stats.calls(limit=1)[0][0]
     assert response.status_code == 200
     assert response.json() == message()
     assert response.headers["request-id"] == "req_native"
     assert response.headers["anthropic-ratelimit-unified-status"] == "allowed"
     assert "set-cookie" not in response.headers
     assert json.dumps(body) == original
-    sample = services.stats.calls(limit=1)[0][0]
     assert sample["origin"] == "messages" and sample["effort"] == "xhigh"
 
 
@@ -111,11 +111,11 @@ def test_upstream_errors_and_retry_headers_survive_exactly(services, status):
     install(services, handle, accounts=[{"id": str(i), "api_key": str(i), "models": ["claude-test"]} for i in range(2)])
     with TestClient(create_app(services, serve_ui=False), base_url="http://localhost") as client:
         response = client.post("/v1/messages", json=request(), headers={"x-api-key": "gateway-key"})
+        assert services.stats.calls(limit=1)[0][0]["ok"] is False
     assert response.status_code == status and response.content == raw
     assert response.headers["retry-after"] == "7" and response.headers["x-should-retry"] == "false"
     assert response.headers["request-id"] == "req_error"
     assert len(calls) == 1
-    assert services.stats.calls(limit=1)[0][0]["ok"] is False
 
 
 def test_native_rotation_uses_the_next_compatible_account_and_records_one_turn(services):
@@ -131,10 +131,10 @@ def test_native_rotation_uses_the_next_compatible_account_and_records_one_turn(s
     ])
     with TestClient(create_app(services, serve_ui=False), base_url="http://localhost") as client:
         response = client.post("/v1/messages", json=request(), headers={"x-api-key": "gateway-key"})
+        assert len(services.stats.calls()[0]) == 1
+        assert services.stats.calls()[0][0]["attempts"] == 2
     assert response.status_code == 200
     assert calls == ["bad", "good"]
-    assert len(services.stats.calls()[0]) == 1
-    assert services.stats.calls()[0][0]["attempts"] == 2
 
 
 class Fragments(httpx.SyncByteStream):
@@ -156,11 +156,11 @@ def test_native_sse_keeps_unknown_events_utf8_and_crlf_and_accounts_usage(servic
     install(services, lambda _: httpx.Response(200, stream=stream, headers={"content-type": "text/event-stream", "request-id": "req_stream"}))
     with TestClient(create_app(services, serve_ui=False), base_url="http://localhost") as client:
         response = client.post("/v1/messages", json=request(stream=True), headers={"x-api-key": "gateway-key"})
+        sample = services.stats.calls(limit=1)[0][0]
+        assert services.stats.report("24h")["by_model"][0]["cache_read"] == 5
     assert response.status_code == 200 and response.content == raw
     assert response.headers["request-id"] == "req_stream" and stream.closed
-    sample = services.stats.calls(limit=1)[0][0]
     assert sample["input"] == 15 and sample["output"] == 2
-    assert services.stats.report("24h")["by_model"][0]["cache_read"] == 5
     assert sample["ok"]
 
 
@@ -169,9 +169,9 @@ def test_truncated_native_sse_reports_error_without_a_successful_stop(services):
     install(services, lambda _: httpx.Response(200, content=raw, headers={"content-type": "text/event-stream"}))
     with TestClient(create_app(services, serve_ui=False), base_url="http://localhost") as client:
         response = client.post("/v1/messages", json=request(stream=True), headers={"x-api-key": "gateway-key"})
+        assert services.stats.calls(limit=1)[0][0]["ok"] is False
     assert b"event: error\n" in response.content and b"event: message_stop" not in response.content
     assert b'"incomplete"' not in response.content
-    assert services.stats.calls(limit=1)[0][0]["ok"] is False
 
 
 @pytest.mark.parametrize("status", [200, 404])
@@ -186,11 +186,11 @@ def test_native_token_count_or_marked_fallback_accepts_full_content(services, st
         response = client.post("/v1/messages/count_tokens", json={
             "model": "anthropic/claude-test", "messages": [{"role": "user", "content": [{"type": "document", "source": {"type": "base64", "data": "opaque"}}]}],
         }, headers={"x-api-key": "gateway-key"})
+        assert not services.stats.calls()[0]
     assert response.status_code == 200
     assert (response.headers.get("x-hoshimi-token-count") == "estimate") == (status == 404)
     if status == 200:
         assert response.json() == {"input_tokens": 321}
-    assert not services.stats.calls()[0]
 
 
 def test_closing_native_iterator_closes_its_response(services):

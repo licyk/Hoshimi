@@ -60,7 +60,7 @@ TRAE 有上下文表，但未获取账户级远程思考菜单，因此保留调
 ## 可用性探测
 
 `POST /api/v1/probe` 开始低并发后台探测，`GET` 读取状态。结果附在管理模型行，
-并保存到数据目录 `probe.json`。默认探测 OpenCode，Kilo 免费目录已由其上游筛选。
+并保存到数据目录的 `hoshimi.db`。默认探测 OpenCode，Kilo 免费目录已由其上游筛选。
 指定其他 ID 时传入：
 
 ```json
@@ -109,8 +109,8 @@ CodeBuddy `429` 中 `14003` 且仅提供 `SWITCH_MODEL` 时，视为模型拥堵
 ## 余额、签到与被动配额
 
 `GET /api/v1/credits` 查看余额、暂停与签到状态，`POST /api/v1/credits/claim`
-手动签到。启用 `server.auto_checkin` 时，启动短暂延迟后每日串行检查一次，结果存入
-`checkin.json`。没有对应端点的供应商直接跳过。
+手动签到。启用 `server.auto_checkin` 时，启动短暂延迟后每日串行检查一次，当日状态存入
+`hoshimi.db`，每次结果（自动或手动）都进入保留 365 天的历史：`GET /api/v1/credits/checkins`。没有对应端点的供应商直接跳过。
 
 响应头可提供不增加请求的被动配额，按以下顺序采用首个可解析的成对值：
 
@@ -132,12 +132,14 @@ CodeBuddy `429` 中 `14003` 且仅提供 `SWITCH_MODEL` 时，视为模型拥堵
 
 `GET /api/v1/stats?range=24h|7d|30d|90d` 返回一个区间：总量、上一个等长区间、补零的
 按小时（24h）或按日序列、首字延迟均值/p50/p95、生成速度，以及按模型、供应商、账户、来源的
-拆分，并附长期累计与请求/失败数。`GET /api/v1/stats/calls` 分页读取最近 1000 次调用
-（新的在前，`before` 游标），含实际应答账户、尝试次数、缓存读写、结束原因和简短错误。
-`GET /api/v1/stats/live` 推送进行中的调用；`DELETE /api/v1/stats` 清空全部统计。
+拆分，并附长期累计与请求/失败数。`range=day&date=YYYY-MM-DD` 按小时报告本地某一自然日，
+与前一天比较（若为今天，只比较到前一天的同一时刻）；`GET /api/v1/stats/days` 列出有用量的日期。
+`GET /api/v1/stats/calls` 分页读取全部调用记录（新的在前，`before` 游标；支持 `since`/`until`
+与 `q` 文本搜索），含实际应答账户、尝试次数、缓存读写、结束原因和简短错误。
+`GET /api/v1/stats/live` 推送进行中的调用；`DELETE /api/v1/stats` 清空全部统计（调用游标继续递增）。
 
-`stats.json`（第 2 版，第 1 版文件会原地迁移）跨重启保存，最多每两秒写一次，关闭时补写。
-小时桶保留 72 小时，日期桶保留 120 天，长期累计保留。缓存写入读取
+统计保存在 `hoshimi.db`（旧的 `stats.json` 会导入一次），约每秒写入一次，关闭时补写。
+调用记录保留 `server.stats_keep_days` 天（默认 90），小时桶保留 120 天，日期桶与长期累计永久保留。缓存写入读取
 `prompt_tokens_details.cache_write_tokens`（或 `cache_creation_tokens`、Anthropic 的
 `cache_creation_input_tokens`）；DeepSeek 的 `prompt_cache_hit_tokens` 计为缓存读取。
 

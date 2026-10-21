@@ -96,7 +96,7 @@ function onBlur(e: FocusEvent) {
     <Transition name="scrim">
       <div v-if="open" ref="popover" class="popover" :class="{ above }" role="dialog" :aria-label="label">
         <TextField v-if="searchable" v-model="query" :label="searchLabel" :icon="Search" type="search" />
-        <ul class="list" role="listbox" :aria-label="label">
+        <ul class="list app-scroll app-scroll-auto" role="listbox" :aria-label="label">
           <li v-for="o in shown" :key="o.value">
             <button type="button" role="option" class="option state-layer" :class="{ unavailable: o.unavailable }" :aria-selected="o.value === model" :aria-disabled="o.unavailable" @click="pick(o)">
               <span class="text">
@@ -124,7 +124,7 @@ function onBlur(e: FocusEvent) {
 .name, .meta { overflow-wrap: anywhere; }
 .popover { position: absolute; z-index: var(--app-z-dropdown); top: calc(100% + 4px); left: 0; right: 0; display: flex; flex-direction: column; gap: var(--app-space-2); padding: var(--app-space-3); background: var(--md-sys-color-surface-container); border-radius: var(--md-sys-shape-corner-medium); box-shadow: var(--app-elevation-2); }
 .popover.above { top: auto; bottom: calc(100% + 4px); }
-.list { margin: 0; padding: 0; list-style: none; max-height: 360px; overflow: auto; }
+.list { margin: 0; padding: 0; list-style: none; max-height: 360px; }
 .option { display: flex; align-items: center; gap: var(--app-space-2); width: 100%; padding: var(--app-space-2) var(--app-space-3); border: 0; border-radius: var(--md-sys-shape-corner-small); background: transparent; color: var(--md-sys-color-on-surface); font: inherit; text-align: start; cursor: pointer; min-width: 0; }
 .option[aria-selected='true'] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
 .option.unavailable { opacity: var(--app-disabled-content-opacity); cursor: default; }

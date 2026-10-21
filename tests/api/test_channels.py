@@ -36,7 +36,10 @@ def _no_network(services: Any, *, catalogue: bool = True) -> None:
         raise AssertionError("the channels report must not query the catalogue")
 
     services.credits = SimpleNamespace(
-        balance=balance, start=lambda: None, stop=lambda: None, store=SimpleNamespace(doc=SimpleNamespace(last_date="2026-10-21", last_result="ok", last_at=12.5))
+        balance=balance,
+        start=lambda: None,
+        stop=lambda: None,
+        store=SimpleNamespace(doc=SimpleNamespace(last_date="2026-10-21", last_result="ok", last_at=12.5), recent_by_provider=lambda limit: {}),
     )
     if catalogue:
         services.registry.providers["fake"].models = forbidden
@@ -158,3 +161,80 @@ def test_restart_required_tracks_a_saved_listen_address() -> None:
         assert moved.status_code == 200 and moved.json()["restart_required"] is True
         back = client.patch("/api/v1/settings", json={"server": {"port": 0}})
         assert back.json()["restart_required"] is False
+
+
+def test_a_port_that_fell_back_is_reported_but_needs_no_restart() -> None:
+    services = make_services()
+    services.settings.port = 40123
+    app = create_app(services, bound_host="127.0.0.1", bound_port=40125, serve_ui=False)
+    with TestClient(app, base_url="http://localhost") as client:
+        view = client.get("/api/v1/settings").json()
+        assert view["listening"] == {"host": "127.0.0.1", "port": 40125, "requested_port": 40123, "fallback": True}
+        assert view["server"]["port"] == 40123 and view["restart_required"] is False
+
+    # `serve --port` names the first port tried; the config may say another.
+    overridden = make_services()
+    with TestClient(create_app(overridden, bound_host="127.0.0.1", bound_port=9000, requested_port=9000, serve_ui=False), base_url="http://localhost") as client:
+        view = client.get("/api/v1/settings").json()
+        assert view["listening"]["fallback"] is False and view["restart_required"] is False
+
+    # Port 0 asks the system for any port: whatever it picked is not a fallback.
+    with TestClient(create_app(make_services(), bound_host="127.0.0.1", bound_port=40126, serve_ui=False), base_url="http://localhost") as client:
+        assert client.get("/api/v1/settings").json()["listening"] == {"host": "127.0.0.1", "port": 40126, "requested_port": 0, "fallback": False}
+
+    with TestClient(create_app(make_services(), serve_ui=False), base_url="http://localhost") as client:
+        assert client.get("/api/v1/settings").json()["listening"] is None
+
+
+def test_strict_port_and_stats_retention_are_settings(client: Any, services: Any) -> None:
+    import json
+
+    from hoshimi.core.paths import config_file_path
+
+    view = client.get("/api/v1/settings").json()["server"]
+    assert (view["strict_port"], view["stats_keep_days"]) == (False, 90)
+    saved = client.patch("/api/v1/settings", json={"server": {"strict_port": True, "stats_keep_days": 30}})
+    assert saved.status_code == 200
+    assert (saved.json()["server"]["strict_port"], saved.json()["server"]["stats_keep_days"]) == (True, 30)
+    assert services.stats.keep_days == 30
+    stored = json.loads(config_file_path().read_text(encoding="utf-8"))["server"]
+    assert (stored["strict_port"], stored["stats_keep_days"]) == (True, 30)
+    for bad in ({"stats_keep_days": 0}, {"stats_keep_days": "30"}, {"strict_port": "yes"}):
+        assert client.patch("/api/v1/settings", json={"server": bad}).status_code == 400, bad
+    assert services.stats.keep_days == 30
+
+
+def test_checkin_history_is_listed_and_shown_per_lane() -> None:
+    from hoshimi.core.credits import CheckinStore, CreditsService
+    from hoshimi.core.providers.base import CLAIM_ALREADY, CLAIM_CLAIMED, CLAIM_FAILED, ClaimOutcome
+
+    services = make_services()
+    services.credits = CreditsService(settings=services.settings, registry=services.registry, store=CheckinStore(db=services.db))
+    now = time.time()
+    for index in range(7):
+        services.credits.store.record(
+            [ClaimOutcome("fake", "fake-0", CLAIM_CLAIMED if index % 2 else CLAIM_ALREADY, credits=index, message=f"run {index}")], at=now - (7 - index) * 86400
+        )
+    services.credits.store.record([ClaimOutcome("other", "x", CLAIM_FAILED, message="refused")], at=now)
+    with TestClient(create_app(services, serve_ui=False), base_url="http://localhost") as client:
+        history = client.get("/api/v1/credits/checkins", params={"provider": "fake", "limit": 3}).json()["items"]
+        assert [row["message"] for row in history] == ["run 6", "run 5", "run 4"]
+        assert history[1] == {
+            "at": history[1]["at"],
+            "date": history[1]["date"],
+            "provider": "fake",
+            "account": "fake-0",
+            "ok": True,
+            "message": "run 5",
+            "status": "claimed",
+            "credits": 5,
+        }
+        everything = client.get("/api/v1/credits/checkins").json()["items"]
+        assert everything[0]["provider"] == "other" and everything[0]["ok"] is False and len(everything) == 8
+        assert client.get("/api/v1/credits/checkins", params={"limit": 0}).status_code == 422
+        lane = next(row for row in client.get("/api/v1/channels").json()["channels"] if row["id"] == "fake")
+        assert [row["message"] for row in lane["recent_checkins"]] == ["run 6", "run 5", "run 4", "run 3", "run 2"]
+
+    bare = make_services()
+    with TestClient(create_app(bare, serve_ui=False), base_url="http://localhost") as client:
+        assert client.get("/api/v1/credits/checkins").json() == {"items": []}

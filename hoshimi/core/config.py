@@ -20,6 +20,7 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 10600
 DEFAULT_MAX_BODY_BYTES = 16 * 1024 * 1024
 DEFAULT_MAX_ACCOUNT_RETRIES = 3
+DEFAULT_STATS_KEEP_DAYS = 90
 
 
 @dataclass
@@ -37,6 +38,8 @@ class Settings:
     network: NetworkPolicy = field(default_factory=NetworkPolicy)
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
+    # Fail at start when `port` is taken, instead of searching for a free one.
+    strict_port: bool = False
     access_token: str | None = None
     # Separate credentials for tool management and external model inference.
     model_api_key: str | None = None
@@ -50,6 +53,8 @@ class Settings:
     auto_refresh: bool = True
     # Daily check-in timer (see hoshimi.core.credits). Off for pure gateways.
     auto_checkin: bool = True
+    # Days each recorded call is kept in hoshimi.db (daily totals are kept forever).
+    stats_keep_days: int = DEFAULT_STATS_KEEP_DAYS
     # Provider accounts managed by this gateway.
     providers: dict[str, ProviderConfig] = field(default_factory=dict)
     # Optional default model when a request omits "model".
@@ -72,6 +77,8 @@ def validate_settings(settings: Settings) -> str | None:
         return "server.max_body_bytes must be positive."
     if settings.max_account_retries < 1:
         return "server.max_account_retries must be at least 1."
+    if settings.stats_keep_days < 1:
+        return "server.stats_keep_days must be at least 1."
     return None
 
 
@@ -113,6 +120,15 @@ def settings_from_dict(data: dict[str, Any], settings: Settings | None = None) -
         settings.auto_refresh = server["auto_refresh"]
     if isinstance(server.get("auto_checkin"), bool):
         settings.auto_checkin = server["auto_checkin"]
+    if "strict_port" in server:
+        if not isinstance(server["strict_port"], bool):
+            raise ValueError("server.strict_port must be true or false")
+        settings.strict_port = server["strict_port"]
+    if "stats_keep_days" in server:
+        value = server["stats_keep_days"]
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("server.stats_keep_days must be a whole number of days")
+        settings.stats_keep_days = value
 
     settings.allow_cidrs = _split_list(security.get("allow_cidr") or security.get("allow_cidrs"))
     settings.allow_hosts = _split_list(security.get("allow_host") or security.get("allow_hosts"))
@@ -199,10 +215,12 @@ def settings_to_dict(settings: Settings) -> dict[str, Any]:
         "server": {
             "host": settings.host,
             "port": settings.port,
+            "strict_port": settings.strict_port,
             "max_body_bytes": settings.max_body_bytes,
             "max_account_retries": settings.max_account_retries,
             "auto_refresh": settings.auto_refresh,
             "auto_checkin": settings.auto_checkin,
+            "stats_keep_days": settings.stats_keep_days,
         },
         "security": {
             "allow_cidrs": list(settings.allow_cidrs),

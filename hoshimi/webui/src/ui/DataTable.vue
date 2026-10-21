@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AppIcon from '@/ui/AppIcon.vue';
 import { ArrowDown, ArrowUp } from '@/ui/icons';
+import { TRANSITIONS, keepLeavingInPlace } from '@/ui/motion/transitions';
 import ScrollArea from '@/ui/ScrollArea.vue';
 import { useElementWidth } from '@/ui/useElementWidth';
 
@@ -30,6 +31,9 @@ export interface SortState {
  * never pushing the columns after it. The table scrolls inside itself (ScrollArea) with its header
  * held at the top, and past ``WINDOW_FROM`` rows renders only those in view, so a long history
  * stays smooth. Rows are a fixed height for that reason (``rowHeight``).
+ *
+ * Rows are keyed, so new data moves them: a row that changes place slides there, a new one fades
+ * in and a gone one fades out (not past ``WINDOW_FROM``, where only the rows in view exist).
  */
 const props = withDefaults(
   defineProps<{
@@ -123,7 +127,16 @@ watch(sort, () => scroller.value?.box?.scrollTo({ top: 0 }));
         </div>
       </template>
       <div v-if="!rows.length" class="empty type-body-medium muted"><slot name="empty">{{ emptyText }}</slot></div>
-      <div v-else role="rowgroup" :style="windowed ? { paddingTop: `${range.from * rowHeight}px`, paddingBottom: `${(sorted.length - range.to) * rowHeight}px` } : undefined">
+      <TransitionGroup
+        v-else
+        tag="div"
+        class="rowgroup"
+        role="rowgroup"
+        :name="TRANSITIONS.list"
+        :css="!windowed"
+        v-bind="keepLeavingInPlace"
+        :style="windowed ? { paddingTop: `${range.from * rowHeight}px`, paddingBottom: `${(sorted.length - range.to) * rowHeight}px` } : undefined"
+      >
         <div
           v-for="row in shown"
           :key="rowKey(row)"
@@ -142,7 +155,7 @@ watch(sort, () => scroller.value?.box?.scrollTo({ top: 0 }));
             </slot>
           </div>
         </div>
-      </div>
+      </TransitionGroup>
       <slot name="footer" />
     </ScrollArea>
   </div>
@@ -170,5 +183,6 @@ watch(sort, () => scroller.value?.box?.scrollTo({ top: 0 }));
   display: inline-flex; align-items: center; gap: var(--app-space-1); min-width: 0; max-width: 100%; padding: var(--app-space-1) var(--app-space-1);
   margin: 0 calc(-1 * var(--app-space-1)); border: 0; border-radius: var(--md-sys-shape-corner-small); background: none; color: inherit; font: inherit; cursor: pointer;
 }
+.rowgroup { position: relative; }
 .empty { padding: var(--app-space-6) var(--app-space-3); text-align: center; }
 </style>

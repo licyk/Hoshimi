@@ -12,8 +12,10 @@ Two questions live here, deliberately not mixed:
 
 The scheduler is a single serial thread: stations rate-limit aggressively when
 asked in parallel, so one account after another, with a short startup delay,
-is the whole anti-risk-control strategy. State lands in ``checkin.json`` next
-to the probe and stats stores.
+is the whole anti-risk-control strategy. The day marker lives in the
+database's ``meta`` table and every outcome in its ``checkins`` table (see
+:mod:`hoshimi.core.db`), kept :data:`KEEP_HISTORY_DAYS` days, so an operator
+can see which station stopped paying out and since when.
 """
 
 from __future__ import annotations
@@ -27,7 +29,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from hoshimi.core.db import Database, open_store_database, retire_legacy_file
 from hoshimi.core.providers.base import (
+    CLAIM_ALREADY,
     CLAIM_CLAIMED,
     CLAIM_UNSUPPORTED,
     Account,
@@ -43,7 +47,15 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 logger = logging.getLogger(__name__)
 
 CHECKIN_FILE_NAME = "checkin.json"
-"""Where the "we already ran today" marker survives a restart."""
+"""Where the state lived before ``hoshimi.db``; imported once, then renamed ``checkin.json.migrated``."""
+
+CHECKIN_STATE_KEY = "checkin.state"
+"""The ``meta`` key holding :class:`CheckinDoc` as JSON."""
+
+KEEP_HISTORY_DAYS = 365
+"""How long one check-in outcome stays in the history."""
+
+MESSAGE_LIMIT = 300
 
 CHECKIN_INTERVAL_SECONDS = 24 * 60 * 60
 """One sweep a day is enough; the window is a calendar day, not a rolling 24h."""
@@ -88,30 +100,101 @@ class CheckinDoc:
 
 
 class CheckinStore:
-    """Loads once, saves atomically; a corrupt file is simply a fresh start."""
+    """The day marker (``meta``) and the history of outcomes (``checkins``).
 
-    def __init__(self, path: Path | None = None):
+    ``db`` is the gateway's shared database; without one, ``path`` (the old
+    ``checkin.json`` location) opens ``hoshimi.db`` beside it, and nothing at
+    all keeps everything in memory. A ``checkin.json`` at ``path`` is imported
+    once, then renamed aside; an unreadable one is simply a fresh start.
+    """
+
+    def __init__(self, path: Path | None = None, *, db: Database | None = None):
         self._lock = threading.Lock()
-        self._path = path
+        self._db, self._owns_db = open_store_database(path, db)
         self.doc = CheckinDoc()
-        self._load()
-
-    def _load(self) -> None:
-        if self._path is None or not self._path.is_file():
-            return
-        try:
-            self.doc = CheckinDoc.from_dict(json.loads(self._path.read_text(encoding="utf-8")))
-        except (OSError, json.JSONDecodeError):
-            self.doc = CheckinDoc()
+        if path is not None:
+            self._import_legacy(path)
+        self.doc = CheckinDoc.from_dict(self._db.get_json(CHECKIN_STATE_KEY))
 
     def save(self) -> None:
-        if self._path is None:
-            return
         with self._lock:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-            tmp.write_text(json.dumps(self.doc.as_dict(), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-            tmp.replace(self._path)
+            if not self._db.closed:
+                self._db.set_json(CHECKIN_STATE_KEY, self.doc.as_dict())
+
+    def record(self, outcomes: list[ClaimOutcome], *, at: float | None = None) -> None:
+        """Append one row per outcome to the history, and drop what is past :data:`KEEP_HISTORY_DAYS`.
+
+        ``unsupported`` is not an outcome worth remembering: it is a lane
+        without a check-in endpoint saying so, every day, forever.
+        """
+        moment = time.time() if at is None else at
+        rows = [
+            (moment, utc8_today(moment), o.provider, o.account, o.status, 1 if o.status in (CLAIM_CLAIMED, CLAIM_ALREADY) else 0, int(o.credits or 0), _message(o))
+            for o in outcomes
+            if o.status != CLAIM_UNSUPPORTED
+        ]
+        with self._lock:
+            if self._db.closed:
+                return
+            with self._db.transaction() as conn:
+                if rows:
+                    conn.executemany("INSERT INTO checkins (at, date, provider, account, status, ok, credits, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+                conn.execute("DELETE FROM checkins WHERE at < ?", (moment - KEEP_HISTORY_DAYS * 86400,))
+
+    def history(self, provider: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        """Recorded outcomes, newest first."""
+        sql = "SELECT * FROM checkins" + (" WHERE provider = ?" if provider is not None else "") + " ORDER BY at DESC, id DESC LIMIT ?"
+        params: tuple[Any, ...] = (provider, limit) if provider is not None else (limit,)
+        return [_history_row(row) for row in self._db.fetchall(sql, params)]
+
+    def recent_by_provider(self, limit: int = 5) -> dict[str, list[dict[str, Any]]]:
+        """The latest ``limit`` outcomes of every provider, newest first, in one query."""
+        rows = self._db.fetchall(
+            "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY provider ORDER BY at DESC, id DESC) AS n FROM checkins) WHERE n <= ? ORDER BY provider, at DESC, id DESC",
+            (limit,),
+        )
+        out: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            out.setdefault(str(row["provider"]), []).append(_history_row(row))
+        return out
+
+    def close(self) -> None:
+        if self._owns_db:
+            self._db.close()
+
+    def _import_legacy(self, path: Path) -> None:
+        if not path.is_file() or self._db.get_meta(CHECKIN_STATE_KEY) is not None:
+            return
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except OSError as exc:
+            logger.warning("could not read %s: %s", path, exc)
+            return
+        except ValueError as exc:
+            retire_legacy_file(path, "corrupt")
+            logger.warning("%s is unreadable (%s); the check-in state starts over", path, exc)
+            return
+        self._db.set_json(CHECKIN_STATE_KEY, CheckinDoc.from_dict(raw).as_dict())
+        retire_legacy_file(path, "migrated")
+        logger.info("Imported %s into %s", path.name, self._db.path)
+
+
+def _message(outcome: ClaimOutcome) -> str:
+    text = " ".join(str(outcome.message or outcome.status).split())
+    return text if len(text) <= MESSAGE_LIMIT else text[: MESSAGE_LIMIT - 1] + "…"
+
+
+def _history_row(row: Any) -> dict[str, Any]:
+    return {
+        "at": float(row["at"]),
+        "date": str(row["date"]),
+        "provider": str(row["provider"]),
+        "account": str(row["account"]),
+        "status": str(row["status"]),
+        "ok": bool(row["ok"]),
+        "credits": int(row["credits"]),
+        "message": str(row["message"]),
+    }
 
 
 # -- the service ---------------------------------------------------------- #
@@ -159,6 +242,10 @@ class CreditsService:
                 if outcome is None:
                     continue
                 out.append(outcome)
+        try:
+            self.store.record(out)
+        except Exception:  # history is a record of the claim, never a reason it failed
+            logger.exception("could not record the check-in outcomes")
         return out
 
     # -- the daily timer --------------------------------------------------- #

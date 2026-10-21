@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
 import httpx
 
+from hoshimi.core.db import DB_FILE_NAME, Database
 from hoshimi.core.probe import (
+    PROBE_FILE_NAME,
     STATE_AVAILABLE,
     STATE_REGION_BLOCKED,
     STATE_THROTTLED,
@@ -150,19 +153,36 @@ def test_a_round_runs_in_the_background_and_keeps_its_verdicts() -> None:
 
 
 def test_verdicts_survive_a_restart(tmp_path: Any) -> None:
-    path = tmp_path / "probe.json"
-    store = ProbeStore(path)
+    db = Database(tmp_path / DB_FILE_NAME)
+    store = ProbeStore(db=db)
     assert store.start([(_provider({"m": {}}), "m")], concurrency=1, timeout=5.0) is True
-    deadline = time.time() + 5
-    while store.snapshot()["running"] and time.time() < deadline:
-        time.sleep(0.02)
+    assert store._thread is not None
+    store._thread.join(5)  # the round saves as its last step
 
-    reloaded = ProbeStore(path)
+    reloaded = ProbeStore(db=Database(tmp_path / DB_FILE_NAME))
     assert reloaded.state_for("m")["state"] == STATE_AVAILABLE
-    assert reloaded.snapshot()["at"] is not None
-    # A corrupt file is ignored rather than fatal.
-    path.write_text("{not json", encoding="utf-8")
-    assert ProbeStore(path).snapshot()["results"] == {}
+    assert reloaded.snapshot()["at"] == store.snapshot()["at"] is not None
+
+
+def test_a_probe_json_is_imported_once_and_a_corrupt_one_ignored(tmp_path: Any) -> None:
+    path = tmp_path / PROBE_FILE_NAME
+    path.write_text(
+        json.dumps({"at": "2026-10-20T00:00:00+00:00", "results": {"m": {"state": "region-blocked", "detail": "RegionError"}, "bad": {"no": "state"}}}), encoding="utf-8"
+    )
+    store = ProbeStore(path)
+    assert store.state_for("m") == {"state": "region-blocked", "detail": "RegionError"}
+    assert store.state_for("bad") is None
+    assert store.snapshot()["at"] == "2026-10-20T00:00:00+00:00"
+    assert not path.exists() and (tmp_path / f"{PROBE_FILE_NAME}.migrated").is_file()
+    store.close()
+    assert ProbeStore(path).state_for("m")["state"] == "region-blocked"
+
+    other = tmp_path / "other"
+    other.mkdir()
+    corrupt = other / PROBE_FILE_NAME
+    corrupt.write_text("{not json", encoding="utf-8")
+    assert ProbeStore(corrupt).snapshot()["results"] == {}
+    assert (other / f"{PROBE_FILE_NAME}.corrupt").is_file()
 
 
 def test_probeable_lanes_are_the_default_round() -> None:

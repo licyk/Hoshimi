@@ -7,23 +7,23 @@ import json
 import threading
 import time
 from collections.abc import Generator, Iterator
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
-from hoshimi.core.errors import ModelNotFoundError
+from hoshimi.core.db import DB_FILE_NAME, Database
+from hoshimi.core.errors import ModelNotFoundError, ValidationError
 from hoshimi.core.live import CLOSED, LiveHub
 from hoshimi.core.providers.base import Account, Provider, ProviderError
 from hoshimi.core.providers.openai_compat import raise_for_status
 from hoshimi.core.registry import Registry
 from hoshimi.core.stats import (
-    KEEP_DAYS,
-    KEEP_HOURS,
+    KEEP_HOURLY_DAYS,
     MIN_DECODE_MS,
-    SAMPLES_LIMIT,
+    RECENT_LIMIT,
     TPS_HIST,
     TTFT_HIST,
     StatsStore,
@@ -31,6 +31,7 @@ from hoshimi.core.stats import (
     decode_window,
     hist_add,
     hour_key,
+    hour_start,
     percentile,
     short_error,
     window_tokens,
@@ -62,23 +63,25 @@ def test_window_tokens_splits_the_seen_from_the_spent() -> None:
 
 
 def test_report_histograms_stay_with_their_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rows and histograms are read in one transaction: a call landing mid-report is in the next one."""
     from hoshimi.core import stats
 
     store = StatsStore()
     now = time.time()
     store.record(model="m", ok=True, ttft_ms=100, at=now)
     expected = store.report(now=now)
-    merge = stats.merge_row
+    accumulate = stats._accumulate_range
     added = False
 
-    def record_during_report(into, row):
+    def record_during_report(keys, rows):
         nonlocal added
-        if not added and not store._lock.locked():
+        if not added:
             added = True
             store.record(model="m", ok=True, ttft_ms=9000, at=now)
-        merge(into, row)
+            store.flush()
+        return accumulate(keys, rows)
 
-    monkeypatch.setattr(stats, "merge_row", record_during_report)
+    monkeypatch.setattr(stats, "_accumulate_range", record_during_report)
     assert store.report(now=now) == expected
     assert added and store.report(now=now)["totals"]["calls"] == 2
 
@@ -293,16 +296,23 @@ def test_previous_period_is_the_span_just_before() -> None:
     assert report["lifetime"]["input"] == 11
 
 
-def test_hours_and_days_are_pruned_but_lifetime_totals_are_not() -> None:
+def test_hours_and_calls_are_pruned_but_days_and_lifetime_totals_are_not() -> None:
     store = StatsStore()
+    store.keep_days = 2
     now = time.time()
-    store.record(model="m-1", ok=True, input=1, at=now - (KEEP_DAYS + 5) * 86400)
-    store.record(model="m-1", ok=True, input=1, at=now - (KEEP_HOURS + 5) * 3600)
+    store.record(model="m-1", ok=True, input=1, at=now - (KEEP_HOURLY_DAYS + 5) * 86400)
+    store.record(model="m-1", ok=True, input=1, at=now - 3 * 86400)
     store.record(model="m-1", ok=True, input=1, output=1, at=now)
+    store._last_prune = float("-inf")  # retention runs at most once a minute; make it due now
+    store.flush()
 
-    with store._lock:
-        assert min(store._state["days"]) >= (datetime.fromtimestamp(now).astimezone().date() - timedelta(days=KEEP_DAYS)).isoformat()
-        assert min(store._state["hours"]) >= hour_key(now - KEEP_HOURS * 3600)
+    oldest_hour = store.db.fetchone("SELECT MIN(bucket_start) AS start FROM usage_hourly")["start"]
+    assert oldest_hour >= now - KEEP_HOURLY_DAYS * 86400
+    assert store.db.fetchone("SELECT COUNT(*) AS n FROM usage_hist_hourly WHERE bucket_start < ?", (now - KEEP_HOURLY_DAYS * 86400,))["n"] == 0
+    # Days are kept forever: the calendar still knows the oldest one.
+    assert store.db.fetchone("SELECT COUNT(DISTINCT day) AS n FROM usage_daily")["n"] == 3
+    # Calls are kept `keep_days` days.
+    assert [row["input"] for row in store.calls()[0]] == [1]
     report = store.report("90d", now=now)
     assert report["requests"] == 3
     assert report["lifetime"]["input"] == 3
@@ -312,6 +322,8 @@ def test_day_and_hour_keys_are_local() -> None:
     assert len(day_key(time.time())) == 10
     assert day_key(time.time()).count("-") == 2
     assert hour_key(time.time())[10] == "T" and len(hour_key(time.time())) == 13
+    now = time.time()
+    assert datetime.fromtimestamp(hour_start(now)).astimezone() == datetime.fromtimestamp(now).astimezone().replace(minute=0, second=0, microsecond=0)
 
 
 def test_calls_page_newest_first_with_filters() -> None:
@@ -334,56 +346,110 @@ def test_calls_page_newest_first_with_filters() -> None:
     assert store.calls(provider="other")[0] == []
 
 
-def test_the_ring_is_bounded_and_seq_keeps_counting() -> None:
+def test_calls_span_the_whole_retention_not_a_ring() -> None:
     store = StatsStore()
-    for _ in range(SAMPLES_LIMIT + 5):
+    for _ in range(RECENT_LIMIT * 11):
         store.record(model="m", ok=True)
-    rows, _ = store.calls(limit=200)
-    assert rows[0]["seq"] == SAMPLES_LIMIT + 5
-    with store._lock:
-        assert len(store._state["samples"]) == SAMPLES_LIMIT
-        assert store._state["samples"][0]["seq"] == 6
+    seen: list[int] = []
+    cursor = None
+    while True:
+        rows, cursor = store.calls(limit=200, before=cursor)
+        seen += [row["seq"] for row in rows]
+        if cursor is None:
+            break
+    assert seen == list(range(RECENT_LIMIT * 11, 0, -1))
+    # The live snapshot holds only the newest few, from memory.
+    assert len(store._recent) == RECENT_LIMIT
+
+
+def test_calls_filter_by_time_and_text() -> None:
+    store = StatsStore()
+    base = time.time() - 3600
+    store.record(model="glm-4.6", ok=True, provider="zhipu", account="a1", finish_reason="stop", at=base)
+    store.record(model="kimi-k2", ok=False, provider="moonshot", account="b", error_code="rate_limited", error_message="Too many requests", at=base + 60)
+    store.record(model="qwen3-coder", ok=True, provider="qwen", account="c", finish_reason="length", at=base + 120)
+    assert [row["model"] for row in store.calls(since=base + 60)[0]] == ["qwen3-coder", "kimi-k2"]
+    assert [row["model"] for row in store.calls(until=base + 60)[0]] == ["glm-4.6"]
+    assert [row["model"] for row in store.calls(since=base + 60, until=base + 120)[0]] == ["kimi-k2"]
+    assert [row["model"] for row in store.calls(q="TOO MANY")[0]] == ["kimi-k2"]
+    assert [row["model"] for row in store.calls(q="Zhipu")[0]] == ["glm-4.6"]
+    assert [row["model"] for row in store.calls(q="length")[0]] == ["qwen3-coder"]
+    assert [row["model"] for row in store.calls(q="  RATE_ ")[0]] == ["kimi-k2"]
+    # LIKE wildcards in the needle are literal characters.
+    assert store.calls(q="%")[0] == []
+    assert [row["model"] for row in store.calls(q="_")[0]] == ["kimi-k2"]
+    page, cursor = store.calls(limit=1, q="o")
+    assert len(page) == 1 and cursor == page[0]["seq"]
+
+
+def test_concurrent_records_all_land_with_unique_seqs() -> None:
+    store = StatsStore(write_interval=0.01)
+
+    def burst() -> None:
+        for _ in range(200):
+            store.record(model="m", ok=True, input=1, provider="p", account="a")
+
+    threads = [threading.Thread(target=burst) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    report = store.report("24h")
+    assert report["totals"]["calls"] == report["requests"] == 1600
+    assert report["totals"]["input"] == 1600
+    assert store.today()["calls"] == 1600
+    rows = store.db.fetchall("SELECT seq FROM calls ORDER BY seq")
+    assert [row["seq"] for row in rows] == list(range(1, 1601))
 
 
 def test_counters_survive_a_restart(tmp_path: Path) -> None:
-    path = tmp_path / "stats.json"
-    first = StatsStore(path)
+    db = Database(tmp_path / DB_FILE_NAME)
+    first = StatsStore(db=db)
     first.record(model="m-1", ok=True, input=7, output=5, reasoning=2)
     first.record(model="m-2", ok=False, input=1)
-    first.flush()
+    first.close()
+    db.close()
 
-    second = StatsStore(path)
+    second = StatsStore(db=Database(tmp_path / DB_FILE_NAME))
     report = second.report("7d")
     assert (report["requests"], report["failures"]) == (2, 1)
     assert report["lifetime"] == {"input": 8, "output": 5, "reasoning": 2, "cache_read": 0, "cache_write": 0, "calls": 2, "failed": 1, "no_usage": 0}
     assert [row["key"] for row in report["by_model"]] == ["m-1", "m-2"]
+    assert second.today()["calls"] == 2
     second.record(model="m-3", ok=True)
     assert _latest(second)["seq"] == 3
 
 
-def test_writes_are_debounced_and_flushed(tmp_path: Path) -> None:
-    path = tmp_path / "stats.json"
-    store = StatsStore(path, write_interval=60)
+def _stored_calls(store: StatsStore) -> int:
+    """Rows actually in the database, read past the pending batch."""
+    return store.db.fetchone("SELECT COUNT(*) AS n FROM calls")["n"]
+
+
+def test_writes_are_batched_and_flushed(tmp_path: Path) -> None:
+    store = StatsStore(tmp_path / "stats.json", write_interval=60)
     store.record(model="m", ok=True, input=1)  # the first write is immediate
-    assert json.loads(path.read_text())["requests"] == 1
+    assert _stored_calls(store) == 1
     store.record(model="m", ok=True, input=1)
     store.record(model="m", ok=True, input=1)
-    # Within the interval: in memory only, one timer pending.
-    assert json.loads(path.read_text())["requests"] == 1
+    # Within the interval: pending, one timer waiting.
+    assert _stored_calls(store) == 1
     assert store._timer is not None
+    assert store.today()["calls"] == 3  # from memory
+    # A read writes the batch first, so it never misses a recorded call.
+    assert store.report("24h")["totals"]["calls"] == 3
+    assert _stored_calls(store) == 3
+    store.record(model="m", ok=True, input=1)
     store.flush()
-    assert json.loads(path.read_text())["requests"] == 3
+    assert _stored_calls(store) == 4
     assert store._timer is None
 
-    quick = StatsStore(tmp_path / "quick.json", write_interval=0.05)
+    quick = StatsStore(write_interval=0.05)
     quick.record(model="m", ok=True)
     quick.record(model="m", ok=True)
     deadline = time.monotonic() + 2
-    while time.monotonic() < deadline:
-        if json.loads((tmp_path / "quick.json").read_text())["requests"] == 2:
-            break
+    while time.monotonic() < deadline and _stored_calls(quick) != 2:
         time.sleep(0.02)
-    assert json.loads((tmp_path / "quick.json").read_text())["requests"] == 2
+    assert _stored_calls(quick) == 2
 
 
 def test_services_close_flushes(tmp_path: Path) -> None:
@@ -394,25 +460,32 @@ def test_services_close_flushes(tmp_path: Path) -> None:
     services.stats.record(model="m", ok=True)
     services.stats.record(model="m", ok=True)
     services.close()
-    assert json.loads((tmp_path / "stats.json").read_text())["requests"] == 2
+    services.close()  # the lifespan and the serve command both close
+    assert Database(tmp_path / DB_FILE_NAME).fetchone("SELECT COUNT(*) AS n FROM calls")["n"] == 2
 
 
 def test_reset_clears_and_persists(tmp_path: Path) -> None:
-    path = tmp_path / "stats.json"
-    store = StatsStore(path)
+    store = StatsStore(tmp_path / "stats.json", write_interval=3600)
     store.record(model="m", ok=True, input=4, provider="p", account="a")
     cleared = store.reset()
     assert datetime.fromisoformat(cleared)
     report = store.report("24h")
     assert report["requests"] == 0 and report["lifetime"]["calls"] == 0 and report["by_model"] == []
-    assert store.calls()[0] == []
-    assert json.loads(path.read_text())["requests"] == 0
-    # The cursor is never reused.
+    assert store.calls()[0] == [] and store.today()["calls"] == 0 and store.days()["days"] == []
+    for table in ("calls", "usage_hourly", "usage_daily", "usage_hist_hourly", "usage_hist_daily", "lifetime"):
+        assert store.db.fetchone(f"SELECT COUNT(*) AS n FROM {table}")["n"] == 0, table
+    # The cursor is never reused — not by this store, and not after a restart.
     store.record(model="m", ok=True)
     assert _latest(store)["seq"] == 2
+    # Reset can discard a batch that live clients saw before it reached disk.
+    assert store.record(model="m", ok=True)["seq"] == 3
+    assert store.db.fetchone("SELECT seq FROM sqlite_sequence WHERE name = 'calls'")["seq"] == 2
+    store.reset()
+    store.close()
+    assert StatsStore(tmp_path / "stats.json").record(model="m", ok=True)["seq"] == 4
 
 
-def test_version_1_files_migrate_in_place(tmp_path: Path) -> None:
+def test_version_1_files_are_imported_once(tmp_path: Path) -> None:
     path = tmp_path / "stats.json"
     today = datetime.now().astimezone().date().isoformat()
     path.write_text(
@@ -451,8 +524,7 @@ def test_version_1_files_migrate_in_place(tmp_path: Path) -> None:
     )
 
     store = StatsStore(path)
-    stored = json.loads(path.read_text())
-    assert stored["version"] == 2
+    assert not path.exists() and (tmp_path / "stats.json.migrated").is_file()
     report = store.report("7d")
     assert (report["requests"], report["failures"]) == (9, 1)
     assert report["lifetime"]["input"] == 40 and report["lifetime"]["cache_write"] == 0
@@ -461,11 +533,73 @@ def test_version_1_files_migrate_in_place(tmp_path: Path) -> None:
     assert report["by_model"][0]["tps"] == 50
     # Provider, account and origin were never recorded: not guessed.
     assert report["by_provider"] == [] and report["by_account"] == [] and report["by_origin"] == []
+    # A version 1 day has no hours: the day report says so instead of drawing zeros as data.
+    day = store.report("day")
+    assert day["hourly"] is False and day["totals"]["calls"] == 3 and sum(point["calls"] for point in day["series"]) == 0
+    assert store.today()["calls"] == 3
     rows, _ = store.calls()
     assert [row["seq"] for row in rows] == [2, 1]
     assert rows[1]["provider"] == "" and rows[1]["cache_write"] == 0 and rows[1]["id"] == "c1"
+    assert rows[1]["ts"] == datetime.fromisoformat("2026-10-20T10:00:00+08:00").timestamp()
     store.record(model="m-1", ok=True)
     assert _latest(store)["seq"] == 3
+    store.close()
+
+    # Once: a file reappearing beside a database that already counts is not added again.
+    (tmp_path / "stats.json.migrated").rename(path)
+    again = StatsStore(path)
+    assert again.report("7d")["requests"] == 10 and path.is_file()
+
+
+def test_version_2_files_keep_hours_histograms_and_the_cursor(tmp_path: Path) -> None:
+    now = time.time()
+    identity = "m-2\tp\ta\tchat"
+    row = {
+        "input": 5,
+        "output": 3,
+        "calls": 2,
+        "failed": 0,
+        "ttft_ms": 400,
+        "ttft_count": 2,
+        "decode_ms": 2000,
+        "decode_tokens": 100,
+        "last_at": now,
+        "ttft_hist": {"20": 2},
+        "tps_hist": {"40": 1},
+    }
+    path = tmp_path / "stats.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "seq": 41,
+                "requests": 2,
+                "failed_requests": 0,
+                "lifetime": {
+                    "models": {"m-2": {"input": 5, "output": 3, "calls": 2, "last_at": now}},
+                    "providers": {"p": {"input": 5, "calls": 2}},
+                    "accounts": {"p/a": {"input": 5, "calls": 2, "last_at": now}},
+                    "origins": {"chat": {"calls": 2}},
+                },
+                "days": {day_key(now): {identity: row}},
+                "hours": {hour_key(now): {identity: row}},
+                "samples": [{"seq": 40, "id": "abc", "at": "x", "ts": now - 10, "model": "m-2", "provider": "p", "account": "a", "ok": True, "input": 5}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = StatsStore(path)
+    assert (tmp_path / "stats.json.migrated").is_file()
+    report = store.report("24h", now=now)
+    assert report["totals"]["calls"] == 2 and report["series"][-1]["calls"] == 2
+    assert report["latency"]["ttft_avg_ms"] == 200
+    assert report["latency"]["ttft_p50_ms"] is not None and report["latency"]["tps_p50"] is not None
+    assert [row["key"] for row in report["by_account"]] == ["p/a"]
+    assert store.report("day", now=now)["hourly"] is True
+    assert store.last_used() == {"p/a": now}
+    assert [row["id"] for row in store.calls()[0]] == ["abc"]
+    # AUTOINCREMENT continues after the file's cursor, not after its last kept row.
+    assert store.record(model="m", ok=True)["seq"] == 42
 
 
 def test_corrupt_counters_start_over(tmp_path: Path) -> None:
@@ -475,6 +609,94 @@ def test_corrupt_counters_start_over(tmp_path: Path) -> None:
     report = store.report("7d")
     assert report["requests"] == 0
     assert report["by_model"] == []
+    assert not path.exists()
+    assert (tmp_path / "stats.json.corrupt").read_text(encoding="utf-8") == "{not json"
+
+
+# -- the calendar day -------------------------------------------------------- #
+def _midnight(day: date) -> float:
+    return datetime.combine(day, datetime.min.time()).astimezone().timestamp()
+
+
+def test_a_day_report_covers_every_local_hour_of_that_day() -> None:
+    store = StatsStore()
+    now = time.time()
+    today = datetime.fromtimestamp(now).astimezone().date()
+    yesterday = today - timedelta(days=1)
+    noon = _midnight(yesterday) + 12 * 3600
+    store.record(model="m", ok=True, input=4, provider="p", account="a", ttft_ms=300, at=noon)
+    store.record(model="m", ok=True, input=6, at=_midnight(yesterday - timedelta(days=1)) + 12 * 3600)
+
+    report = store.report("day", now=now, date=yesterday.isoformat())
+    assert (report["range"], report["granularity"], report["date"], report["hourly"]) == ("day", "hour", yesterday.isoformat(), True)
+    assert datetime.fromisoformat(report["since"]).timestamp() == _midnight(yesterday)
+    assert datetime.fromisoformat(report["until"]).timestamp() == _midnight(today)
+    assert report["series"][0]["start"] == report["since"]
+    assert len(report["series"]) in (23, 24, 25)
+    assert [datetime.fromisoformat(point["start"]).timestamp() for point in report["series"] if point["calls"]] == [hour_start(noon)]
+    assert report["totals"]["input"] == 4 and report["previous"]["input"] == 6
+    assert report["latency"]["ttft_avg_ms"] == 300
+    assert [row["key"] for row in report["by_account"]] == ["p/a"]
+    assert datetime.fromisoformat(report["server_time"])
+
+    for bad in ((today + timedelta(days=1)).isoformat(), "yesterday", "2026-13-01"):
+        with pytest.raises(ValidationError):
+            store.report("day", now=now, date=bad)
+    assert store.report("day", now=now)["date"] == today.isoformat()
+
+
+def test_today_compares_with_yesterday_up_to_the_same_time() -> None:
+    store = StatsStore()
+    today = datetime.now().astimezone().date()
+    yesterday = _midnight(today - timedelta(days=1))
+    now = _midnight(today) + 2 * 3600 + 30 * 60  # 02:30 today
+    store.record(model="m", ok=True, input=1, at=_midnight(today) + 600)
+    store.record(model="m", ok=True, input=10, at=yesterday + 600)  # 00:10 yesterday: before the same time
+    store.record(model="m", ok=True, input=100, at=yesterday + 2 * 3600 + 45 * 60)  # 02:45 yesterday: after it
+    store.record(model="m", ok=True, input=1000, at=yesterday + 20 * 3600)
+    report = store.report("day", now=now)
+    assert report["totals"]["input"] == 1
+    assert report["previous"]["input"] == 10
+    # Past the calls' retention, the hours stand in (to the hour holding the cut).
+    store.keep_days = 1
+    assert store.report("day", now=now)["previous"]["input"] == 110
+    # A past day compares with the whole day before it.
+    full = store.report("day", now=now, date=(today - timedelta(days=1)).isoformat())
+    assert full["totals"]["input"] == 1110
+
+
+@pytest.mark.skipif(not hasattr(time, "tzset"), reason="needs time.tzset to switch the local zone")
+# Future days on purpose: hours older than KEEP_HOURLY_DAYS would be pruned on the first write.
+@pytest.mark.parametrize(("zone", "day", "hours"), [("America/New_York", "2027-03-14", 23), ("America/New_York", "2026-11-01", 25), ("Asia/Shanghai", "2027-03-14", 24)])
+def test_a_day_has_as_many_hours_as_the_clock_gave_it(monkeypatch: pytest.MonkeyPatch, zone: str, day: str, hours: int) -> None:
+    monkeypatch.setenv("TZ", zone)
+    time.tzset()
+    try:
+        store = StatsStore()
+        start = _midnight(date.fromisoformat(day))
+        for offset in range(hours):
+            store.record(model="m", ok=True, input=1, at=start + offset * 3600 + 60)
+        report = store.report("day", now=start + 5 * 86400, date=day)
+        assert len(report["series"]) == hours
+        assert [point["calls"] for point in report["series"]] == [1] * hours
+        assert report["totals"]["calls"] == hours
+    finally:
+        monkeypatch.delenv("TZ")
+        time.tzset()
+
+
+def test_days_lists_every_day_with_usage() -> None:
+    store = StatsStore()
+    now = time.time()
+    assert store.days(now=now) == {"days": [], "first": None, "today": day_key(now)}
+    store.record(model="m", ok=True, input=3, output=2, at=now - 3 * 86400)
+    store.record(model="m", ok=False, input=1, at=now)
+    store.record(model="m", ok=True, input=1, at=now)
+    listed = store.days(now=now)
+    assert [row["date"] for row in listed["days"]] == [day_key(now - 3 * 86400), day_key(now)]
+    assert listed["days"][0] == {"date": day_key(now - 3 * 86400), "calls": 1, "tokens": 5, "failed": 0}
+    assert listed["days"][1]["calls"] == 2 and listed["days"][1]["failed"] == 1
+    assert listed["first"] == day_key(now - 3 * 86400)
 
 
 def test_today_rollups_and_last_used() -> None:

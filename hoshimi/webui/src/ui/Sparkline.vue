@@ -23,15 +23,18 @@ const last = computed(() => points.value.at(-1));
 </script>
 
 <template>
-  <svg v-if="points.length" class="sparkline" :viewBox="`0 0 ${W} ${height}`" preserveAspectRatio="none" :height="height" role="img" :aria-label="label">
-    <path :d="area" class="area" />
-    <path :d="line" class="line" />
-    <circle v-if="last" :cx="last[0]" :cy="last[1]" r="2.5" class="dot" />
+  <svg v-if="points.length" class="sparkline morph" :viewBox="`0 0 ${W} ${height}`" preserveAspectRatio="none" :height="height" role="img" :aria-label="label">
+    <path :d="area" class="area" :style="{ d: area ? `path('${area}')` : undefined }" />
+    <path :d="line" class="line" :style="{ d: line ? `path('${line}')` : undefined }" />
+    <circle v-if="last" :cx="last[0]" :cy="last[1]" r="2.5" class="dot" :style="{ cx: `${last[0]}px`, cy: `${last[1]}px` }" />
   </svg>
 </template>
 
 <style scoped>
 .sparkline { display: block; width: 100%; overflow: visible; }
+/* A new range reshapes the line rather than replacing it (where the browser animates ``d`` and the
+   point count is unchanged; otherwise it is simply redrawn). */
+.area, .line, .dot { transition: d var(--md-sys-motion-duration-medium4) var(--md-sys-motion-easing-emphasized), cx var(--md-sys-motion-duration-medium4) var(--md-sys-motion-easing-emphasized), cy var(--md-sys-motion-duration-medium4) var(--md-sys-motion-easing-emphasized); }
 .area { fill: var(--md-sys-color-primary); opacity: 0.1; }
 .line { fill: none; stroke: var(--md-sys-color-outline); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 .dot { fill: var(--md-sys-color-primary); }

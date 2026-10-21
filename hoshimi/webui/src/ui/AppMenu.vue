@@ -103,7 +103,7 @@ const toggle = () => (open.value = !open.value);
     <slot :toggle="toggle" :open="open" />
     <Teleport to="body">
       <Transition name="snackbar">
-        <div v-if="open" ref="list" class="menu" role="menu" :style="{ ...position, zIndex: layer.zIndex.value }" @click.stop>
+        <div v-if="open" ref="list" class="menu app-scroll app-scroll-auto" role="menu" :style="{ ...position, zIndex: layer.zIndex.value }" @click.stop>
           <button
             v-for="item in items"
             :key="item.id"
@@ -126,7 +126,7 @@ const toggle = () => (open.value = !open.value);
 <style scoped>
 .menu-root { display: inline-flex; }
 .menu {
-  position: fixed; padding: var(--app-space-2) 0; overflow-y: auto;
+  position: fixed; padding: var(--app-space-2) 0;
   background: var(--md-sys-color-surface-container); border-radius: var(--md-sys-shape-corner-extra-small); box-shadow: var(--app-elevation-2);
 }
 .item {

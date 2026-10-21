@@ -28,14 +28,20 @@ vi.mock('@/ui', () => {
     icons: {}, AppButton: slot, IconButton: slot, Badge: { props: ['value'], template: '<span class="badge">{{ value }}</span>' }, Meter: slot, Skeleton: slot, SearchField: slot,
     Toolbar: { template: '<div><slot /><slot name="end" /></div>' },
     EmptyState: { props: ['title'], template: '<p class="empty">{{ title }}</p>' },
-    Chip: { props: ['label', 'count', 'selected'], emits: ['click'], template: '<button class="chip" :aria-pressed="selected" @click="$emit(\'click\')">{{ label }} {{ count }}</button>' },
+    SegmentedControl: {
+      props: ['options', 'modelValue'],
+      emits: ['update:modelValue'],
+      template: '<div><button v-for="o in options" :key="o.value" class="filter" :aria-checked="o.value === modelValue" @click="$emit(\'update:modelValue\', o.value)">{{ o.label }} {{ o.count }}</button></div>',
+    },
+    AxisPanes: slot,
     ListDetail: { props: ['detail'], template: '<div><slot name="list" /><slot v-if="detail" name="detail" :wide="true" /><slot v-else name="placeholder" /></div>' },
-    TRANSITIONS: { list: 'list' }, keepLeavingInPlace: {},
+    TRANSITIONS: { list: 'list' }, keepLeavingInPlace: {}, staggerStyle: () => ({}),
     useSnackbar: () => ({ show: vi.fn(), error: vi.fn() }),
   };
 });
 
 const names = (w: ReturnType<typeof mount>) => w.findAll('.row .name').map((n) => n.text());
+const filter = (w: ReturnType<typeof mount>, label: string) => w.findAll('.filter').find((c) => c.text().startsWith(label))!;
 
 describe('the channels list', () => {
   beforeEach(() => {
@@ -45,7 +51,6 @@ describe('the channels list', () => {
 
   it('keeps rows where they were when saving moves a channel in the server order', async () => {
     const w = mount(ChannelsView, { global: { plugins: [createPinia()] } });
-    await w.findAll('.chip').find((c) => c.text().startsWith('All'))!.trigger('click');
     const original = names(w);
     expect(original).toEqual(['zeta', 'alpha', 'beta']);
     // Switching beta on lists it first on the server; its row must not jump.
@@ -57,21 +62,26 @@ describe('the channels list', () => {
     expect(names(w)).toEqual([...original, 'new']);
   });
 
-  it('starts from the channels in use and filters by what needs doing, with a count on each filter', async () => {
+  it('starts from every channel, "All" first, and filters by what needs doing, with a count on each filter', async () => {
     const w = mount(ChannelsView, { global: { plugins: [createPinia()] } });
-    const chip = (label: string) => w.findAll('.chip').find((c) => c.text().startsWith(label))!;
+    expect(w.findAll('.filter').map((f) => f.text())).toEqual(['All 3', 'In use 2', 'Needs attention 1', 'Not set up 0', 'Off 1']);
+    expect(filter(w, 'All').attributes('aria-checked')).toBe('true');
+    expect(names(w)).toEqual(['zeta', 'alpha', 'beta']);
+    await filter(w, 'In use').trigger('click');
     expect(names(w)).toEqual(['zeta', 'alpha']);
-    expect(chip('Needs attention').text()).toBe('Needs attention 1');
-    await chip('Needs attention').trigger('click');
+    await filter(w, 'Needs attention').trigger('click');
     expect(names(w)).toEqual(['alpha']);
-    await chip('Off').trigger('click');
+    await filter(w, 'Off').trigger('click');
     expect(names(w)).toEqual(['beta']);
   });
 
-  it('shows every station when nothing is in use yet, and a chosen channel the filter would hide', async () => {
-    report.value.channels = [channel('a', 'empty', 0), channel('b', 'disabled')];
-    const w = mount(ChannelsView, { props: { id: 'b' }, global: { plugins: [createPinia()] } });
-    expect(names(w)).toEqual(['a', 'b']);
+  it('goes back to every channel when the chosen one is hidden by the filter', async () => {
+    const w = mount(ChannelsView, { global: { plugins: [createPinia()] } });
+    await filter(w, 'In use').trigger('click');
+    expect(names(w)).toEqual(['zeta', 'alpha']);
+    await w.setProps({ id: 'beta' });
+    expect(filter(w, 'All').attributes('aria-checked')).toBe('true');
+    expect(names(w)).toEqual(['zeta', 'alpha', 'beta']);
   });
 
   it('opens the chosen channel, and leaves for the list when it goes away', async () => {

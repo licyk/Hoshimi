@@ -56,9 +56,9 @@ Messages 详见 [Anthropic Agent 接入](anthropic-api.zh-CN.md)。
 | 接口组 | 用途 |
 | --- | --- |
 | `/app/version`、`/app/health`、`/app/meta` | 版本、健康、路径、配置标记和数量 |
-| `/settings`（`GET`、`PATCH`） | 读取脱敏配置，保存并应用更新；`restart_required` 表示已保存的监听地址/端口需重启生效 |
+| `/settings`（`GET`、`PATCH`） | 读取脱敏配置，保存并应用更新；`restart_required` 表示已保存的监听地址/端口需重启生效；`listening` 为实际绑定的套接字（`port`、`requested_port`，请求端口被占用而改用其他端口时 `fallback` 为真，这不算需要重启） |
 | `/providers`、`/provider-forms` | 供应商、账户摘要、凭据字段 |
-| `/channels` | 全部渠道及其账户、续期、冷却、被动配额、网络诊断、今日用量与状态（仅读内存，不请求上游） |
+| `/channels` | 全部渠道及其账户、续期、冷却、被动配额、网络诊断、今日用量、最近五次签到结果（`recent_checkins`）与状态（仅读本地状态，不请求上游） |
 | `/providers/{id}/accounts`（`POST`） | 校验并追加账户 |
 | `/providers/{id}/accounts/{account}`（`DELETE`） | 删除账户 |
 | `/stations` | `agg` 预设 |
@@ -67,9 +67,11 @@ Messages 详见 [Anthropic Agent 接入](anthropic-api.zh-CN.md)。
 | `/probe`（`GET`、`POST`） | 读取或开始可用性探测 |
 | `/refresh`（`GET`、`POST`） | 读取或执行凭据续期 |
 | `/credits`、`/credits/claim`（签到用 `POST`） | 余额、被动配额和签到 |
+| `/credits/checkins?provider=&limit=50` | 签到历史，新的在前（含每日自动签到与手动领取，保留 365 天） |
 | `/login/providers`、`/login/start`、`/login/poll`、`/login/input`、`/login/cancel` | 浏览器与设备授权 |
-| `/stats?range=24h\|7d\|30d\|90d`（`GET`，`DELETE` 清空） | 区间总量、补零序列、延迟分位数，以及按模型、供应商、账户、来源的拆分 |
-| `/stats/calls` | 最近调用，新的在前；支持 `limit`、`before` 游标与筛选 |
+| `/stats?range=24h\|day\|7d\|30d\|90d`（`GET`，`DELETE` 清空） | 区间总量、补零序列、延迟分位数，以及按模型、供应商、账户、来源的拆分。`range=day&date=YYYY-MM-DD` 为本地时间的某一自然日，按小时展示（夏令时切换日为 23 或 25 点；默认今天；未来或格式错误的日期返回 400），与前一天比较——若为今天，只比较前一天同一时刻之前的部分。报告包含 `since`/`until`（不含）、`date`、`hourly`（某天只有按日总量时为假，例如导入的旧数据或超出小时保留期）和 `server_time` |
+| `/stats/days` | 每个有用量的本地日期（`date`、`calls`、`tokens`、`failed`），旧的在前，另含 `first` 与 `today`，供日历使用 |
+| `/stats/calls` | 保留期内的全部调用记录，新的在前；支持 `limit`、`before` 游标，`model`/`provider`/`account`/`origin`/`ok` 筛选，`since`/`until`（带时区的 ISO 8601，`until` 不含）以及 `q`（在模型、供应商、账户、错误代码/信息、结束原因中不区分大小写地搜索） |
 | `/stats/live` | SSE：先发送进行中调用的快照，再推送 `started`/`progress`/`finished` 事件 |
 | `/playground/*` | 使用工具密钥聊天，不暴露模型 API 密钥 |
 

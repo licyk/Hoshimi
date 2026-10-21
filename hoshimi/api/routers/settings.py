@@ -19,8 +19,11 @@ router = APIRouter(prefix="/v1", tags=["settings"])
 
 
 class ServerView(Record):
+    """``server.*`` as configured. ``port`` is the configured first port; the bound one is ``SettingsView.listening``."""
+
     host: str
     port: int
+    strict_port: bool = False
     access_token_configured: bool
     model_api_key_configured: bool
     allow_cidrs: list[str]
@@ -31,6 +34,22 @@ class ServerView(Record):
     default_model: str | None
     auto_refresh: bool
     auto_checkin: bool
+    stats_keep_days: int = 90
+
+
+class ListeningView(Record):
+    """The socket this process actually serves on.
+
+    ``port`` is the bound port and ``requested_port`` the one the search
+    started from (``server.port``, or ``serve --port``). ``fallback`` says the
+    requested port was taken and the search moved on — a fact about this run,
+    not a pending change, so it never sets ``restart_required``.
+    """
+
+    host: str
+    port: int
+    requested_port: int
+    fallback: bool = False
 
 
 class NetworkView(Record):
@@ -70,6 +89,17 @@ class SettingsView(Record):
     providers: list[ProviderView]
     network: NetworkView = Field(default_factory=NetworkView)
     restart_required: bool = False
+    listening: ListeningView | None = None
+
+
+def listening_view(state: Any) -> ListeningView | None:
+    """Where this process listens, from the app state; None when it bound no socket of its own."""
+    port = getattr(state, "bound_port", None)
+    if port is None:
+        return None
+    requested = getattr(state, "requested_port", None)
+    requested = port if requested is None else requested
+    return ListeningView(host=getattr(state, "bound_host", None) or "", port=port, requested_port=requested, fallback=requested != 0 and port != requested)
 
 
 def _view(services: Services, request: Request | None = None) -> SettingsView:
@@ -78,11 +108,13 @@ def _view(services: Services, request: Request | None = None) -> SettingsView:
     return SettingsView(
         data_dir=str(services.data_dir),
         restart_required=started is not None and tuple(started) != (settings.host, settings.port),
+        listening=listening_view(request.app.state) if request is not None else None,
         config_path=str(services.config_path),
         network=network_view(settings.network.as_dict()),
         server=ServerView(
             host=settings.host,
             port=settings.port,
+            strict_port=settings.strict_port,
             access_token_configured=bool(settings.access_token),
             model_api_key_configured=bool(settings.model_api_key),
             allow_cidrs=list(settings.allow_cidrs),
@@ -93,6 +125,7 @@ def _view(services: Services, request: Request | None = None) -> SettingsView:
             default_model=settings.default_model,
             auto_refresh=settings.auto_refresh,
             auto_checkin=settings.auto_checkin,
+            stats_keep_days=settings.stats_keep_days,
         ),
         providers=[
             ProviderView(id=pid, enabled=cfg.enabled, accounts=len(cfg.accounts), options=sorted(cfg.options),

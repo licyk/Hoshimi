@@ -156,7 +156,7 @@ function onKeydown(event: KeyboardEvent) {
 
     <CatalogStatus />
 
-    <div ref="scroller" class="thread" role="log" aria-live="polite">
+    <div ref="scroller" class="thread app-scroll" role="log" aria-live="polite">
       <div v-if="models.isFetching.value && !modelOptions.length" class="loading">
         <Skeleton v-for="i in 3" :key="i" height="64px" shape="medium" />
       </div>
@@ -199,7 +199,7 @@ function onKeydown(event: KeyboardEvent) {
 .head-controls { display: flex; align-items: flex-start; gap: var(--app-space-2); min-width: 0; flex-wrap: wrap; }
 .model { flex: 1 1 280px; min-width: 0; }
 .effort { flex: 0 1 200px; min-width: 0; }
-.thread { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: var(--app-space-3); padding: var(--app-space-2) 0; }
+.thread { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--app-space-3); padding: var(--app-space-2) 0; }
 .turns { display: flex; flex-direction: column; gap: var(--app-space-3); }
 .loading { display: flex; flex-direction: column; gap: var(--app-space-2); }
 .turn { display: flex; flex-direction: column; gap: var(--app-space-1); max-width: min(760px, 100%); }

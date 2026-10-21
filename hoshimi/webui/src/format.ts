@@ -19,6 +19,23 @@ export const millis = (value: number | null | undefined): string => (value === n
 /** The portion of the day row's label worth a bar's width: `2026-10-11` → `10-11`. */
 export const dayLabel = (day: string): string => (/^\d{4}-\d{2}-\d{2}$/.test(day) ? day.slice(5) : day);
 
+/** A local calendar day as ``YYYY-MM-DD`` (not UTC: the day the reader is living in). */
+export const localDay = (date: Date = new Date()): string =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+/** ``day`` moved by ``n`` calendar days (local, so a daylight-saving change does not skip one). */
+export const addDays = (day: string, n: number): string => {
+  const [y, m, d] = day.split('-').map(Number);
+  return localDay(new Date(y, m - 1, d + n));
+};
+
+/** A day for a heading: its weekday, month and date in the reader's language. */
+export const longDay = (day: string): string => {
+  const [y, m, d] = day.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  return Number.isNaN(date.getTime()) ? day : date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: y === new Date().getFullYear() ? undefined : 'numeric' });
+};
+
 /** The timestamp a sample carries, in the reader's own time zone. */
 export const when = (iso: string): string => {
   const date = new Date(iso);

@@ -5,6 +5,7 @@ import App from '@/App.vue';
 import { ApiError } from '@/api/client';
 import { router } from '@/router';
 import '@/theme/tokens.css';
+import { applyScrollbars } from '@/theme/scrollbars';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -16,4 +17,5 @@ const queryClient = new QueryClient({
   },
 });
 
+applyScrollbars();
 createApp(App).use(createPinia()).use(router).use(VueQueryPlugin, { queryClient }).mount('#app');

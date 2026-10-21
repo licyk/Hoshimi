@@ -26,6 +26,23 @@
 .shared-axis-x-enter-from { opacity: 0; transform: translateX(calc(30px * var(--axis-dir, 1))); }
 .shared-axis-x-leave-to { opacity: 0; transform: translateX(calc(-30px * var(--axis-dir, 1))); }
 
+/* shared-axis-y: moving between items of a list (a detail pane following its list). --axis-dir is 1
+   to an item further down, -1 to one above. The leaving item fades fast and the entering one fades in
+   behind it, so two pages of text never sit on top of each other for long. */
+.shared-axis-y-enter-active {
+  transition:
+    opacity 210ms var(--md-sys-motion-easing-emphasized-decelerate) 60ms,
+    transform var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate);
+}
+.shared-axis-y-leave-active {
+  position: absolute; inset-inline: 0;
+  transition:
+    opacity 90ms var(--md-sys-motion-easing-emphasized-accelerate),
+    transform var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-accelerate);
+}
+.shared-axis-y-enter-from { opacity: 0; transform: translateY(calc(24px * var(--axis-dir, 1))); }
+.shared-axis-y-leave-to { opacity: 0; transform: translateY(calc(-24px * var(--axis-dir, 1))); }
+
 /* container: a dialog grows from the card's rectangle (set by transitions.ts), else fades and scales */
 .container-enter-active,
 .container-leave-active {
@@ -175,6 +192,7 @@
   [class*='-enter-from'],
   [class*='-leave-to'] { transform: none !important; }
   .ripple-wave { display: none; }
+  .morph, .morph * { transition-property: opacity !important; }
   * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
 
@@ -184,4 +202,5 @@
   }
   :root[data-motion='reduced'] [class*='-enter-from'], :root[data-motion='reduced'] [class*='-leave-to'] { transform: none !important; }
   :root[data-motion='reduced'] .ripple-wave { display: none; }
+  :root[data-motion='reduced'] .morph, :root[data-motion='reduced'] .morph * { transition-property: opacity !important; }
   :root[data-motion='reduced'] * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }

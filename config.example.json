@@ -6,12 +6,14 @@
   "server": {
     "host": "127.0.0.1",
     "port": 10600,
+    "strict_port": false,
     "access_token": "tool-access-key",
     "model_api_key": "model-api-key",
     "max_body_bytes": 16777216,
     "max_account_retries": 3,
     "auto_refresh": true,
-    "auto_checkin": true
+    "auto_checkin": true,
+    "stats_keep_days": 90
   },
   "security": {
     "allow_cidrs": [

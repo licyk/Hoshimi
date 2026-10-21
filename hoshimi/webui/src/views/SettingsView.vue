@@ -28,6 +28,10 @@ const channels = useChannels();
 const snackbar = useSnackbar();
 const prefs = usePreferencesStore();
 const s = computed(() => settings.data.value);
+const listeningAddress = computed(() => {
+  const l = s.value?.listening;
+  return l ? `${l.host.includes(':') ? `[${l.host}]` : l.host}:${l.port}` : '';
+});
 
 const tab = computed<Tab>({
   get: () => (TABS.includes(route.query.tab as Tab) ? (route.query.tab as Tab) : 'general'),
@@ -119,6 +123,11 @@ async function copy(text: string) {
             <TextField :model-value="s.server.max_body_bytes" type="number" :min="1" :label="t('settings.maxBodyBytes')" :supporting-text="t('settings.maxBodyBytesHelp')" @change="save({ server: { max_body_bytes: num($event) } })" />
           </div>
         </PageSection>
+        <PageSection :title="t('settings.history')" :subtitle="t('settings.historyHint')">
+          <div class="row">
+            <TextField :model-value="s.server.stats_keep_days" type="number" :min="1" :label="t('settings.keepDays')" :supporting-text="t('settings.keepDaysHelp')" @change="save({ server: { stats_keep_days: num($event) } })" />
+          </div>
+        </PageSection>
       </div>
 
       <div v-else-if="tab === 'access'" key="access" class="panel">
@@ -127,6 +136,14 @@ async function copy(text: string) {
             <TextField :model-value="s.server.host" :label="t('settings.host')" @change="save({ server: { host: $event } }, true)" />
             <TextField :model-value="s.server.port" type="number" :label="t('settings.port')" @change="save({ server: { port: num($event) } }, true)" />
           </div>
+          <p v-if="s.listening" class="type-body-medium listening" :class="{ fallback: s.listening.fallback }" role="status">
+            <AppIcon :icon="s.listening.fallback ? icons.AlertTriangle : icons.Radio" :size="18" />
+            <span>
+              {{ t('settings.listeningOn', { address: listeningAddress }) }}
+              <template v-if="s.listening.fallback"> · {{ t('settings.listeningFallback', { requested: s.listening.requested_port, port: s.listening.port }) }}</template>
+            </span>
+          </p>
+          <Switch :model-value="s.server.strict_port" :label="t('settings.strictPort')" :supporting-text="t('settings.strictPortHelp')" @update:model-value="save({ server: { strict_port: $event } }, true)" />
         </PageSection>
         <PageSection :title="t('settings.keys')" :subtitle="t('settings.keysHint')">
           <TokenField
@@ -206,6 +223,7 @@ async function copy(text: string) {
               { label: t('settings.version'), value: version.data.value?.version ?? '—' },
               { label: t('settings.dataDir'), value: s.data_dir, mono: true },
               { label: t('settings.configPath'), value: s.config_path, mono: true },
+              { label: t('settings.database'), value: `${s.data_dir}${s.data_dir.includes('\\') ? '\\' : '/'}hoshimi.db`, mono: true },
             ]"
           />
           <div class="buttons">
@@ -227,6 +245,8 @@ async function copy(text: string) {
   border-radius: var(--md-sys-shape-corner-medium); background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container);
 }
 p { margin: 0; }
+.listening { display: flex; align-items: center; gap: var(--app-space-2); margin: 0; color: var(--md-sys-color-on-surface-variant); }
+.listening.fallback { color: var(--md-sys-color-tertiary); }
 .row { display: flex; flex-wrap: wrap; gap: var(--app-space-3); align-items: flex-start; }
 .row > * { flex: 1 1 260px; min-width: 0; }
 .field-row { display: flex; align-items: center; justify-content: space-between; gap: var(--app-space-4); min-height: 56px; flex-wrap: wrap; }

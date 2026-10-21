@@ -21,6 +21,7 @@ export type LiveCall = S['LiveCall'];
 export type ChannelsReport = S['ChannelsReport'];
 export type ChannelView = S['ChannelView'];
 export type ChannelAccount = S['ChannelAccount'];
+export type CheckinRecord = S['CheckinRecord'];
 
 /** One frame of ``/api/v1/stats/live``. */
 export type LiveEvent =

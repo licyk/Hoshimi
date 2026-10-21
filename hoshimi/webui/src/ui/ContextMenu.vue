@@ -81,7 +81,7 @@ function choose(id: string) {
 <template>
   <Teleport to="body">
     <Transition name="snackbar">
-      <div v-if="open" ref="list" class="menu" role="menu" :style="{ ...position, zIndex: layer.zIndex.value }" @contextmenu.prevent>
+      <div v-if="open" ref="list" class="menu app-scroll app-scroll-auto" role="menu" :style="{ ...position, zIndex: layer.zIndex.value }" @contextmenu.prevent>
         <template v-for="item in items" :key="item.id">
           <div v-if="item.divider" class="divider" role="separator" />
           <button type="button" role="menuitem" class="item state-layer type-label-large" :class="{ danger: item.danger }" :disabled="item.disabled" @click="choose(item.id)">
@@ -96,7 +96,7 @@ function choose(id: string) {
 
 <style scoped>
 .menu {
-  position: fixed; min-width: 220px; max-width: min(var(--app-width-menu), calc(100vw - 16px)); padding: var(--app-space-2) 0; overflow-y: auto;
+  position: fixed; min-width: 220px; max-width: min(var(--app-width-menu), calc(100vw - 16px)); padding: var(--app-space-2) 0;
   background: var(--md-sys-color-surface-container); border-radius: var(--md-sys-shape-corner-extra-small); box-shadow: var(--app-elevation-2);
 }
 .item {

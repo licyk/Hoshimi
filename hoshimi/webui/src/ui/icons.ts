@@ -9,6 +9,7 @@ export {
   ArrowDown,
   Brain,
   CalendarCheck,
+  CalendarDays,
   CircleCheck,
   CircleStop,
   CircleX,

@@ -6,7 +6,8 @@ network diagnostics, the configured options, and the stats rollups — so the
 channels page asks once instead of six times and never shows one lane from
 two different moments.
 
-It reads memory only. Balances (``/credits``) ask each station over the
+It reads local state only — memory and ``hoshimi.db`` (usage rollups, the
+latest check-in outcomes). Balances (``/credits``) ask each station over the
 network and are deliberately not part of this report: a page that opens on
 every visit must not cost every station a round trip.
 """
@@ -21,7 +22,7 @@ from fastapi import APIRouter
 from pydantic import Field
 
 from hoshimi.api.deps import ServicesDep
-from hoshimi.api.routers.credits import CheckinState, PassiveQuota, passive_quota
+from hoshimi.api.routers.credits import CheckinRecord, CheckinState, PassiveQuota, checkin_record, passive_quota
 from hoshimi.api.routers.providers import CredentialFormView, NetworkDiagnostic, ProviderSummary, list_provider_forms, list_providers, network_diagnostics
 from hoshimi.api.routers.settings import NetworkView, network_view
 from hoshimi.api.routers.stats import UsageTotals
@@ -36,6 +37,9 @@ router = APIRouter(prefix="/v1", tags=["channels"])
 
 LOW_QUOTA_PERCENT = 10
 """At or below this share of its allowance, a lane asks for attention."""
+
+RECENT_CHECKINS = 5
+"""Check-in outcomes shown per lane; the full history is ``/credits/checkins``."""
 
 
 class ChannelAccount(Record):
@@ -77,6 +81,7 @@ class ChannelView(Record):
     quota: PassiveQuota | None = None
     accounts: list[ChannelAccount] = Field(default_factory=list)
     usage_today: UsageTotals = Field(default_factory=UsageTotals)
+    recent_checkins: list[CheckinRecord] = Field(default_factory=list)
     status: Literal["ok", "attention", "disabled", "empty"] = "ok"
 
 
@@ -104,6 +109,7 @@ def build_report(services: Services) -> ChannelsReport:
     renewal = {(row["provider"], row["account"]): row for row in services.refresher.status()} if services.refresher is not None else {}
     usage = services.stats.today_rollups(now)
     last_used = services.stats.last_used()
+    checkins = services.credits.store.recent_by_provider(RECENT_CHECKINS) if services.credits is not None else {}
 
     channels: list[ChannelView] = []
     for summary in list_providers(services):
@@ -132,6 +138,7 @@ def build_report(services: Services) -> ChannelsReport:
             quota=passive_quota(reading) if reading is not None else None,
             accounts=accounts,
             usage_today=UsageTotals.model_validate(usage["providers"].get(pid, {})),
+            recent_checkins=[checkin_record(row) for row in checkins.get(pid, [])],
         )
         view.status = channel_status(view, summary, now)
         channels.append(view)

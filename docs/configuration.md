@@ -54,13 +54,15 @@ contains demonstration credentials and is not a ready-to-run account bundle.
 
 | Key | Meaning |
 | --- | --- |
-| `server.host` / `server.port` | bind address (default `127.0.0.1:10600`) |
+| `server.host` / `server.port` | bind address (default `127.0.0.1:10600`); `0` lets the system pick any free port |
+| `server.strict_port` | `true` fails at start when `server.port` is taken instead of searching for a free one (default `false`; `serve --strict-port/--no-strict-port` overrides it) |
 | `server.access_token` | tool access key for `/api/`, `/docs` and `/openapi.json` |
 | `server.model_api_key` | independent API key for external `/v1/` model requests |
 | `server.default_model` | model used when a request omits `model` |
 | `server.max_body_bytes` / `server.max_account_retries` | limits |
 | `server.auto_refresh` | renew credentials on a timer (`false` = rotate tokens by hand) |
 | `server.auto_checkin` | daily check-in timer for free credits (`false` = claim by hand) |
+| `server.stats_keep_days` | days each recorded call is kept in `hoshimi.db` (default `90`, at least `1`); daily totals and lifetime counters are kept regardless |
 | `security.allow_cidrs` | client IP allowlist; required to bind non-loopback |
 | `security.allow_origins` | CORS origins; requires `server.access_token` |
 | `security.allow_hosts` | allowed `Host` header names |
@@ -138,6 +140,34 @@ still requires a second successful listing before accepting a large removal.
 The catalogue API includes source, last-success time, failure category and retry
 time. Cache files can be deleted to discard saved model metadata.
 
+## Data directory files
+
+Records the gateway accumulates live in one SQLite database,
+`<data directory>/hoshimi.db`: usage statistics (one row per call for
+`server.stats_keep_days` days, hourly totals for 120 days, daily totals and
+lifetime counters forever), the daily check-in state and its history (365 days),
+and probe verdicts. Writes are batched about once a second and on shutdown.
+
+Files people or other programs read and edit stay plain files: `config.json`,
+credentials, `eac-user.json`, `server.json` (the running server's host, actual
+port, URL and PID) and `catalog-cache/`.
+
+On the first start after upgrading, `stats.json`, `checkin.json` and
+`probe.json` are imported into the database and renamed to `*.migrated`; an
+unreadable one is renamed to `*.corrupt` and that store starts empty. Delete
+`hoshimi.db` (with the server stopped) to discard every record.
+
+## Port selection
+
+`hoshimi serve` binds the socket itself, so the port it tested is the port it
+serves. When `server.port` is taken or reserved, it tries the next port, up to
+65535, then wraps around to the ports from 1024 up to the requested one; any
+other bind error (such as an address this machine does not have) fails at once.
+With `server.strict_port` (or `--strict-port`) only the requested port is tried.
+The port actually bound is logged, written to `server.json` and reported by
+`GET /api/v1/settings` as `listening`; a fallback port is not a pending change and
+does not ask for a restart.
+
 ## CLI changes
 
 ```bash
@@ -161,8 +191,10 @@ Only pools whose inputs changed are rebuilt. Editing another provider or a serve
 field preserves unrelated account holds and login state. Network-only edits also
 preserve account state. Provider HTTP clients are retained so in-flight streams
 can finish. Other provider rebuilds recreate their
-in-memory account state, including `needs_login`. Listening address and port
-changes require restarting the server to rebind its socket.
+in-memory account state, including `needs_login`. Listening address, port and
+`strict_port` changes require restarting the server to rebind its socket;
+`stats_keep_days` applies from the next pruning, which runs with newly recorded
+calls at most once a minute.
 
 Writes use atomic replacement and best-effort restrictive permissions. An invalid
 or unreadable file stops startup; malformed configuration is backed up when possible.

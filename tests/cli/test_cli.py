@@ -185,3 +185,20 @@ def test_config_path_is_absolute_before_first_save(runner):
     assert result.exit_code == 0
     assert result.output.strip() == str(config_file_path())
     assert not config_file_path().exists()
+
+
+@pytest.mark.parametrize(("configured", "flag", "expected"), [(False, [], False), (True, [], True), (True, ["--no-strict-port"], False), (False, ["--strict-port"], True)])
+def test_serve_strict_port_falls_back_to_the_setting(runner, monkeypatch, configured, flag, expected):
+    from hoshimi.core.net import ports
+
+    seen: dict[str, object] = {}
+
+    def refuse(host, port, strict=False):
+        seen.update(host=host, port=port, strict=strict)
+        raise ports.PortUnavailableError("taken")
+
+    monkeypatch.setattr(ports, "bind_first_free_port", refuse)
+    assert runner.invoke(get_app(), ["config", "set", "server.strict_port", json.dumps(configured)]).exit_code == 0
+    result = runner.invoke(get_app(), ["serve", "--no-open", "--no-refresh", "--no-checkin", *flag])
+    assert result.exit_code == 3, result.output
+    assert seen == {"host": "127.0.0.1", "port": 10600, "strict": expected}

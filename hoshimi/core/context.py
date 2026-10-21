@@ -9,6 +9,7 @@ from typing import Any
 from hoshimi.core.config import Settings, load_settings
 from hoshimi.core.credentials import collect_provider_accounts
 from hoshimi.core.credits import CHECKIN_FILE_NAME, CheckinStore, CreditsService
+from hoshimi.core.db import DB_FILE_NAME, Database
 from hoshimi.core.login import LoginManager
 from hoshimi.core.modelsdev import MODELSDEV
 from hoshimi.core.net.client import NetworkClient
@@ -24,14 +25,18 @@ class Services:
     """Everything a command or a request handler needs.
 
     ``settings`` is the effective configuration (config file + CLI overrides), ``registry``
-    owns provider HTTP clients and the enabled providers, ``probe`` holds the last
+    owns provider HTTP clients and the enabled providers, ``db`` is the one
+    ``hoshimi.db`` connection the stores below share, ``probe`` holds the last
     availability verdict per model, ``stats`` counts what the gateway served
     (and, through ``stats.live``, what it is serving right now), and
     ``refresher`` renews credentials on a timer.
+
+    Built directly (tests, embedders), every store keeps its rows in memory.
     """
 
     settings: Settings
     registry: Registry
+    db: Database = field(default_factory=Database)
     probe: ProbeStore = field(default_factory=ProbeStore)
     stats: StatsStore = field(default_factory=StatsStore)
     refresher: Refresher | None = None
@@ -40,6 +45,7 @@ class Services:
 
     def __post_init__(self) -> None:
         MODELSDEV.network = self.settings.network
+        self.stats.keep_days = self.settings.stats_keep_days
 
     @property
     def data_dir(self) -> Path:
@@ -57,8 +63,12 @@ class Services:
         if self.login is not None:
             self.login.close()
         self.registry.close()
-        # Writes are debounced; whatever the last two seconds counted lands now.
-        self.stats.flush()
+        # Writes are batched; whatever the last second counted lands now. Then
+        # the database closes — a second close (the lifespan and the serve
+        # command both close) is a no-op.
+        self.stats.close()
+        self.probe.close()
+        self.db.close()
 
     def apply_settings(self, settings: Settings) -> bool:
         """Adopt a new configuration: rebuild the lanes it actually moved.
@@ -83,6 +93,7 @@ class Services:
         before = pool_inputs(self.settings)
         after = pool_inputs(settings)
         self.settings = settings
+        self.stats.keep_days = settings.stats_keep_days
         MODELSDEV.network = settings.network
         if isinstance(self.registry.client, NetworkClient):
             self.registry.client.network = settings.network
@@ -158,12 +169,16 @@ def build_services(settings: Settings | None = None) -> Services:
             disabled=pool.disabled,
         )
 
+    data_dir = default_data_dir()
+    # One connection for every store; each imports (then renames) its old JSON file once.
+    db = Database(data_dir / DB_FILE_NAME)
     return Services(
         settings=settings,
         registry=registry,
-        probe=ProbeStore(default_data_dir() / PROBE_FILE_NAME),
-        stats=StatsStore(default_data_dir() / STATS_FILE_NAME),
+        db=db,
+        probe=ProbeStore(data_dir / PROBE_FILE_NAME, db=db),
+        stats=StatsStore(data_dir / STATS_FILE_NAME, db=db, keep_days=settings.stats_keep_days),
         refresher=Refresher(settings=settings, registry=registry),
-        credits=CreditsService(settings=settings, registry=registry, store=CheckinStore(default_data_dir() / CHECKIN_FILE_NAME)),
+        credits=CreditsService(settings=settings, registry=registry, store=CheckinStore(data_dir / CHECKIN_FILE_NAME, db=db)),
         login=LoginManager(settings=settings, on_persist=rebuild_after_login),
     )

@@ -1,33 +1,40 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { useQueryClient } from '@tanstack/vue-query';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { RANGES, useCalls, useResetStats, useUsageReport, type CallFilters, type UsageRange } from '@/api/queries/usage';
+import { RANGES, prefetchUsage, useCalls, useResetStats, useUsageDays, useUsageReport, type CallFilters, type UsageRange, type UsageSlice } from '@/api/queries/usage';
 import type { CallRecord, UsageBreakdownRow, UsageTotals } from '@/api/types';
 import CallDetailSheet from '@/components/CallDetailSheet.vue';
 import LiveCallCard from '@/components/LiveCallCard.vue';
-import { bucketLabel, change, compact, duration, grouped, percent, ratio, when } from '@/format';
+import { addDays, bucketLabel, change, compact, duration, grouped, localDay, longDay, percent, ratio, when } from '@/format';
 import { useI18n } from '@/i18n';
 import { useLiveStore } from '@/stores/live';
 import {
+  AppButton,
   AppMenu,
   AxisPanes,
   Badge,
   Chip,
   ConfirmDialog,
   DataTable,
+  DatePicker,
   EmptyState,
+  FadeSwap,
   IconButton,
   LineChart,
   LiveDot,
   Meter,
   PageSection,
-  SegmentedButton,
+  ProgressBar,
+  SearchField,
+  SegmentedControl,
   Skeleton,
   StackedBarChart,
   StatTile,
   Tabs,
   Toolbar,
   TRANSITIONS,
+  TweenNumber,
   icons,
   keepLeavingInPlace,
   staggerStyle,
@@ -43,22 +50,78 @@ const router = useRouter();
 const live = useLiveStore();
 const snackbar = useSnackbar();
 
-// The range lives in the address (?range=7d), so a reload or a shared link shows the same slice.
+// The slice lives in the address (?range=7d, ?range=day&date=2026-10-20), so a reload or a shared
+// link shows the same one. Today's day has no date: it stays today across midnight.
+const today = ref(localDay());
+const midnight = setInterval(() => (today.value = localDay()), 60_000);
+onBeforeUnmount(() => clearInterval(midnight));
 const range = computed<UsageRange>({
   get: () => (RANGES.includes(route.query.range as UsageRange) ? (route.query.range as UsageRange) : '7d'),
-  set: (value) => void router.replace({ query: { ...route.query, range: value } }),
+  set: (value) => void router.replace({ query: { ...route.query, range: value, date: value === 'day' ? route.query.date : undefined } }),
 });
-const report = useUsageReport(range);
+const date = computed<string | null>({
+  get: () => {
+    const q = route.query.date;
+    return range.value === 'day' && typeof q === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(q) && q < today.value ? q : null;
+  },
+  set: (value) => void router.replace({ query: { ...route.query, range: 'day', date: value && value < today.value ? value : undefined } }),
+});
+const day = computed(() => date.value ?? today.value);
+// The calendar always has a day (today's has no date in the address).
+const pickedDay = computed<string>({ get: () => day.value, set: (value) => (date.value = value) });
+const slice = computed<UsageSlice>(() => ({ range: range.value, date: date.value }));
+const report = useUsageReport(slice);
 const r = computed(() => report.data.value);
-const busy = computed(() => report.isFetching.value && !report.isPending.value);
+// The page shows the last answer until the next lands, then moves to it in one step; meanwhile a
+// thin bar under the toolbar says it is on its way.
+const loading = computed(() => report.isFetching.value && report.isPlaceholderData.value);
+const qc = useQueryClient();
+const stopPrefetch = watch(
+  () => !!r.value,
+  (ready) => {
+    if (!ready) return;
+    prefetchUsage(qc);
+    queueMicrotask(() => stopPrefetch());
+  },
+  { immediate: true },
+);
 const rangeOptions = computed(() => RANGES.map((v) => ({ value: v, label: t(`usage.ranges.${v}`) })));
-const previousLabel = computed(() => t('usage.vsPrevious', { range: t(`usage.ranges.${range.value}`) }));
+// What the numbers on screen are (the report that landed), not what was last clicked.
+const shownRange = computed(() => (r.value?.range ?? range.value) as UsageRange);
+const shownDay = computed(() => r.value?.date ?? null);
+const shownToday = computed(() => shownRange.value === 'day' && shownDay.value === today.value);
+const previousLabel = computed(() => {
+  if (shownRange.value !== 'day') return t('usage.vsPrevious', { range: t(`usage.ranges.${shownRange.value}`) });
+  return shownToday.value ? t('usage.vsYesterdaySoFar') : t('usage.vsDayBefore');
+});
+
+// -- the day ------------------------------------------------------------------ #
+const days = useUsageDays();
+const firstDay = computed(() => days.data.value?.first ?? null);
+const marks = computed(() => {
+  const list = days.data.value?.days ?? [];
+  const most = Math.max(1, ...list.map((d) => d.tokens));
+  return Object.fromEntries(list.map((d) => [d.date, d.tokens / most]));
+});
+const dayTitle = computed(() => (day.value === today.value ? t('usage.today') : day.value === addDays(today.value, -1) ? t('usage.yesterday') : longDay(day.value)));
+function stepDay(n: number) {
+  const next = addDays(day.value, n);
+  if (next > today.value || (firstDay.value && next < firstDay.value)) return;
+  date.value = next;
+}
+/** A day's column in a longer range opens that day, hour by hour. */
+function openDay(key: string) {
+  date.value = key.slice(0, 10);
+}
 
 // -- headline tiles ----------------------------------------------------------- #
 const total = (u: UsageTotals | undefined) => (u ? u.input + u.output : 0);
 const uncached = (u: Pick<UsageTotals, 'input' | 'cache_read' | 'cache_write'>) => Math.max(0, u.input - u.cache_read - u.cache_write);
 const series = computed(() => r.value?.series ?? []);
-const trend = (pick: (p: (typeof series.value)[number]) => number) => series.value.map(pick);
+const serverNow = computed(() => (r.value?.server_time ? Date.parse(r.value.server_time) : Date.now()));
+
+// A trend ends now: the hours of today still to come are not a fall to zero.
+const trend = (pick: (p: (typeof series.value)[number]) => number) => series.value.filter((p) => r.value?.granularity !== 'hour' || Date.parse(p.start) <= serverNow.value).map(pick);
 const tiles = computed(() => {
   const now = r.value?.totals;
   const before = r.value?.previous;
@@ -91,11 +154,27 @@ const stackPoints = computed(() =>
   series.value.map((p) => ({
     key: p.start,
     label: bucketLabel(p.start, granularity.value),
-    title: granularity.value === 'hour' ? when(p.start) : p.start,
+    title: granularity.value === 'hour' ? when(p.start) : longDay(p.start.slice(0, 10)),
     // Output counts the reasoning inside it, so the answer is what is left of it.
     values: [uncached(p), p.cache_read, p.cache_write, Math.max(0, p.output - p.reasoning), p.reasoning],
+    // The rest of today has not happened yet.
+    muted: granularity.value === 'hour' && Date.parse(p.start) > serverNow.value,
   })),
 );
+// Only a day reads hours; the longer ranges count whole days by design.
+const hourlyMissing = computed(() => r.value?.range === 'day' && r.value.hourly === false);
+// The charts slide when what they count changes (hours to days, one day to another) and reshape in
+// place when it does not (7 to 30 days, the last 24 hours to today). Later is further right.
+const chartKey = computed(() => {
+  const rr = r.value;
+  if (!rr) return 'none';
+  if (rr.granularity === 'day') return 'days';
+  return rr.range === 'day' && rr.date && rr.date !== today.value ? `day:${rr.date}` : 'hours';
+});
+const rank = (key: string) => (key === 'days' ? '~' : key === 'hours' ? today.value : key.slice(4));
+const seenKeys = ref<string[]>([]);
+watch(chartKey, (key) => seenKeys.value.includes(key) || (seenKeys.value = [...seenKeys.value, key]), { immediate: true, flush: 'sync' });
+const chartOrder = computed(() => [...seenKeys.value].sort((a, b) => rank(a).localeCompare(rank(b))));
 const xLabels = computed(() => series.value.map((p) => bucketLabel(p.start, granularity.value)));
 const ttftSeries = computed(() => [{ label: t('usage.ttftAvg'), slot: 1, points: series.value.map((p, i) => [i, p.ttft_avg_ms ?? NaN] as [number, number]) }]);
 const tpsSeries = computed(() => [{ label: t('usage.tpsAvg'), slot: 1, points: series.value.map((p, i) => [i, p.tps ?? NaN] as [number, number]) }]);
@@ -133,16 +212,38 @@ function focusRow(row: UsageBreakdownRow) {
 }
 
 // -- calls -------------------------------------------------------------------- #
+// The history follows the slice on screen: a past day is closed at both ends; a range that runs
+// to now is open at its end, so calls that finish join the top of the list instead of renewing it.
 const filters = ref<CallFilters>({});
+const callSearch = ref('');
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
+watch(callSearch, (q) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => (filters.value = { ...filters.value, q: q.trim() || undefined }), 250);
+});
+onBeforeUnmount(() => clearTimeout(searchTimer));
+watch(
+  () => [r.value?.since, r.value?.range === 'day' && r.value.date !== today.value ? r.value.until : undefined] as const,
+  ([since, until]) => {
+    if (since !== filters.value.since || until !== filters.value.until) filters.value = { ...filters.value, since: since ?? undefined, until: until ?? undefined };
+  },
+  { immediate: true },
+);
 const focusLabel = ref('');
 const failedOnly = computed({ get: () => filters.value.ok === false, set: (v: boolean) => (filters.value = { ...filters.value, ok: v ? false : undefined }) });
 const narrowed = computed(() => !!(filters.value.model || filters.value.provider || filters.value.origin));
 function clearFocus() {
-  filters.value = { ok: filters.value.ok };
+  filters.value = { ...filters.value, model: undefined, provider: undefined, account: undefined, origin: undefined };
   focusLabel.value = '';
 }
 const calls = useCalls(filters);
 const callRows = computed<CallRecord[]>(() => calls.data.value?.pages.flatMap((p) => p.calls) ?? []);
+// Another filter is another list: it fades through once its rows are in (not while the old ones stand in).
+const callsKey = ref(JSON.stringify(filters.value));
+watch(
+  () => [calls.isPlaceholderData.value, JSON.stringify(filters.value)] as const,
+  ([placeholder, key]) => placeholder || (callsKey.value = key),
+);
 const callColumns = computed<Column[]>(() => [
   { key: 'at', label: t('usage.at'), width: '96px' },
   { key: 'model', label: t('usage.model') },
@@ -160,6 +261,19 @@ const detailOpen = ref(false);
 function openCall(row: CallRecord) {
   chosen.value = row;
   detailOpen.value = true;
+}
+const chosenIndex = computed(() => (chosen.value ? callRows.value.findIndex((c) => c.id === chosen.value!.id) : -1));
+const hasNewer = computed(() => chosenIndex.value > 0);
+const hasOlder = computed(() => chosenIndex.value >= 0 && (chosenIndex.value < callRows.value.length - 1 || !!calls.hasNextPage.value));
+function newer() {
+  if (hasNewer.value) chosen.value = callRows.value[chosenIndex.value - 1];
+}
+async function older() {
+  const at = chosenIndex.value;
+  if (at < 0) return;
+  if (at === callRows.value.length - 1 && calls.hasNextPage.value) await calls.fetchNextPage();
+  const next = callRows.value[at + 1];
+  if (next) chosen.value = next;
 }
 const time = (iso: string) => {
   const d = new Date(iso);
@@ -182,13 +296,32 @@ function doReset() {
 }
 
 const empty = computed(() => !!r.value && !r.value.requests && !live.active.length);
-watch(range, () => (chosen.value = null));
+watch(slice, () => (detailOpen.value = false));
 </script>
 
 <template>
   <div class="usage">
     <Toolbar>
-      <SegmentedButton v-model="range" :options="rangeOptions" />
+      <SegmentedControl v-model="range" :options="rangeOptions" :label="t('usage.range')" />
+      <Transition :name="TRANSITIONS.fadeThrough">
+        <div v-if="range === 'day'" class="day-nav" role="group" :aria-label="t('usage.dayNav')">
+          <IconButton :icon="icons.ChevronLeft" :label="t('usage.previousDay')" :disabled="!!firstDay && day <= firstDay" @click="stepDay(-1)" />
+          <DatePicker
+            v-slot="{ toggle }"
+            v-model="pickedDay"
+            :max="today"
+            :min="firstDay"
+            :marks="marks"
+            :label="t('usage.pickDay')"
+            :today-label="t('usage.today')"
+            :previous-label="t('usage.previousMonth')"
+            :next-label="t('usage.nextMonth')"
+          >
+            <AppButton variant="text" :icon="icons.CalendarDays" class="day-button" @click="toggle">{{ dayTitle }}</AppButton>
+          </DatePicker>
+          <IconButton :icon="icons.ChevronRight" :label="t('usage.nextDay')" :disabled="day >= today" @click="stepDay(1)" />
+        </div>
+      </Transition>
       <template #end>
         <LiveDot :state="live.state" :label="t(`live.states.${live.state}`)" />
         <IconButton :icon="icons.RefreshCw" :label="t('common.refresh')" :spin="report.isFetching.value" @click="report.refetch(), calls.refetch()" />
@@ -199,11 +332,12 @@ watch(range, () => (chosen.value = null));
         </AppMenu>
       </template>
     </Toolbar>
+    <div class="loading" aria-hidden="true"><ProgressBar v-if="loading" /></div>
 
     <div v-if="report.isPending.value" class="tiles"><Skeleton v-for="i in 6" :key="i" height="136px" shape="medium" /></div>
     <EmptyState v-else-if="empty" :icon="icons.BarChart3" :title="t('usage.empty')" :text="t('usage.emptyText')" />
     <template v-else-if="r">
-      <div class="tiles" :class="{ busy }">
+      <div class="tiles">
         <StatTile
           v-for="tile in tiles"
           :key="tile.key"
@@ -227,21 +361,38 @@ watch(range, () => (chosen.value = null));
         </PageSection>
       </Transition>
 
-      <PageSection :title="t('usage.overTime')" :subtitle="t(`usage.granularity.${granularity}`)" :icon="icons.BarChart3">
-        <StackedBarChart :series="stackSeries" :points="stackPoints" :label="t('usage.overTime')" :format="compact" :busy="busy" :total-label="t('usage.total')" />
+      <PageSection :title="t('usage.overTime')" :subtitle="shownRange === 'day' ? longDay(shownDay ?? today) : t(`usage.granularity.${granularity}`)" :icon="icons.BarChart3">
+        <template v-if="granularity === 'day'" #actions><span class="type-body-small muted">{{ t('usage.openDayHint') }}</span></template>
+        <AxisPanes :value="chartKey" :order="chartOrder">
+          <div :key="chartKey">
+            <p v-if="hourlyMissing" class="type-body-medium muted note">{{ t('usage.noHourly') }}</p>
+            <StackedBarChart
+              v-else
+              :series="stackSeries"
+              :points="stackPoints"
+              :label="t('usage.overTime')"
+              :format="compact"
+              :total-label="t('usage.total')"
+              :selectable="granularity === 'day'"
+              @select="openDay"
+            />
+          </div>
+        </AxisPanes>
       </PageSection>
 
       <PageSection v-if="hasSpeed" :title="t('usage.speed')" :subtitle="t('usage.speedHint')" :icon="icons.Gauge">
-        <div class="speed">
-          <div class="speed-chart">
-            <h3 class="type-title-small">{{ t('usage.ttftAvg') }}</h3>
-            <LineChart :series="ttftSeries" :x-labels="xLabels" :format="(n) => duration(n)" :height="180" />
+        <AxisPanes :value="chartKey" :order="chartOrder">
+          <div :key="chartKey" class="speed">
+            <div class="speed-chart">
+              <h3 class="type-title-small">{{ t('usage.ttftAvg') }}</h3>
+              <LineChart :series="ttftSeries" :x-labels="xLabels" :format="(n) => duration(n)" :height="180" />
+            </div>
+            <div class="speed-chart">
+              <h3 class="type-title-small">{{ t('usage.tpsAvg') }}</h3>
+              <LineChart :series="tpsSeries" :x-labels="xLabels" :format="(n) => String(Math.round(n))" :height="180" />
+            </div>
           </div>
-          <div class="speed-chart">
-            <h3 class="type-title-small">{{ t('usage.tpsAvg') }}</h3>
-            <LineChart :series="tpsSeries" :x-labels="xLabels" :format="(n) => String(Math.round(n))" :height="180" />
-          </div>
-        </div>
+        </AxisPanes>
       </PageSection>
 
       <PageSection :title="t('usage.breakdown')" :icon="icons.Layers">
@@ -255,7 +406,6 @@ watch(range, () => (chosen.value = null));
             :row-key="(row) => row.key"
             :value="breakdownValue"
             :label="t('usage.breakdown')"
-            :busy="busy"
             :empty-text="t('usage.noneInRange')"
             clickable
             max-height="min(var(--app-height-list), 480px)"
@@ -267,8 +417,9 @@ watch(range, () => (chosen.value = null));
                 <span v-if="row.label && row.label !== row.key" class="type-body-small muted text mono">{{ row.key }}</span>
               </span>
             </template>
-            <template #cell-tokens="{ row }">{{ compact(row.input + row.output) }}</template>
-            <template #cell-output="{ row }">{{ compact(row.output) }}</template>
+            <template #cell-calls="{ row }"><TweenNumber :value="row.calls" /></template>
+            <template #cell-tokens="{ row }"><TweenNumber :value="row.input + row.output" :format="compact" /></template>
+            <template #cell-output="{ row }"><TweenNumber :value="row.output" :format="compact" /></template>
             <template #cell-cache="{ row }">
               <span class="cache-cell">
                 <Meter
@@ -279,7 +430,7 @@ watch(range, () => (chosen.value = null));
                     { label: t('usage.series.cacheWrite'), value: row.cache_write, slot: 3 },
                   ]"
                 />
-                <span class="type-body-small num">{{ percent(ratio(row.cache_read, row.input), 0) }}</span>
+                <TweenNumber class="type-body-small" :value="ratio(row.cache_read, row.input)" :format="(n) => percent(n, 0)" />
               </span>
             </template>
             <template #cell-ttft_p50_ms="{ row }">{{ duration(row.ttft_p50_ms) }}</template>
@@ -293,44 +444,47 @@ watch(range, () => (chosen.value = null));
       <div ref="callsSection" class="anchor">
         <PageSection :title="t('usage.calls')" :subtitle="t('usage.callsHint')" :icon="icons.ListChecks">
           <template #actions>
+            <SearchField v-model="callSearch" class="call-search" :label="t('usage.searchCalls')" :placeholder="t('usage.searchCalls')" />
             <Chip :label="t('usage.failedOnly')" :icon="icons.CircleX" :selected="failedOnly" @click="failedOnly = !failedOnly" />
             <Chip v-if="narrowed" :label="focusLabel" selected removable @remove="clearFocus" @click="clearFocus" />
           </template>
-          <DataTable
-            :columns="callColumns"
-            :rows="callRows"
-            :row-key="(row) => row.id"
-            :label="t('usage.calls')"
-            :busy="calls.isFetching.value && !calls.isFetchingNextPage.value"
-            :empty-text="t('usage.noCalls')"
-            clickable
-            :selected="detailOpen ? (chosen?.id ?? null) : null"
-            @select="openCall"
-            @end="calls.hasNextPage.value && !calls.isFetchingNextPage.value && calls.fetchNextPage()"
-          >
-            <template #cell-at="{ row }"><span class="text num" :title="when(row.at)">{{ time(row.at) }}</span></template>
-            <template #cell-model="{ row }">
-              <span class="name-cell">
-                <span class="text" :title="row.model">{{ row.name || row.model }}</span>
-                <span class="type-body-small muted text">{{ t(`usage.origins.${row.origin}`) }}<template v-if="row.effort"> · {{ row.effort }}</template></span>
-              </span>
-            </template>
-            <template #cell-route="{ row }"><span class="text muted" :title="[row.provider, row.account].filter(Boolean).join(' / ')">{{ [row.provider, row.account].filter(Boolean).join(' / ') || '—' }}</span></template>
-            <template #cell-tokens="{ row }">{{ compact(row.input + row.output) }}</template>
-            <template #cell-cache_read="{ row }">{{ row.cache_read ? compact(row.cache_read) : '—' }}</template>
-            <template #cell-ttft_ms="{ row }">{{ duration(row.ttft_ms) }}</template>
-            <template #cell-elapsed_ms="{ row }">{{ duration(row.elapsed_ms) }}</template>
-            <template #cell-tps="{ row }">{{ row.tps ?? '—' }}</template>
-            <template #cell-status="{ row }"><Badge :tone="row.ok ? 'primary' : 'error'" :value="row.ok ? t('usage.served') : t('usage.failedOne')" /></template>
-            <template #footer>
-              <p v-if="calls.isFetchingNextPage.value" class="type-body-small muted more">{{ t('common.loading') }}</p>
-            </template>
-          </DataTable>
+          <FadeSwap>
+            <DataTable
+              :key="callsKey"
+              :columns="callColumns"
+              :rows="callRows"
+              :row-key="(row) => row.id"
+              :label="t('usage.calls')"
+              :empty-text="t('usage.noCalls')"
+              clickable
+              :selected="detailOpen ? (chosen?.id ?? null) : null"
+              @select="openCall"
+              @end="calls.hasNextPage.value && !calls.isFetchingNextPage.value && calls.fetchNextPage()"
+            >
+              <template #cell-at="{ row }"><span class="text num" :title="when(row.at)">{{ time(row.at) }}</span></template>
+              <template #cell-model="{ row }">
+                <span class="name-cell">
+                  <span class="text" :title="row.model">{{ row.name || row.model }}</span>
+                  <span class="type-body-small muted text">{{ t(`usage.origins.${row.origin}`) }}<template v-if="row.effort"> · {{ row.effort }}</template></span>
+                </span>
+              </template>
+              <template #cell-route="{ row }"><span class="text muted" :title="[row.provider, row.account].filter(Boolean).join(' / ')">{{ [row.provider, row.account].filter(Boolean).join(' / ') || '—' }}</span></template>
+              <template #cell-tokens="{ row }">{{ compact(row.input + row.output) }}</template>
+              <template #cell-cache_read="{ row }">{{ row.cache_read ? compact(row.cache_read) : '—' }}</template>
+              <template #cell-ttft_ms="{ row }">{{ duration(row.ttft_ms) }}</template>
+              <template #cell-elapsed_ms="{ row }">{{ duration(row.elapsed_ms) }}</template>
+              <template #cell-tps="{ row }">{{ row.tps ?? '—' }}</template>
+              <template #cell-status="{ row }"><Badge :tone="row.ok ? 'primary' : 'error'" :value="row.ok ? t('usage.served') : t('usage.failedOne')" /></template>
+              <template #footer>
+                <p v-if="calls.isFetchingNextPage.value" class="type-body-small muted more">{{ t('common.loading') }}</p>
+              </template>
+            </DataTable>
+          </FadeSwap>
         </PageSection>
       </div>
     </template>
 
-    <CallDetailSheet v-model:open="detailOpen" :call="chosen" />
+    <CallDetailSheet v-model:open="detailOpen" :call="chosen" :has-newer="hasNewer" :has-older="hasOlder" @newer="newer" @older="older" />
     <ConfirmDialog
       v-model:open="confirmReset"
       :title="t('usage.resetTitle')"
@@ -347,7 +501,13 @@ watch(range, () => (chosen.value = null));
 <style scoped>
 .usage { display: flex; flex-direction: column; gap: var(--app-space-4); padding: var(--app-space-4) var(--app-space-6) var(--app-space-8); min-width: 0; }
 .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--app-space-3); transition: opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard); }
-.tiles.busy { opacity: 0.7; }
+/* The bar takes no room: it lies along the toolbar's foot while a report is on its way. */
+.loading { height: 0; margin-top: calc(-1 * var(--app-space-4) + 2px); position: relative; }
+.loading > * { position: absolute; inset-inline: 0; top: 0; }
+.day-nav { display: inline-flex; align-items: center; gap: var(--app-space-1); }
+.day-button { min-width: 0; }
+.note { margin: 0; padding: var(--app-space-6) 0; text-align: center; }
+.call-search { width: min(260px, 100%); }
 .now { position: relative; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--app-space-3); }
 .speed { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--app-space-4); }
 .speed-chart { display: flex; flex-direction: column; gap: var(--app-space-2); min-width: 0; }

@@ -117,7 +117,7 @@ const tip = computed(() => {
 </script>
 
 <template>
-  <figure class="chart">
+  <figure class="chart morph">
     <div v-if="bounds" class="plot">
       <svg
         ref="svg"
@@ -139,7 +139,7 @@ const tip = computed(() => {
           <text v-for="t in ticks.y" :key="`yl${t.pos}`" :x="PAD.l - 6" :y="t.pos + 4" text-anchor="end">{{ t.text }}</text>
           <text v-for="t in ticks.x" :key="`xl${t.pos}`" :x="t.pos" :y="height - 8" text-anchor="middle">{{ t.text }}</text>
         </g>
-        <path v-for="(s, i) in series" :key="s.label" :d="path(s.points)" class="line" :style="{ stroke: `var(--app-chart-${slotOf(s, i)})` }" />
+        <path v-for="(s, i) in series" :key="s.label" :d="path(s.points)" class="line" :style="{ stroke: `var(--app-chart-${slotOf(s, i)})`, d: `path('${path(s.points)}')` }" />
         <g v-if="tip">
           <line class="crosshair" :x1="tip.pos" :x2="tip.pos" :y1="PAD.t" :y2="height - PAD.b" />
           <template v-for="r in tip.rows" :key="r.label">
@@ -174,6 +174,8 @@ svg:focus-visible { outline-offset: 4px; border-radius: var(--md-sys-shape-corne
 .grid line { stroke: var(--md-sys-color-surface-container-highest); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .labels text { fill: var(--md-sys-color-on-surface-variant); font-size: 11px; }
 .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+/* New data reshapes a line in place where its points keep their count (a refetch, the same range). */
+.line { transition: d var(--md-sys-motion-duration-medium4) var(--md-sys-motion-easing-emphasized); }
 .crosshair { stroke: var(--md-sys-color-outline); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .marker { stroke: var(--app-surface-bg, var(--md-sys-color-surface)); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .tip {

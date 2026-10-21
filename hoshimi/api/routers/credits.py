@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from datetime import datetime
+from typing import Annotated, Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from hoshimi.api.deps import ServicesDep
@@ -29,6 +30,34 @@ class CheckinState(Record):
     last_result: str = ""
     last_at: float = 0.0
     auto_checkin: bool = True
+
+
+class CheckinRecord(Record):
+    """One station/account outcome of a check-in round, as the history keeps it.
+
+    ``at`` is an ISO local datetime; ``date`` is the station day (UTC+8) the
+    round ran for. ``ok`` is true for ``claimed`` and ``already`` — the day
+    is covered either way — and ``message`` is the station's short answer or
+    the status itself.
+    """
+
+    at: str
+    date: str
+    provider: str
+    account: str
+    ok: bool
+    message: str = ""
+    status: str = ""
+    credits: int = 0
+
+
+class CheckinHistory(Record):
+    items: list[CheckinRecord] = Field(default_factory=list)
+
+
+def checkin_record(row: dict[str, Any]) -> CheckinRecord:
+    """One row of :meth:`CheckinStore.history` as the API returns it."""
+    return CheckinRecord.model_validate({**row, "at": datetime.fromtimestamp(row["at"]).astimezone().isoformat(timespec="seconds")})
 
 
 class CooledAccount(Record):
@@ -149,6 +178,18 @@ def get_credits(services: ServicesDep, provider: str | None = None) -> BalanceRe
         auto_checkin=services.settings.auto_checkin,
     )
     return report
+
+
+@router.get("/credits/checkins", operation_id="list_checkins")
+def list_checkins(
+    services: ServicesDep,
+    provider: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+) -> CheckinHistory:
+    """Check-in outcomes (daily rounds and on-demand claims), newest first; kept 365 days."""
+    if services.credits is None:
+        return CheckinHistory()
+    return CheckinHistory(items=[checkin_record(row) for row in services.credits.store.history(provider, limit)])
 
 
 @router.post("/credits/claim", operation_id="claim_credits")

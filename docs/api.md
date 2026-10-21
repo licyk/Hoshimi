@@ -60,9 +60,9 @@ Management uses the tool access key under `/api/v1/*`.
 | Route group | Purpose |
 | --- | --- |
 | `/app/version`, `/app/health`, `/app/meta` | Version, health, paths, configured flags and counts |
-| `/settings` (`GET`, `PATCH`) | Read redacted settings, save and apply updates; `restart_required` flags a saved host/port awaiting restart |
+| `/settings` (`GET`, `PATCH`) | Read redacted settings, save and apply updates; `restart_required` flags a saved host/port awaiting restart; `listening` is the socket actually bound (`port`, `requested_port`, `fallback` when the requested port was taken — never a restart reason) |
 | `/providers`, `/provider-forms` | Providers, account summaries and credential form metadata |
-| `/channels` | Every provider with accounts, renewal, cooling, passive quota, diagnostics, today's usage and a status word (memory only, no upstream calls) |
+| `/channels` | Every provider with accounts, renewal, cooling, passive quota, diagnostics, today's usage, its last five check-in outcomes (`recent_checkins`) and a status word (local state only, no upstream calls) |
 | `/providers/{id}/accounts` (`POST`) | Validate and append an account |
 | `/providers/{id}/accounts/{account}` (`DELETE`) | Remove an account |
 | `/stations` | `agg` presets |
@@ -71,9 +71,11 @@ Management uses the tool access key under `/api/v1/*`.
 | `/probe` (`GET`, `POST`) | Read or start an availability round |
 | `/refresh` (`GET`, `POST`) | Read or request credential renewal |
 | `/credits`, `/credits/claim` (`POST` for claim) | Balances, passive quota and check-in |
+| `/credits/checkins?provider=&limit=50` | Check-in history, newest first (daily rounds and on-demand claims; kept 365 days) |
 | `/login/providers`, `/login/start`, `/login/poll`, `/login/input`, `/login/cancel` | Browser/device authorization |
-| `/stats?range=24h\|7d\|30d\|90d` (`GET`, `DELETE` to reset) | Range totals, zero-filled series, latency percentiles and model/provider/account/origin breakdowns |
-| `/stats/calls` | Recent calls, newest first; `limit`, `before` cursor and filters |
+| `/stats?range=24h\|day\|7d\|30d\|90d` (`GET`, `DELETE` to reset) | Range totals, zero-filled series, latency percentiles and model/provider/account/origin breakdowns. `range=day&date=YYYY-MM-DD` is one local calendar day in hours (23–25 across DST; today by default; future or malformed dates are a 400), compared with the day before — up to the same time of day when the day is today. Reports carry `since`/`until` (exclusive), `date`, `hourly` (false when a day only has daily totals, e.g. imported or past hourly retention) and `server_time` |
+| `/stats/days` | Every local day with usage (`date`, `calls`, `tokens`, `failed`), oldest first, plus `first` and `today` — for a calendar |
+| `/stats/calls` | Recorded calls over the whole retention, newest first; `limit`, `before` cursor, `model`/`provider`/`account`/`origin`/`ok` filters, `since`/`until` (ISO 8601 with offset; until exclusive) and `q` (case-insensitive text in model, provider, account, error code/message, finish reason) |
 | `/stats/live` | SSE: a snapshot of calls in flight, then `started`/`progress`/`finished` events |
 | `/playground/*` | Tool-authenticated chat without exposing the model API key |
 

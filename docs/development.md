@@ -75,9 +75,19 @@ with Mizuoto:
   `layout.test.ts` enforce this.
 - **Layers and motion.** Everything that opens over the page (dialogs, sheets,
   menus) stacks through `ui/layers.ts`. Navigation fades through via View
-  Transitions; tabs slide along the shared axis (`AxisPanes`); lists use the
-  `list` motion. Settings › Appearance › Motion (or the system setting) reduces
-  every transition to a short fade.
+  Transitions; tabs and filters slide along the shared axis (`AxisPanes`); a
+  list-detail pane moves vertically between items (`shared-axis-y`); one keyed
+  view replacing another fades through (`FadeSwap`); lists use the `list`
+  motion. Charts reshape rather than redraw: bars glide to their new places,
+  scales and lines ease (`.morph`). Settings › Appearance › Motion (or the
+  system setting) reduces every transition to a short fade.
+- **Scrollbars.** Every scrolling area wears `.app-scroll` (`theme/tokens.css`),
+  which gives its scrollbar a lane of its own beside the content, also where
+  the system draws overlay scrollbars. Components never set `overflow: auto`
+  or `scrollbar-*` themselves; `layout.test.ts` checks it.
+- **Choices.** One choice out of a few (a list filter, a report range) is a
+  `SegmentedControl`: a track with a sliding pill and counts, which becomes a
+  select where it does not fit. Days are picked with `DatePicker`.
 - **Page skeleton.** A `Toolbar` row, then one column of `PageSection`s; pages
   adapt to the content area's width (`@container app-content`). Lists that can
   grow without bound use `ScrollArea` or `DataTable` (sortable, windowed past

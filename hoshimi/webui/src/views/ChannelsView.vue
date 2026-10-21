@@ -8,18 +8,20 @@ import { compact } from '@/format';
 import { useI18n } from '@/i18n';
 import {
   AppButton,
+  AxisPanes,
   Badge,
-  Chip,
   EmptyState,
   IconButton,
   ListDetail,
   Meter,
   SearchField,
+  SegmentedControl,
   Skeleton,
   TRANSITIONS,
   Toolbar,
   icons,
   keepLeavingInPlace,
+  staggerStyle,
   useSnackbar,
 } from '@/ui';
 
@@ -37,10 +39,9 @@ const balances = useBalances();
 const claim = useClaimCredits();
 const refreshNow = useRefreshNow();
 
-// "In use" first: an install lists every station it could sign into, most of them never set up.
-type Filter = 'inUse' | 'attention' | 'setup' | 'disabled' | 'all';
-const FILTERS: Filter[] = ['inUse', 'attention', 'setup', 'disabled', 'all'];
-const filter = ref<Filter>('inUse');
+type Filter = 'all' | 'inUse' | 'attention' | 'setup' | 'disabled';
+const FILTERS: Filter[] = ['all', 'inUse', 'attention', 'setup', 'disabled'];
+const filter = ref<Filter>('all');
 const search = ref('');
 const channels = computed(() => report.data.value?.channels ?? []);
 const inFilter = (c: ChannelView, f: Filter) =>
@@ -67,15 +68,13 @@ const shown = computed(() => {
     return c && inFilter(c, filter.value) && (!q || `${c.id} ${c.display_name}`.toLowerCase().includes(q)) ? [c] : [];
   });
 });
+const shownIds = computed(() => shown.value.map((c) => c.id));
 const selected = computed(() => channels.value.find((c) => c.id === props.id) ?? null);
-// Nothing in use yet (a fresh install): start from every station instead of an empty list.
-watch(
-  () => report.data.value,
-  (data, before) => {
-    if (data && !before && !counts.value.inUse) filter.value = 'all';
-  },
-  { immediate: true },
-);
+const filterOptions = computed(() => FILTERS.map((f) => ({ value: f, label: t(`channels.filters.${f}`), count: counts.value[f] })));
+// Another filter is another list: it slides in whole (AxisPanes) from the side its option sits on,
+// starting at its top. Within one filter (a search, a status change) rows move on their own.
+const listTop = ref<HTMLElement | null>(null);
+watch(filter, () => listTop.value?.closest('.app-scroll')?.scrollTo({ top: 0 }));
 // A channel opened by its address shows in the list even when the filter would hide it.
 watch(
   selected,
@@ -117,31 +116,34 @@ function act(mutation: { mutate: (v: never, opts: Record<string, unknown>) => vo
           <IconButton :icon="icons.RotateCcw" :label="t('channels.refreshAll')" :spin="refreshNow.isPending.value" @click="act(refreshNow, t('channels.refreshStarted'))" />
         </template>
       </Toolbar>
-      <div class="filters" role="group" :aria-label="t('channels.filter')">
-        <Chip v-for="f in FILTERS" :key="f" :label="t(`channels.filters.${f}`)" :count="counts[f]" :selected="filter === f" @click="filter = f" />
-      </div>
+      <SegmentedControl v-model="filter" class="filters" :options="filterOptions" :label="t('channels.filter')" />
     </div>
 
     <div v-if="report.isPending.value" class="skeletons"><Skeleton v-for="i in 5" :key="i" height="64px" shape="medium" /></div>
     <EmptyState v-else-if="!channels.length" :icon="icons.Waves" :title="t('channels.empty')" :text="t('channels.emptyText')" />
-    <ListDetail v-else class="layout" :detail="!!selected">
+    <ListDetail v-else class="layout" :detail="!!selected" :detail-key="selected?.id ?? null" :order="shownIds">
       <template #list>
-        <EmptyState v-if="!shown.length" :icon="icons.Search" :title="t('channels.noMatch')" />
-        <TransitionGroup v-else :name="TRANSITIONS.list" tag="ul" class="list" role="list" v-bind="keepLeavingInPlace">
-          <li v-for="c in shown" :key="c.id">
-            <RouterLink v-slot="{ href, navigate }" :to="`/channels/${c.id}`" custom>
-              <a :href="href" class="row state-layer" :class="{ selected: c.id === id }" :aria-current="c.id === id ? 'page' : undefined" @click="navigate">
-                <span class="status-dot" :class="c.status" aria-hidden="true" />
-                <span class="row-text">
-                  <span class="type-title-small name">{{ c.display_name }}</span>
-                  <span class="type-body-small muted sub">{{ line(c) }}</span>
-                  <Meter v-if="c.quota?.percent !== null && c.quota?.percent !== undefined" class="quota" :value="c.quota.percent / 100" :tone="c.quota.percent <= 10 ? 'error' : c.quota.percent <= 25 ? 'warning' : 'primary'" :label="t('channels.quota', { pct: c.quota.percent })" :height="4" />
-                </span>
-                <Badge v-if="c.status !== 'ok'" :tone="STATUS_TONE[c.status]" :value="t(`channels.statuses.${c.status}`)" />
-              </a>
-            </RouterLink>
-          </li>
-        </TransitionGroup>
+        <span ref="listTop" class="list-top" aria-hidden="true" />
+        <AxisPanes :value="filter" :order="FILTERS">
+          <div :key="filter" class="list-page">
+            <EmptyState v-if="!shown.length" :icon="icons.Search" :title="t('channels.noMatch')" />
+            <TransitionGroup v-else :name="TRANSITIONS.list" tag="ul" class="list" role="list" appear v-bind="keepLeavingInPlace">
+              <li v-for="(c, i) in shown" :key="c.id" :style="staggerStyle(i)">
+                <RouterLink v-slot="{ href, navigate }" :to="`/channels/${c.id}`" custom>
+                  <a :href="href" class="row state-layer" :class="{ selected: c.id === id }" :aria-current="c.id === id ? 'page' : undefined" @click="navigate">
+                    <span class="status-dot" :class="c.status" aria-hidden="true" />
+                    <span class="row-text">
+                      <span class="type-title-small name">{{ c.display_name }}</span>
+                      <span class="type-body-small muted sub">{{ line(c) }}</span>
+                      <Meter v-if="c.quota?.percent !== null && c.quota?.percent !== undefined" class="quota" :value="c.quota.percent / 100" :tone="c.quota.percent <= 10 ? 'error' : c.quota.percent <= 25 ? 'warning' : 'primary'" :label="t('channels.quota', { pct: c.quota.percent })" :height="4" />
+                    </span>
+                    <Badge v-if="c.status !== 'ok'" :tone="STATUS_TONE[c.status]" :value="t(`channels.statuses.${c.status}`)" />
+                  </a>
+                </RouterLink>
+              </li>
+            </TransitionGroup>
+          </div>
+        </AxisPanes>
       </template>
       <template #detail="{ wide }">
         <ChannelDetail v-if="selected" :key="selected.id" :channel="selected" :balances="balances.data.value" :back="!wide" />
@@ -159,7 +161,8 @@ function act(mutation: { mutate: (v: never, opts: Record<string, unknown>) => vo
 .channels { display: flex; flex-direction: column; gap: var(--app-space-3); min-height: 0; padding: var(--app-space-4) var(--app-space-6) var(--app-space-4); }
 .search { flex: 1 1 240px; max-width: 480px; }
 .checkin { white-space: nowrap; }
-.filters { display: flex; flex-wrap: wrap; gap: var(--app-space-2); }
+.filters { align-self: flex-start; }
+.list-top { display: block; height: 0; }
 .skeletons { display: flex; flex-direction: column; gap: var(--app-space-2); }
 .layout { flex: 1; min-height: 0; }
 .list { position: relative; display: flex; flex-direction: column; gap: var(--app-space-1); margin: 0; padding: 0 0 var(--app-space-4); list-style: none; }

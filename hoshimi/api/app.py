@@ -34,6 +34,7 @@ def create_app(
     services: Services,
     bound_host: str | None = None,
     bound_port: int | None = None,
+    requested_port: int | None = None,
     extra_hosts: set[str] | None = None,
     serve_ui: bool = True,
     api_prefix: str | None = None,
@@ -43,6 +44,10 @@ def create_app(
     ``api_prefix`` moves everything this package serves — the API and the web UI — under one
     path, so a host application can mount it beside its own routes without a clash. The web UI
     needs no change: it derives its base URL from the URL its own script was loaded from.
+
+    ``requested_port`` is the port the bind search started from, when it differs from
+    ``server.port`` (a ``--port`` override); with ``bound_port`` it tells the settings view
+    whether the port fell back to another one.
     """
     problem = validate_security_settings(services.settings)
     if problem:
@@ -67,6 +72,7 @@ def create_app(
     app.state.services = services
     app.state.bound_port = bound_port
     app.state.bound_host = bound_host
+    app.state.requested_port = services.settings.port if requested_port is None else requested_port
     # What the socket was opened from, so the settings view can tell a saved
     # host/port that still needs a restart; unknown when nothing was bound.
     app.state.started_listen = (services.settings.host, services.settings.port) if bound_host is not None or bound_port is not None else None

@@ -8,7 +8,8 @@ const state = vi.hoisted(() => ({ update: vi.fn() }));
 const route = reactive({ query: {} as Record<string, string> });
 const settings = ref({
   data_dir: '/data', config_path: '/data/config.json', restart_required: false, network: { mode: 'auto', proxy_configured: false, system_proxy: false }, providers: [],
-  server: { host: '127.0.0.1', port: 10600, allow_cidrs: ['10.0.0.0/8'], allow_hosts: [], allow_origins: [], auto_checkin: true, auto_refresh: true, default_model: null, max_account_retries: 3, max_body_bytes: 1000, access_token_configured: false, model_api_key_configured: false },
+  server: { host: '127.0.0.1', port: 10600, allow_cidrs: ['10.0.0.0/8'], allow_hosts: [], allow_origins: [], auto_checkin: true, auto_refresh: true, default_model: null, max_account_retries: 3, max_body_bytes: 1000, access_token_configured: false, model_api_key_configured: false, strict_port: false, stats_keep_days: 90 },
+  listening: { host: '127.0.0.1', port: 10601, requested_port: 10600, fallback: true },
 });
 
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ replace: ({ query }: { query: Record<string, string> }) => (route.query = query), push: vi.fn() }) }));
@@ -43,7 +44,7 @@ describe('settings', () => {
 
   it('shows one tab at a time and keeps the tab in the address', async () => {
     const w = mount(SettingsView, { global: { plugins: [createPinia()] } });
-    expect(w.findAll('h2').map((h) => h.text())).toEqual(['General', 'Requests']);
+    expect(w.findAll('h2').map((h) => h.text())).toEqual(['General', 'Requests', 'Usage history']);
     await w.findAll('.tab').find((t) => t.text() === 'Security')!.trigger('click');
     expect(route.query.tab).toBe('security');
     expect(w.findAll('h2').map((h) => h.text())).toEqual(['Security']);
@@ -61,6 +62,15 @@ describe('settings', () => {
     const w = mount(SettingsView, { global: { plugins: [createPinia()] } });
     await w.findAll('.switch').find((s) => s.text() === 'Daily check-in')!.trigger('click');
     expect(state.update.mock.calls[0][0]).toEqual({ server: { auto_checkin: false } });
+  });
+
+  it('says where the server listens, why it is not the saved port, and saves strict port mode', async () => {
+    route.query = { tab: 'access' };
+    const w = mount(SettingsView, { global: { plugins: [createPinia()] } });
+    expect(w.find('.listening').text()).toContain('127.0.0.1:10601');
+    expect(w.find('.listening').text()).toContain('10600');
+    await w.findAll('.switch').find((s) => s.text() === 'Use only this port')!.trigger('click');
+    expect(state.update.mock.calls[0][0]).toEqual({ server: { strict_port: true } });
   });
 
   it('says when the saved address waits for a restart', async () => {

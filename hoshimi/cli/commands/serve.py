@@ -16,8 +16,8 @@ logger = logging.getLogger(LOGGER_NAME)
 
 def serve(
     host: Annotated[str | None, typer.Option(help="Address to bind (default from config: 127.0.0.1)")] = None,
-    port: Annotated[int | None, typer.Option(min=0, max=65535, help="First port to try (default from config; 0 = any free port)")] = None,
-    strict_port: Annotated[bool | None, typer.Option("--strict-port/--no-strict-port", help="Fail instead of trying the next port")] = None,
+    port: Annotated[int | None, typer.Option(min=0, max=65535, help="First port to try (default from config: 10600; 0 = any free port)")] = None,
+    strict_port: Annotated[bool | None, typer.Option("--strict-port/--no-strict-port", help="Fail instead of trying the next port (default from config: server.strict_port)")] = None,
     open_browser: Annotated[bool | None, typer.Option("--open/--no-open", help="Open the web UI in a browser")] = True,
     access_token: Annotated[str | None, typer.Option(help="Access key for the tool UI and management API")] = None,
     model_api_key: Annotated[str | None, typer.Option(help="Independent API key for external /v1/ model requests")] = None,
@@ -48,7 +48,7 @@ def serve(
 
     host = host or settings.host
     port = settings.port if port is None else port
-    strict = bool(strict_port)
+    strict = settings.strict_port if strict_port is None else strict_port
 
     if not is_loopback(host):
         logger.warning("Binding to %s makes the server reachable from other machines.", host)
@@ -74,7 +74,7 @@ def serve(
     url_host = "127.0.0.1" if host in ("0.0.0.0", "::") else url_host
     url = f"http://{url_host}:{actual_port}{normalize_prefix(None)}"
 
-    app = create_app(services, bound_host=host, bound_port=actual_port, serve_ui=serve_ui)
+    app = create_app(services, bound_host=host, bound_port=actual_port, requested_port=port, serve_ui=serve_ui)
     config_ = uvicorn.Config(app=app, log_level="warning", lifespan="on")
 
     class Server(uvicorn.Server):

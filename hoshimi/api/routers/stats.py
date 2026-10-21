@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncIterator
+from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query, Request
@@ -12,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import Field
 
 from hoshimi.api.deps import ServicesDep
+from hoshimi.api.errors import ERROR_RESPONSES
 from hoshimi.api.heartbeat import HEARTBEAT_SECONDS, PING
 from hoshimi.core.context import Services
 from hoshimi.core.live import CLOSED
@@ -77,9 +79,24 @@ class UsageBreakdownRow(UsageTotals):
 
 
 class UsageReport(Record):
+    """One range of usage.
+
+    ``since`` and ``until`` bound the range as ISO local datetimes (``until``
+    exclusive); ``date`` is the calendar day of a ``day`` range, else null.
+    ``hourly`` says the series has real hours behind it: false for the day
+    ranges (``7d``…) and for a ``day`` whose hours are gone — pruned, or
+    imported from a ``stats.json`` that only kept days — in which case its
+    totals and breakdowns are still exact and only the series is empty.
+    ``server_time`` is the moment the report was taken.
+    """
+
     range: str
     granularity: Literal["hour", "day"]
+    date: str | None = None
     since: str
+    until: str
+    hourly: bool
+    server_time: str
     totals: UsageTotals
     previous: UsageTotals
     latency: LatencyStats
@@ -94,7 +111,7 @@ class UsageReport(Record):
 
 
 class CallRecord(Record):
-    """One served call from the recent-call ring; ``seq`` is the paging cursor."""
+    """One recorded call; ``seq`` is the paging cursor and never repeats, even across a reset."""
 
     seq: int
     id: str
@@ -197,6 +214,23 @@ class StatsReset(Record):
     cleared_at: str
 
 
+class UsageDay(Record):
+    """One local calendar day with usage; ``tokens`` is input plus output."""
+
+    date: str
+    calls: int = 0
+    tokens: int = 0
+    failed: int = 0
+
+
+class UsageDays(Record):
+    """Every day with usage, oldest first; ``first`` is the oldest (null when none) and ``today`` the server's local date."""
+
+    days: list[UsageDay]
+    first: str | None = None
+    today: str
+
+
 class LiveStreamResponse(StreamingResponse):
     """Describe the events under the actual SSE media type in OpenAPI."""
 
@@ -220,15 +254,22 @@ def call_record(row: dict[str, Any], names: dict[str, str]) -> CallRecord:
     return CallRecord.model_validate({**row, "name": names.get(model, model)})
 
 
-@router.get("/stats", operation_id="get_stats")
-def get_stats(services: ServicesDep, range_: Annotated[Literal["24h", "7d", "30d", "90d"], Query(alias="range")] = "7d") -> UsageReport:
+@router.get("/stats", operation_id="get_stats", responses=ERROR_RESPONSES)
+def get_stats(
+    services: ServicesDep,
+    range_: Annotated[Literal["24h", "day", "7d", "30d", "90d"], Query(alias="range")] = "7d",
+    date: Annotated[str | None, Query(description="The calendar day of `range=day`, `YYYY-MM-DD` in the server's local time (default today).")] = None,
+) -> UsageReport:
     """Totals, a zero-filled series and breakdowns for one range, plus the lifetime totals.
 
-    ``24h`` reads hourly buckets (kept 72 hours); the others read daily
-    buckets (kept 120 days). ``previous`` is the equal-length span just
-    before, as far as the buckets still reach.
+    ``24h`` reads hourly buckets (kept 120 days); ``7d``/``30d``/``90d`` read
+    daily buckets (kept forever); ``previous`` is the equal-length span just
+    before. ``day`` is one local calendar day (``date``) in hours, 23 or 25
+    across a DST change; its ``previous`` is the day before — only up to the
+    same time of day when ``date`` is today. A future or malformed ``date``
+    is a 400.
     """
-    report = services.stats.report(range_)
+    report = services.stats.report(range_, date=date)
     names = model_names(services)
 
     def labelled(rows: list[dict[str, Any]], label: Any) -> list[UsageBreakdownRow]:
@@ -241,6 +282,12 @@ def get_stats(services: ServicesDep, range_: Annotated[Literal["24h", "7d", "30d
     return UsageReport.model_validate(report)
 
 
+@router.get("/stats/days", operation_id="list_usage_days")
+def list_usage_days(services: ServicesDep) -> UsageDays:
+    """Every local day with any usage, oldest first — what a calendar marks."""
+    return UsageDays.model_validate(services.stats.days())
+
+
 @router.get("/stats/calls", operation_id="list_stats_calls")
 def list_stats_calls(
     services: ServicesDep,
@@ -251,9 +298,23 @@ def list_stats_calls(
     account: Annotated[str | None, Query(description="An account id, or `provider/account`.")] = None,
     origin: str | None = None,
     ok: bool | None = None,
+    since: Annotated[datetime | None, Query(description="Calls at or after this ISO 8601 datetime (with an offset; without one, server local time).")] = None,
+    until: Annotated[datetime | None, Query(description="Calls before this ISO 8601 datetime (exclusive).")] = None,
+    q: Annotated[str | None, Query(description="Case-insensitive text in the model, provider, account, error code, error message or finish reason.")] = None,
 ) -> CallPage:
-    """The recent-call ring (last 1000 calls), newest first."""
-    rows, cursor = services.stats.calls(limit=limit, before=before, model=model, provider=provider, account=account, origin=origin, ok=ok)
+    """Recorded calls, newest first, over the whole retention (``server.stats_keep_days``)."""
+    rows, cursor = services.stats.calls(
+        limit=limit,
+        before=before,
+        model=model,
+        provider=provider,
+        account=account,
+        origin=origin,
+        ok=ok,
+        since=since.timestamp() if since is not None else None,
+        until=until.timestamp() if until is not None else None,
+        q=q,
+    )
     names = model_names(services)
     return CallPage(calls=[call_record(row, names) for row in rows], next=cursor)
 

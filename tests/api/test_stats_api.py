@@ -210,3 +210,50 @@ def test_live_catalogue_lookup_does_not_block_the_event_loop(monkeypatch: pytest
         assert services.stats.live.subscribers == 0
 
     asyncio.run(run())
+
+
+def test_a_calendar_day_and_the_days_with_usage(client: Any) -> None:
+    from datetime import date, datetime, timedelta
+
+    assert _chat(client).status_code == 200
+    today = datetime.now().astimezone().date()
+    report = client.get("/api/v1/stats", params={"range": "day"}).json()
+    assert (report["range"], report["granularity"], report["date"], report["hourly"]) == ("day", "hour", today.isoformat(), True)
+    assert 23 <= len(report["series"]) <= 25 and report["totals"]["calls"] == 1
+    assert datetime.fromisoformat(report["until"]) > datetime.fromisoformat(report["since"])
+    assert datetime.fromisoformat(report["server_time"])
+    yesterday = client.get("/api/v1/stats", params={"range": "day", "date": (today - timedelta(days=1)).isoformat()}).json()
+    assert yesterday["totals"]["calls"] == 0 and yesterday["previous"]["calls"] == 0
+    for bad in ((today + timedelta(days=1)).isoformat(), "not-a-date"):
+        refused = client.get("/api/v1/stats", params={"range": "day", "date": bad})
+        assert refused.status_code == 400 and refused.json()["code"] == "invalid_input"
+
+    rolling = client.get("/api/v1/stats", params={"range": "7d"}).json()
+    assert rolling["date"] is None and rolling["hourly"] is False
+    assert date.fromisoformat(rolling["until"][:10]) == today + timedelta(days=1)
+    assert client.get("/api/v1/stats", params={"range": "24h"}).json()["hourly"] is True
+
+    days = client.get("/api/v1/stats/days").json()
+    assert days == {"days": [{"date": today.isoformat(), "calls": 1, "tokens": 3, "failed": 0}], "first": today.isoformat(), "today": today.isoformat()}
+
+
+def test_calls_filter_by_time_and_text_through_the_route(client: Any, services: Any) -> None:
+    from datetime import datetime, timezone
+
+    services.stats.record(model="fake-1", ok=True, provider="fake", account="fake-0", at=1_800_000_000)
+    services.stats.record(model="fake-2", ok=False, error_code="rate_limited", error_message="Slow Down", at=1_800_000_600)
+    since = datetime.fromtimestamp(1_800_000_300, tz=timezone.utc).isoformat()
+    assert [row["model"] for row in client.get("/api/v1/stats/calls", params={"since": since}).json()["calls"]] == ["fake-2"]
+    assert [row["model"] for row in client.get("/api/v1/stats/calls", params={"until": since}).json()["calls"]] == ["fake-1"]
+    exact = datetime.fromtimestamp(1_800_000_600, tz=timezone.utc).isoformat()
+    assert client.get("/api/v1/stats/calls", params={"until": exact, "since": since}).json()["calls"] == []
+    assert [row["model"] for row in client.get("/api/v1/stats/calls", params={"q": "slow down"}).json()["calls"]] == ["fake-2"]
+    assert client.get("/api/v1/stats/calls", params={"since": "yesterday"}).status_code == 422
+
+
+def test_reset_keeps_the_cursor_counting(client: Any) -> None:
+    assert _chat(client).status_code == 200
+    assert _chat(client).status_code == 200
+    assert client.delete("/api/v1/stats").status_code == 200
+    assert _chat(client).status_code == 200
+    assert [row["seq"] for row in client.get("/api/v1/stats/calls").json()["calls"]] == [3]

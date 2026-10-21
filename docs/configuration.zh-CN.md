@@ -49,7 +49,8 @@ hoshimi config path
 
 | 字段 | 含义 |
 | --- | --- |
-| `server.host`、`server.port` | 监听地址，默认 `127.0.0.1:10600` |
+| `server.host`、`server.port` | 监听地址，默认 `127.0.0.1:10600`；端口为 `0` 时由系统任选空闲端口 |
+| `server.strict_port` | 为 `true` 时，`server.port` 被占用即启动失败，不再寻找其他端口（默认 `false`；`serve --strict-port/--no-strict-port` 可覆盖） |
 | `server.access_token` | 管理 API、`/docs`、`/openapi.json` 的工具访问密钥 |
 | `server.model_api_key` | 外部 `/v1/*` 推理密钥 |
 | `server.default_model` | 请求省略模型时的默认模型 |
@@ -57,6 +58,7 @@ hoshimi config path
 | `server.max_account_retries` | 账户重试上限 |
 | `server.auto_refresh` | 自动凭据续期 |
 | `server.auto_checkin` | 自动每日签到 |
+| `server.stats_keep_days` | 每条调用记录在 `hoshimi.db` 中保留的天数（默认 `90`，至少 `1`）；按日总量和累计计数始终保留 |
 | `security.allow_cidrs` | 允许访问的客户端网段 |
 | `security.allow_origins` | 跨域来源，要求设置工具访问密钥 |
 | `security.allow_hosts` | 允许的 Host 名称 |
@@ -119,6 +121,30 @@ Cline 使用公开推荐模型接口加载免费目录。
 大批模型移除需要第二次成功响应确认。目录 API 同时返回来源、最近成功时间、
 错误类别与重试时间；可以删除缓存文件来清除持久化模型元数据。
 
+## 数据目录中的文件
+
+网关持续积累的记录保存在 SQLite 数据库 `<数据目录>/hoshimi.db` 中：用量统计
+（逐条调用记录保留 `server.stats_keep_days` 天，按小时总量保留 120 天，按日总量和
+累计计数永久保留）、每日签到状态及其历史（保留 365 天），以及探测结果。
+写入约每秒批量进行一次，关闭时补写。
+
+需要人工或其他程序读取、编辑的内容仍是普通文件：`config.json`、凭据、
+`eac-user.json`、`server.json`（运行中服务的地址、实际端口、URL 与 PID）和
+`catalog-cache/`。
+
+升级后首次启动时，`stats.json`、`checkin.json` 和 `probe.json` 会导入数据库并
+重命名为 `*.migrated`；无法读取的文件重命名为 `*.corrupt`，对应记录从空开始。
+停止服务后删除 `hoshimi.db` 即可清除全部记录。
+
+## 端口选择
+
+`hoshimi serve` 自行绑定套接字，因此检测过的端口就是实际服务的端口。
+`server.port` 被占用或保留时，依次尝试后续端口直到 65535，再从 1024 回绕到所请求
+端口之前；其他绑定错误（例如本机不存在的地址）会立即失败。启用
+`server.strict_port`（或 `--strict-port`）时只尝试所请求的端口。实际绑定的端口会
+写入日志和 `server.json`，并由 `GET /api/v1/settings` 的 `listening` 返回；
+改用其他端口不属于待生效的修改，不会提示重启。
+
 ## CLI 修改
 
 ```bash
@@ -141,7 +167,7 @@ hoshimi check
 限流等待和登录状态；仅修改网络配置也会保留账号状态。提供商 HTTP 客户端保持
 可用，使进行中的流式请求能够结束。
 被重建供应商的内存账户状态会重新创建，包括 `needs_login`。
-监听地址和端口需要重启才能重新绑定。
+监听地址、端口和 `strict_port` 需要重启才能重新绑定；`stats_keep_days` 从下次清理起生效（清理随新记录的调用进行，至多每分钟一次）。
 
 文件采用原子替换和尽可能严格的权限。无效或不可读配置会阻止启动，解析损坏时会
 尽可能先备份，不会静默覆盖。

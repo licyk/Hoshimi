@@ -5,7 +5,7 @@ import { BASE_URL } from '@/api/baseUrl';
 import { useCatalog } from '@/api/catalog';
 import { useMeta, useVersion } from '@/api/queries/app';
 import { useChannels } from '@/api/queries/channels';
-import { useUsageReport, type UsageRange } from '@/api/queries/usage';
+import { useUsageReport, type UsageSlice } from '@/api/queries/usage';
 import CatalogStatus from '@/components/CatalogStatus.vue';
 import { compact, percent, ratio } from '@/format';
 import { useI18n } from '@/i18n';
@@ -20,7 +20,7 @@ const catalog = useCatalog();
 const live = useLiveStore();
 const snackbar = useSnackbar();
 // The last day, hour by hour, for the trend under today's numbers.
-const day = ref<UsageRange>('24h');
+const day = ref<UsageSlice>({ range: '24h' });
 const report = useUsageReport(day);
 const trend = computed(() => (report.data.value?.series ?? []).map((p) => p.input + p.output));
 const today = computed(() => live.today);

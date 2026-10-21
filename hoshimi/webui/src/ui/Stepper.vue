@@ -15,7 +15,7 @@ const model = defineModel<T>({ required: true });
 </script>
 
 <template>
-  <ol class="stepper" role="tablist">
+  <ol class="stepper app-scroll app-scroll-auto" role="tablist">
     <li v-for="(step, i) in steps" :key="step.id" class="item">
       <button type="button" role="tab" class="step state-layer" :class="[step.state ?? 'pending', { current: model === step.id }]" :aria-selected="model === step.id" @click="model = step.id">
         <span class="dot">
@@ -36,7 +36,7 @@ const model = defineModel<T>({ required: true });
 </template>
 
 <style scoped>
-.stepper { display: flex; align-items: center; gap: 0; margin: 0; padding: 0; list-style: none; overflow-x: auto; }
+.stepper { display: flex; align-items: center; gap: 0; margin: 0; padding: 0; list-style: none; }
 .item { display: flex; align-items: center; flex: 1 1 0; min-width: 0; }
 .item:last-child { flex: 0 1 auto; }
 .step { display: flex; align-items: center; gap: var(--app-space-2); padding: var(--app-space-2) var(--app-space-3); border: 0; background: transparent; color: var(--md-sys-color-on-surface-variant); border-radius: var(--md-sys-shape-corner-full); cursor: pointer; font: inherit; min-width: 0; }

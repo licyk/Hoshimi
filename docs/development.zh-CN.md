@@ -65,9 +65,16 @@ cd hoshimi/webui && bun run typegen
   `--md-sys-*` / `--app-*` 令牌，只从 `@/ui` 导入组件。`tokens.test.ts`、
   `imports.test.ts` 和 `layout.test.ts` 负责检查这些规则。
 - **图层与动效。** 所有覆盖在页面上的内容（对话框、侧边面板、菜单）都通过
-  `ui/layers.ts` 叠放。页面切换使用 View Transitions 淡入淡出；标签页沿共享轴
-  滑动（`AxisPanes`）；列表使用 `list` 动效。设置 › 外观 › 动画（或系统设置）
+  `ui/layers.ts` 叠放。页面切换使用 View Transitions 淡入淡出；标签页和筛选沿共享轴
+  滑动（`AxisPanes`）；列表-详情布局在条目之间纵向移动（`shared-axis-y`）；一个带键
+  视图替换另一个时淡出淡入（`FadeSwap`）；列表使用 `list` 动效。图表变形而不是重绘：
+  柱子滑到新位置，刻度和折线平滑过渡（`.morph`）。设置 › 外观 › 动画（或系统设置）
   会把所有过渡减为简短的淡入淡出。
+- **滚动条。** 每个滚动区域都使用 `.app-scroll`（`theme/tokens.css`），让滚动条拥有
+  独立的通道，不覆盖内容，即使系统使用悬浮滚动条也是如此。组件不自行设置
+  `overflow: auto` 或 `scrollbar-*`；由 `layout.test.ts` 检查。
+- **选项。** 从少量选项中选一个（列表筛选、报表范围）使用 `SegmentedControl`：带滑动
+  高亮和计数的轨道，空间不足时变为下拉选择。日期用 `DatePicker` 选择。
 - **页面骨架。** 先是一行 `Toolbar`，下面是单列的 `PageSection`；页面根据内容区
   宽度自适应（`@container app-content`）。可能无限增长的列表使用 `ScrollArea`
   或 `DataTable`（可排序，超过 200 行时只渲染可见部分）。渠道页是路由为

@@ -23,7 +23,7 @@ const { zIndex } = useLayer({ kind: 'sheet', modal: true, open: () => open.value
           <slot name="header-actions" />
           <IconButton :icon="X" :label="closeLabel" @click="open = false" />
         </header>
-        <div class="body"><slot /></div>
+        <div class="body app-scroll"><slot /></div>
       </aside>
     </Transition>
   </Teleport>
@@ -38,5 +38,5 @@ const { zIndex } = useLayer({ kind: 'sheet', modal: true, open: () => open.value
 }
 .head { display: flex; align-items: center; gap: var(--app-space-1); padding: var(--app-space-3) var(--app-space-2) var(--app-space-2) var(--app-space-6); }
 .title { flex: 1; margin: 0; }
-.body { flex: 1; overflow: auto; padding: 0 var(--app-space-4) var(--app-space-4); }
+.body { flex: 1; padding: 0 var(--app-space-4) var(--app-space-4); }
 </style>

@@ -19,7 +19,9 @@ egress whose availability we are establishing.
 from __future__ import annotations
 
 import json
+import logging
 import re
+import sqlite3
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -29,6 +31,7 @@ from typing import Any
 
 import httpx
 
+from hoshimi.core.db import Database, open_store_database, retire_legacy_file
 from hoshimi.core.net.client import NetworkClient
 from hoshimi.core.providers.base import Provider, QuotaExceeded
 
@@ -45,8 +48,13 @@ STATES = (
     STATE_UNKNOWN,
 )
 
+logger = logging.getLogger(__name__)
+
 PROBE_FILE_NAME = "probe.json"
-"""Where the last round's verdicts survive a restart."""
+"""Where the verdicts lived before ``hoshimi.db``; imported once, then renamed ``probe.json.migrated``."""
+
+PROBE_AT_KEY = "probe.at"
+"""The ``meta`` key holding when the last round finished."""
 
 PING_PROMPT = "ping"
 PING_MAX_TOKENS = 64
@@ -231,14 +239,22 @@ def probe_catalog(
 
 
 class ProbeStore:
-    """The last verdict per model, shared by `/api/v1/probe` and the catalogue."""
+    """The last verdict per model, shared by `/api/v1/probe` and the catalogue.
 
-    def __init__(self, path: Path | None = None):
+    Verdicts are read from the ``probe_results`` table once and then served
+    from memory; a finished round writes them back. ``db`` is the gateway's
+    shared database; without one, ``path`` (the old ``probe.json`` location)
+    opens ``hoshimi.db`` beside it, and nothing at all keeps them in memory.
+    """
+
+    def __init__(self, path: Path | None = None, *, db: Database | None = None):
         self._lock = threading.Lock()
         self._results: dict[str, dict[str, Any]] = {}
         self._at: str | None = None
         self._thread: threading.Thread | None = None
-        self._path = path
+        self._db, self._owns_db = open_store_database(path, db)
+        if path is not None:
+            self._import_legacy(path)
         self._load()
 
     def snapshot(self) -> dict[str, Any]:
@@ -275,6 +291,10 @@ class ProbeStore:
             thread.start()
             return True
 
+    def close(self) -> None:
+        if self._owns_db:
+            self._db.close()
+
     def _run(self, targets: list[tuple[Provider, str]], concurrency: int, timeout: float) -> None:
         probe_catalog(targets, concurrency=concurrency, timeout=timeout, on_result=self._record)
         with self._lock:
@@ -287,32 +307,61 @@ class ProbeStore:
 
     # -- persistence ------------------------------------------------------ #
     def _load(self) -> None:
-        if self._path is None or not self._path.is_file():
-            return
-        try:
-            payload = json.loads(self._path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return
-        results = payload.get("results")
-        if isinstance(results, dict):
-            with self._lock:
-                self._results = {
-                    str(model): dict(row)
-                    for model, row in results.items()
-                    if isinstance(row, dict) and isinstance(row.get("state"), str)
-                }
-                self._at = payload.get("at") if isinstance(payload.get("at"), str) else None
+        results = {}
+        for row in self._db.fetchall("SELECT model, result FROM probe_results"):
+            verdict = _verdict(row["result"])
+            if verdict is not None:
+                results[str(row["model"])] = verdict
+        with self._lock:
+            self._results = results
+            self._at = self._db.get_meta(PROBE_AT_KEY)
 
     def _save(self) -> None:
-        if self._path is None:
-            return
         with self._lock:
-            payload = {"at": self._at, "results": self._results}
+            rows = [(model, json.dumps(row, ensure_ascii=False)) for model, row in self._results.items()]
+            at = self._at
+        if self._db.closed:
+            return
         try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = self._path.with_suffix(self._path.suffix + ".tmp")
-            temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-            temporary.replace(self._path)
-        except OSError:
+            self._write(rows, at)
+        except sqlite3.Error as exc:
             # A verdict the disk refused is still in memory for this process.
-            pass
+            logger.warning("could not save probe verdicts: %s", exc)
+
+    def _write(self, rows: list[tuple[str, str]], at: str | None) -> None:
+        with self._db.transaction() as conn:
+            conn.executemany("INSERT INTO probe_results (model, result) VALUES (?, ?) ON CONFLICT(model) DO UPDATE SET result = excluded.result", rows)
+            if at is not None:
+                conn.execute("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (PROBE_AT_KEY, at))
+
+    def _import_legacy(self, path: Path) -> None:
+        """Bring an old ``probe.json`` into a database without verdicts, once, then rename it aside."""
+        if not path.is_file() or self._db.fetchone("SELECT 1 FROM probe_results LIMIT 1") is not None or self._db.get_meta(PROBE_AT_KEY) is not None:
+            return
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except OSError as exc:
+            logger.warning("could not read %s: %s", path, exc)
+            return
+        except ValueError as exc:
+            retire_legacy_file(path, "corrupt")
+            logger.warning("%s is unreadable (%s); probe verdicts start over", path, exc)
+            return
+        results = payload.get("results") if isinstance(payload, dict) else None
+        rows = [(str(model), json.dumps(row, ensure_ascii=False)) for model, row in results.items() if isinstance(row, dict) and isinstance(row.get("state"), str)] if isinstance(results, dict) else []
+        at = payload.get("at") if isinstance(payload, dict) and isinstance(payload.get("at"), str) else None
+        try:
+            self._write(rows, at)
+        except sqlite3.Error as exc:
+            logger.warning("could not import %s: %s", path, exc)
+            return
+        retire_legacy_file(path, "migrated")
+        logger.info("Imported %s into %s: %d verdicts", path.name, self._db.path, len(rows))
+
+
+def _verdict(raw: Any) -> dict[str, Any] | None:
+    try:
+        row = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return row if isinstance(row, dict) and isinstance(row.get("state"), str) else None

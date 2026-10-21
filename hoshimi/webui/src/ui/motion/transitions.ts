@@ -4,6 +4,7 @@ import { ref, watch, type Ref } from 'vue';
 export const TRANSITIONS = {
   fadeThrough: 'fade-through',
   sharedAxisX: 'shared-axis-x',
+  sharedAxisY: 'shared-axis-y',
   container: 'container',
   sheet: 'sheet',
   scrim: 'scrim',
