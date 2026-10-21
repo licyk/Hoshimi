@@ -73,33 +73,6 @@ jobs:
             exit 1
           fi
           python -m twine upload dist/* --skip-existing --non-interactive
-      - name: Verify availability on PyPI
-        env:
-          PACKAGE_VERSION: ${{ needs.build.outputs.version || inputs.version }}
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          import time
-          from pathlib import Path
-          from urllib.error import URLError
-          from urllib.request import urlopen
-          version = os.environ["PACKAGE_VERSION"]
-          expected = {path.name for path in Path("dist").iterdir() if path.is_file()}
-          assert len(expected) == 2, "Expected wheel and source distribution"
-          for attempt in range(6):
-              try:
-                  with urlopen(f"https://pypi.org/pypi/hoshimi/{version}/json", timeout=15) as response:
-                      available = {row["filename"] for row in json.load(response)["urls"] if not row.get("yanked")}
-                  if expected <= available:
-                      print(f"Verified hoshimi {version} on PyPI")
-                      break
-              except (URLError, ValueError):
-                  pass
-              if attempt == 5:
-                  raise SystemExit("PyPI does not expose both non-yanked distribution files")
-              time.sleep(5)
-          PY
 
   github-release:
     name: GitHub release

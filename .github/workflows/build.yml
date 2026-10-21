@@ -58,7 +58,7 @@ jobs:
           with zipfile.ZipFile(wheel) as archive:
               names = archive.namelist()
               assert "hoshimi/webui/dist/index.html" in names, "wheel has no Web UI"
-              assert "hoshimi/webui/dist/favicon.svg" in names, "wheel has no favicon"
+              assert any(name.startswith("hoshimi/webui/dist/assets/favicon") and name.endswith(".svg") for name in names), "wheel has no favicon"
               assert any(name.startswith("hoshimi/webui/dist/assets/") and name.endswith(".js") for name in names), "wheel has no UI bundle"
           with tarfile.open(next(Path("dist").glob("*.tar.gz"))) as archive:
               assert any(name.endswith("/hoshimi/webui/dist/index.html") for name in archive.getnames()), "sdist has no Web UI"
