@@ -7,7 +7,7 @@ import { useChannels } from '@/api/queries/channels';
 import NetworkSettings from '@/components/NetworkSettings.vue';
 import { useI18n } from '@/i18n';
 import { usePreferencesStore } from '@/stores/preferences';
-import { AppButton, AppIcon, AxisPanes, ChipInput, DataList, PageSection, PickerMenu, SegmentedButton, SelectField, Skeleton, Switch, Tabs, TextField, TokenField, TRANSITIONS, icons, useSnackbar } from '@/ui';
+import { AppButton, AppIcon, AxisPanes, ChipInput, Collapse, DataList, PageSection, PickerMenu, SegmentedButton, SelectField, Skeleton, Switch, Tabs, TextField, TokenField, icons, useSnackbar } from '@/ui';
 
 /**
  * Settings in tabs, one concern each, sliding along the shared axis as the tab changes; the tab
@@ -95,12 +95,12 @@ async function copy(text: string) {
 <template>
   <div class="settings">
     <Tabs v-model="tab" :tabs="tabs" />
-    <Transition :name="TRANSITIONS.collapse">
-      <div v-if="s?.restart_required" class="banner" role="status">
+    <Collapse :show="!!s?.restart_required">
+      <div v-if="s" class="banner" role="status">
         <AppIcon :icon="icons.AlertTriangle" :size="20" />
         <span class="type-body-medium">{{ t('settings.restartBanner', { host: s.server.host, port: s.server.port }) }}</span>
       </div>
-    </Transition>
+    </Collapse>
     <div v-if="!s" class="skeletons"><Skeleton v-for="i in 3" :key="i" height="96px" shape="medium" /></div>
     <AxisPanes v-else :value="tab" :order="TABS">
       <div v-if="tab === 'general'" key="general" class="panel">

@@ -10,6 +10,7 @@ export const TRANSITIONS = {
   scrim: 'scrim',
   list: 'list',
   collapse: 'collapse',
+  section: 'section',
   snackbar: 'snackbar',
 } as const;
 
@@ -96,5 +97,58 @@ export const collapseHooks = {
     const e = el as HTMLElement;
     void e.offsetHeight;
     e.style.height = '0';
+  },
+};
+
+type GapSide = 'marginTop' | 'marginBottom';
+
+/**
+ * The row gap a flex column or grid puts beside ``el``, and the side it is on: before the block,
+ * or after it for the first one. A block that only shrinks to nothing still leaves that gap, which
+ * would close in one step at the end; the block's margin takes it in and gives it back instead.
+ */
+function gapBeside(el: HTMLElement): [side: GapSide, px: number] | null {
+  const parent = el.parentElement;
+  if (!parent) return null;
+  const style = getComputedStyle(parent);
+  const stacked = style.display.includes('grid') || (style.display.includes('flex') && style.flexDirection.startsWith('column'));
+  const gap = Number.parseFloat(style.rowGap);
+  if (!stacked || !gap) return null;
+  if (el.previousElementSibling) return ['marginTop', gap];
+  return el.nextElementSibling ? ['marginBottom', gap] : null;
+}
+
+/**
+ * Hooks for <Transition name="section"> on a block of a page that comes and goes (``Collapse``):
+ * its height opens from nothing to the content's and closes again, and the gap beside it with it,
+ * so the blocks after it slide rather than jump. The block itself must have no padding or border.
+ * A change of mind halfway turns back from where the block is, not from either end.
+ */
+export const sectionHooks = {
+  onEnter(el: Element) {
+    const e = el as HTMLElement;
+    const gap = gapBeside(e);
+    e.style.height = '0px';
+    if (gap) e.style[gap[0]] = `${-gap[1]}px`;
+    // Lay the closed box out first: a box inserted and opened in one go has no start to move from.
+    void e.offsetHeight;
+    e.style.height = `${e.scrollHeight}px`;
+    if (gap) e.style[gap[0]] = '0px';
+  },
+  onAfterEnter(el: Element) {
+    Object.assign((el as HTMLElement).style, { height: '', marginTop: '', marginBottom: '' });
+  },
+  onBeforeLeave(el: Element) {
+    // Where it is now, mid-way through opening or not.
+    const e = el as HTMLElement;
+    const style = getComputedStyle(e);
+    Object.assign(e.style, { height: `${e.offsetHeight}px`, marginTop: style.marginTop, marginBottom: style.marginBottom });
+  },
+  onLeave(el: Element) {
+    const e = el as HTMLElement;
+    const gap = gapBeside(e);
+    void e.offsetHeight;
+    e.style.height = '0px';
+    if (gap) e.style[gap[0]] = `${-gap[1]}px`;
   },
 };

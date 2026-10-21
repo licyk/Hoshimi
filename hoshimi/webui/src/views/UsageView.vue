@@ -15,6 +15,7 @@ import {
   AxisPanes,
   Badge,
   Chip,
+  Collapse,
   ConfirmDialog,
   DataTable,
   DatePicker,
@@ -335,159 +336,165 @@ watch(slice, () => (detailOpen.value = false));
     </Toolbar>
     <div class="loading" aria-hidden="true"><ProgressBar v-if="loading" /></div>
 
-    <div v-if="report.isPending.value" class="tiles"><Skeleton v-for="i in 6" :key="i" height="136px" shape="medium" /></div>
-    <EmptyState v-else-if="empty" :icon="icons.BarChart3" :title="t('usage.empty')" :text="t('usage.emptyText')" />
-    <template v-else-if="r">
-      <div class="tiles">
-        <StatTile
-          v-for="tile in tiles"
-          :key="tile.key"
-          :label="tile.label"
-          :value="tile.value"
-          :format="tile.format"
-          :delta="tile.delta"
-          :up-is-good="tile.upIsGood ?? true"
-          :delta-label="previousLabel"
-          :detail="tile.detail"
-          :trend="tile.trend"
-          :icon="tile.icon"
-        />
-      </div>
+    <!-- The first report, an empty range and the report itself replace one another with a fade
+         through, as when the first call of a quiet day comes in. -->
+    <FadeSwap>
+      <div v-if="report.isPending.value" key="pending" class="tiles"><Skeleton v-for="i in 6" :key="i" height="136px" shape="medium" /></div>
+      <EmptyState v-else-if="empty" key="empty" :icon="icons.BarChart3" :title="t('usage.empty')" :text="t('usage.emptyText')" />
+      <div v-else-if="r" key="report" class="report">
+        <div class="tiles">
+          <StatTile
+            v-for="tile in tiles"
+            :key="tile.key"
+            :label="tile.label"
+            :value="tile.value"
+            :format="tile.format"
+            :delta="tile.delta"
+            :up-is-good="tile.upIsGood ?? true"
+            :delta-label="previousLabel"
+            :detail="tile.detail"
+            :trend="tile.trend"
+            :icon="tile.icon"
+          />
+        </div>
 
-      <Transition :name="TRANSITIONS.collapse">
-        <PageSection v-if="live.active.length" :title="t('live.running', { n: live.active.length })" :icon="icons.Radio">
-          <TransitionGroup :name="TRANSITIONS.list" tag="div" class="now" v-bind="keepLeavingInPlace">
-            <LiveCallCard v-for="(c, i) in live.active" :key="c.id" :call="c" :style="staggerStyle(i)" />
-          </TransitionGroup>
+        <Collapse :show="live.active.length > 0">
+          <PageSection :title="t('live.running', { n: live.active.length })" :icon="icons.Radio">
+            <TransitionGroup :name="TRANSITIONS.list" tag="div" class="now" v-bind="keepLeavingInPlace">
+              <LiveCallCard v-for="(c, i) in live.active" :key="c.id" :call="c" :style="staggerStyle(i)" />
+            </TransitionGroup>
+          </PageSection>
+        </Collapse>
+
+        <PageSection :title="t('usage.overTime')" :subtitle="shownRange === 'day' ? longDay(shownDay ?? today) : t(`usage.granularity.${granularity}`)" :icon="icons.BarChart3">
+          <template v-if="granularity === 'day'" #actions><span class="type-body-small muted">{{ t('usage.openDayHint') }}</span></template>
+          <AxisPanes :value="chartKey" :order="chartOrder">
+            <div :key="chartKey">
+              <p v-if="hourlyMissing" class="type-body-medium muted note">{{ t('usage.noHourly') }}</p>
+              <StackedBarChart
+                v-else
+                :series="stackSeries"
+                :points="stackPoints"
+                :label="t('usage.overTime')"
+                :format="compact"
+                :total-label="t('usage.total')"
+                :selectable="granularity === 'day'"
+                @select="openDay"
+              />
+            </div>
+          </AxisPanes>
         </PageSection>
-      </Transition>
 
-      <PageSection :title="t('usage.overTime')" :subtitle="shownRange === 'day' ? longDay(shownDay ?? today) : t(`usage.granularity.${granularity}`)" :icon="icons.BarChart3">
-        <template v-if="granularity === 'day'" #actions><span class="type-body-small muted">{{ t('usage.openDayHint') }}</span></template>
-        <AxisPanes :value="chartKey" :order="chartOrder">
-          <div :key="chartKey">
-            <p v-if="hourlyMissing" class="type-body-medium muted note">{{ t('usage.noHourly') }}</p>
-            <StackedBarChart
-              v-else
-              :series="stackSeries"
-              :points="stackPoints"
-              :label="t('usage.overTime')"
-              :format="compact"
-              :total-label="t('usage.total')"
-              :selectable="granularity === 'day'"
-              @select="openDay"
-            />
-          </div>
-        </AxisPanes>
-      </PageSection>
+        <Collapse :show="hasSpeed">
+          <PageSection :title="t('usage.speed')" :subtitle="t('usage.speedHint')" :icon="icons.Gauge">
+            <AxisPanes :value="chartKey" :order="chartOrder">
+              <div :key="chartKey" class="speed">
+                <div class="speed-chart">
+                  <h3 class="type-title-small">{{ t('usage.ttftAvg') }}</h3>
+                  <LineChart :series="ttftSeries" :x-labels="xLabels" :format="(n) => duration(n)" :height="180" />
+                </div>
+                <div class="speed-chart">
+                  <h3 class="type-title-small">{{ t('usage.tpsAvg') }}</h3>
+                  <LineChart :series="tpsSeries" :x-labels="xLabels" :format="(n) => String(Math.round(n))" :height="180" />
+                </div>
+              </div>
+            </AxisPanes>
+          </PageSection>
+        </Collapse>
 
-      <PageSection v-if="hasSpeed" :title="t('usage.speed')" :subtitle="t('usage.speedHint')" :icon="icons.Gauge">
-        <AxisPanes :value="chartKey" :order="chartOrder">
-          <div :key="chartKey" class="speed">
-            <div class="speed-chart">
-              <h3 class="type-title-small">{{ t('usage.ttftAvg') }}</h3>
-              <LineChart :series="ttftSeries" :x-labels="xLabels" :format="(n) => duration(n)" :height="180" />
-            </div>
-            <div class="speed-chart">
-              <h3 class="type-title-small">{{ t('usage.tpsAvg') }}</h3>
-              <LineChart :series="tpsSeries" :x-labels="xLabels" :format="(n) => String(Math.round(n))" :height="180" />
-            </div>
-          </div>
-        </AxisPanes>
-      </PageSection>
-
-      <PageSection :title="t('usage.breakdown')" :icon="icons.Layers">
-        <Tabs v-model="group" :tabs="groupTabs" />
-        <AxisPanes :value="group" :order="GROUPS">
-          <DataTable
-            :key="group"
-            v-model:sort="breakdownSort"
-            :columns="breakdownColumns"
-            :rows="breakdown"
-            :row-key="(row) => row.key"
-            :value="breakdownValue"
-            :label="t('usage.breakdown')"
-            :empty-text="t('usage.noneInRange')"
-            clickable
-            max-height="min(var(--app-height-list), 480px)"
-            @select="focusRow"
-          >
-            <template #cell-label="{ row }">
-              <span class="name-cell">
-                <span class="text" :title="row.key">{{ row.label || row.key }}</span>
-                <span v-if="row.label && row.label !== row.key" class="type-body-small muted text mono">{{ row.key }}</span>
-              </span>
-            </template>
-            <template #cell-calls="{ row }"><TweenNumber :value="row.calls" /></template>
-            <template #cell-tokens="{ row }"><TweenNumber :value="row.input + row.output" :format="compact" /></template>
-            <template #cell-output="{ row }"><TweenNumber :value="row.output" :format="compact" /></template>
-            <template #cell-cache="{ row }">
-              <span class="cache-cell">
-                <Meter
-                  :label="t('usage.cacheHit')"
-                  :segments="[
-                    { label: t('usage.series.uncached'), value: Math.max(0, row.input - row.cache_read - row.cache_write), slot: 1 },
-                    { label: t('usage.series.cacheRead'), value: row.cache_read, slot: 2 },
-                    { label: t('usage.series.cacheWrite'), value: row.cache_write, slot: 3 },
-                  ]"
-                />
-                <TweenNumber class="type-body-small" :value="ratio(row.cache_read, row.input)" :format="(n) => percent(n, 0)" />
-              </span>
-            </template>
-            <template #cell-ttft_p50_ms="{ row }">{{ duration(row.ttft_p50_ms) }}</template>
-            <template #cell-ttft_p95_ms="{ row }">{{ duration(row.ttft_p95_ms) }}</template>
-            <template #cell-tps="{ row }">{{ row.tps ?? '—' }}</template>
-            <template #cell-failed="{ row }"><Badge v-if="row.failed" tone="error" :value="row.failed" /><span v-else class="muted">0</span></template>
-          </DataTable>
-        </AxisPanes>
-      </PageSection>
-
-      <div ref="callsSection" class="anchor">
-        <PageSection :title="t('usage.calls')" :subtitle="t('usage.callsHint')" :icon="icons.ListChecks">
-          <!-- The list's own filters: a row under the title, the search first and widest, then the
-               chips that narrow it. Not in the title's actions, which hold a few compact buttons. -->
-          <div class="call-filters" role="search" :aria-label="t('usage.searchCalls')">
-            <SearchField v-model="callSearch" compact class="call-search" :label="t('usage.searchCalls')" :placeholder="t('usage.searchCalls')" />
-            <div class="call-chips">
-              <Chip :label="t('usage.failedOnly')" :icon="icons.CircleX" :selected="failedOnly" @click="failedOnly = !failedOnly" />
-              <Chip v-if="narrowed" :label="focusLabel" selected removable @remove="clearFocus" @click="clearFocus" />
-            </div>
-          </div>
-          <FadeSwap>
+        <PageSection :title="t('usage.breakdown')" :icon="icons.Layers">
+          <Tabs v-model="group" :tabs="groupTabs" />
+          <AxisPanes :value="group" :order="GROUPS">
             <DataTable
-              :key="callsKey"
-              :columns="callColumns"
-              :rows="callRows"
-              :row-key="(row) => row.id"
-              :label="t('usage.calls')"
-              :empty-text="t('usage.noCalls')"
+              :key="group"
+              v-model:sort="breakdownSort"
+              :columns="breakdownColumns"
+              :rows="breakdown"
+              :row-key="(row) => row.key"
+              :value="breakdownValue"
+              :label="t('usage.breakdown')"
+              :empty-text="t('usage.noneInRange')"
               clickable
-              :selected="detailOpen ? (chosen?.id ?? null) : null"
-              @select="openCall"
-              @end="calls.hasNextPage.value && !calls.isFetchingNextPage.value && calls.fetchNextPage()"
+              max-height="min(var(--app-height-list), 480px)"
+              @select="focusRow"
             >
-              <template #cell-at="{ row }"><span class="text num" :title="when(row.at)">{{ time(row.at) }}</span></template>
-              <template #cell-model="{ row }">
+              <template #cell-label="{ row }">
                 <span class="name-cell">
-                  <span class="text" :title="row.model">{{ row.name || row.model }}</span>
-                  <span class="type-body-small muted text">{{ t(`usage.origins.${row.origin}`) }}<template v-if="row.effort"> · {{ row.effort }}</template></span>
+                  <span class="text" :title="row.key">{{ row.label || row.key }}</span>
+                  <span v-if="row.label && row.label !== row.key" class="type-body-small muted text mono">{{ row.key }}</span>
                 </span>
               </template>
-              <template #cell-route="{ row }"><span class="text muted" :title="[row.provider, row.account].filter(Boolean).join(' / ')">{{ [row.provider, row.account].filter(Boolean).join(' / ') || '—' }}</span></template>
-              <template #cell-tokens="{ row }">{{ compact(row.input + row.output) }}</template>
-              <template #cell-cache_read="{ row }">{{ row.cache_read ? compact(row.cache_read) : '—' }}</template>
-              <template #cell-ttft_ms="{ row }">{{ duration(row.ttft_ms) }}</template>
-              <template #cell-elapsed_ms="{ row }">{{ duration(row.elapsed_ms) }}</template>
-              <template #cell-tps="{ row }">{{ row.tps ?? '—' }}</template>
-              <template #cell-status="{ row }"><Badge :tone="row.ok ? 'primary' : 'error'" :value="row.ok ? t('usage.served') : t('usage.failedOne')" /></template>
-              <template #footer>
-                <p v-if="calls.isFetchingNextPage.value" class="type-body-small muted more">{{ t('common.loading') }}</p>
+              <template #cell-calls="{ row }"><TweenNumber :value="row.calls" /></template>
+              <template #cell-tokens="{ row }"><TweenNumber :value="row.input + row.output" :format="compact" /></template>
+              <template #cell-output="{ row }"><TweenNumber :value="row.output" :format="compact" /></template>
+              <template #cell-cache="{ row }">
+                <span class="cache-cell">
+                  <Meter
+                    :label="t('usage.cacheHit')"
+                    :segments="[
+                      { label: t('usage.series.uncached'), value: Math.max(0, row.input - row.cache_read - row.cache_write), slot: 1 },
+                      { label: t('usage.series.cacheRead'), value: row.cache_read, slot: 2 },
+                      { label: t('usage.series.cacheWrite'), value: row.cache_write, slot: 3 },
+                    ]"
+                  />
+                  <TweenNumber class="type-body-small" :value="ratio(row.cache_read, row.input)" :format="(n) => percent(n, 0)" />
+                </span>
               </template>
+              <template #cell-ttft_p50_ms="{ row }">{{ duration(row.ttft_p50_ms) }}</template>
+              <template #cell-ttft_p95_ms="{ row }">{{ duration(row.ttft_p95_ms) }}</template>
+              <template #cell-tps="{ row }">{{ row.tps ?? '—' }}</template>
+              <template #cell-failed="{ row }"><Badge v-if="row.failed" tone="error" :value="row.failed" /><span v-else class="muted">0</span></template>
             </DataTable>
-          </FadeSwap>
+          </AxisPanes>
         </PageSection>
+
+        <div ref="callsSection" class="anchor">
+          <PageSection :title="t('usage.calls')" :subtitle="t('usage.callsHint')" :icon="icons.ListChecks">
+            <!-- The list's own filters: a row under the title, the search first and widest, then the
+                 chips that narrow it. Not in the title's actions, which hold a few compact buttons. -->
+            <div class="call-filters" role="search" :aria-label="t('usage.searchCalls')">
+              <SearchField v-model="callSearch" compact class="call-search" :label="t('usage.searchCalls')" :placeholder="t('usage.searchCalls')" />
+              <div class="call-chips">
+                <Chip :label="t('usage.failedOnly')" :icon="icons.CircleX" :selected="failedOnly" @click="failedOnly = !failedOnly" />
+                <Chip v-if="narrowed" :label="focusLabel" selected removable @remove="clearFocus" @click="clearFocus" />
+              </div>
+            </div>
+            <FadeSwap>
+              <DataTable
+                :key="callsKey"
+                :columns="callColumns"
+                :rows="callRows"
+                :row-key="(row) => row.id"
+                :label="t('usage.calls')"
+                :empty-text="t('usage.noCalls')"
+                clickable
+                :selected="detailOpen ? (chosen?.id ?? null) : null"
+                @select="openCall"
+                @end="calls.hasNextPage.value && !calls.isFetchingNextPage.value && calls.fetchNextPage()"
+              >
+                <template #cell-at="{ row }"><span class="text num" :title="when(row.at)">{{ time(row.at) }}</span></template>
+                <template #cell-model="{ row }">
+                  <span class="name-cell">
+                    <span class="text" :title="row.model">{{ row.name || row.model }}</span>
+                    <span class="type-body-small muted text">{{ t(`usage.origins.${row.origin}`) }}<template v-if="row.effort"> · {{ row.effort }}</template></span>
+                  </span>
+                </template>
+                <template #cell-route="{ row }"><span class="text muted" :title="[row.provider, row.account].filter(Boolean).join(' / ')">{{ [row.provider, row.account].filter(Boolean).join(' / ') || '—' }}</span></template>
+                <template #cell-tokens="{ row }">{{ compact(row.input + row.output) }}</template>
+                <template #cell-cache_read="{ row }">{{ row.cache_read ? compact(row.cache_read) : '—' }}</template>
+                <template #cell-ttft_ms="{ row }">{{ duration(row.ttft_ms) }}</template>
+                <template #cell-elapsed_ms="{ row }">{{ duration(row.elapsed_ms) }}</template>
+                <template #cell-tps="{ row }">{{ row.tps ?? '—' }}</template>
+                <template #cell-status="{ row }"><Badge :tone="row.ok ? 'primary' : 'error'" :value="row.ok ? t('usage.served') : t('usage.failedOne')" /></template>
+                <template #footer>
+                  <p v-if="calls.isFetchingNextPage.value" class="type-body-small muted more">{{ t('common.loading') }}</p>
+                </template>
+              </DataTable>
+            </FadeSwap>
+          </PageSection>
+        </div>
       </div>
-    </template>
+    </FadeSwap>
 
     <CallDetailSheet v-model:open="detailOpen" :call="chosen" :has-newer="hasNewer" :has-older="hasOlder" @newer="newer" @older="older" />
     <ConfirmDialog
@@ -505,6 +512,7 @@ watch(slice, () => (detailOpen.value = false));
 
 <style scoped>
 .usage { display: flex; flex-direction: column; gap: var(--app-space-4); padding: var(--app-space-4) var(--app-space-6) var(--app-space-8); min-width: 0; }
+.report { display: flex; flex-direction: column; gap: var(--app-space-4); min-width: 0; }
 .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--app-space-3); transition: opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard); }
 /* The bar takes no room: it lies along the toolbar's foot while a report is on its way. */
 .loading { height: 0; margin-top: calc(-1 * var(--app-space-4) + 2px); position: relative; }

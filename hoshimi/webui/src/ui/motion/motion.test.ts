@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { defineComponent, h, nextTick, ref, Transition } from 'vue';
-import { prefersReducedMotion, TRANSITIONS } from '@/ui/motion/transitions';
+import Collapse from '@/ui/Collapse.vue';
+import { prefersReducedMotion, sectionHooks, TRANSITIONS } from '@/ui/motion/transitions';
 
 const SRC = join(process.cwd(), 'src');
 
@@ -118,6 +119,53 @@ describe('motion', () => {
     expect(seen.at(-1)).toEqual({});
     delete document.documentElement.dataset.motion;
     delete (document as unknown as { startViewTransition?: unknown }).startViewTransition;
+  });
+
+  it('opens and closes a section with the gap beside it, so the blocks after it slide', () => {
+    // A flex column with a 16px gap: block, section, block.
+    const column = document.createElement('div');
+    Object.assign(column.style, { display: 'flex', flexDirection: 'column', rowGap: '16px' });
+    const [before, section, after] = ['div', 'div', 'div'].map((tag) => document.createElement(tag));
+    column.append(before!, section!, after!);
+    document.body.append(column);
+    const el = section!;
+    Object.defineProperty(el, 'scrollHeight', { value: 120 });
+    Object.defineProperty(el, 'offsetHeight', { get: () => (el.style.height === '0px' ? 0 : 120) });
+
+    sectionHooks.onEnter(el);
+    expect([el.style.height, el.style.marginTop]).toEqual(['120px', '0px']);
+    sectionHooks.onAfterEnter(el);
+    expect([el.style.height, el.style.marginTop]).toEqual(['', '']);
+    sectionHooks.onBeforeLeave(el);
+    sectionHooks.onLeave(el);
+    // Closed, it takes the gap before it back: the column is as it was without it.
+    expect([el.style.height, el.style.marginTop]).toEqual(['0px', '-16px']);
+
+    // The first block gives back the gap after it instead.
+    before!.remove();
+    el.removeAttribute('style');
+    sectionHooks.onLeave(el);
+    expect([el.style.marginTop, el.style.marginBottom]).toEqual(['', '-16px']);
+    column.remove();
+  });
+
+  it('mounts and removes a Collapse section under the zero-duration test stylesheet', async () => {
+    cleanup.push(useStylesheet('ui/motion/motion.css'), useStylesheet('test/motion-zero.css'));
+    const shown = ref(false);
+    const Comp = defineComponent(() => () => h('div', h(Collapse, { show: shown.value }, () => h('p', { class: 'inside' }, 'x'))));
+    const wrapper = mount(Comp, { attachTo: document.body });
+    expect(wrapper.find('.inside').exists()).toBe(false);
+    shown.value = true;
+    await nextTick();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(wrapper.find('.inside').exists()).toBe(true);
+    // Once open, the box sizes to its content again.
+    expect((wrapper.find('.collapse').element as HTMLElement).style.height).toBe('');
+    shown.value = false;
+    await nextTick();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(wrapper.find('.inside').exists()).toBe(false);
+    wrapper.unmount();
   });
 
   it('gives reduced motion a short crossfade between destinations', () => {

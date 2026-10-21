@@ -27,6 +27,7 @@ vi.mock('@/ui', () => {
   return {
     icons: {}, TRANSITIONS: {}, AppButton: slot, AppIcon: slot, DataList: slot, PickerMenu: slot, SegmentedButton: slot, SelectField: slot, Skeleton: slot, TextField: slot, TokenField: slot,
     AxisPanes: slot,
+    Collapse: { props: ['show'], template: '<div v-if="show"><slot /></div>' },
     PageSection: { props: ['title'], template: '<section><h2>{{ title }}</h2><slot /></section>' },
     Tabs: { props: ['tabs', 'modelValue'], emits: ['update:modelValue'], template: '<nav><button v-for="t in tabs" :key="t.value" class="tab" @click="$emit(\'update:modelValue\', t.value)">{{ t.label }}</button></nav>' },
     ChipInput: { props: ['label', 'values'], emits: ['change'], template: '<div class="chips" :data-label="label"><button class="add" @click="$emit(\'change\', [...values, \'192.168.0.0/16\'])">{{ values.join(\' \') }}</button></div>' },

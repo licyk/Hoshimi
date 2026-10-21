@@ -98,6 +98,28 @@
 .collapse-enter-from,
 .collapse-leave-to { opacity: 0; }
 
+/* section: a block of a page that comes and goes (Collapse; height and the gap beside it set by
+   sectionHooks). Coming in, the box opens and the content fades in a beat later as it settles
+   down into place; going out, the content fades first and the box closes after it. Either way the
+   blocks below slide to their new place. */
+.section-enter-active {
+  overflow: hidden;
+  transition:
+    height var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate),
+    margin var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate),
+    opacity var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-emphasized-decelerate) var(--md-sys-motion-duration-short2),
+    transform var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate);
+}
+.section-leave-active {
+  overflow: hidden;
+  transition:
+    height var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard) var(--md-sys-motion-duration-short1),
+    margin var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard) var(--md-sys-motion-duration-short1),
+    opacity var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-emphasized-accelerate);
+}
+.section-enter-from { opacity: 0; transform: translateY(-8px); }
+.section-leave-to { opacity: 0; }
+
 /* snackbar */
 .snackbar-enter-active {
   transition:

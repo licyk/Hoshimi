@@ -14,6 +14,7 @@ import {
   AppIcon,
   AppMenu,
   Badge,
+  Collapse,
   ConfirmDialog,
   DataList,
   EmptyState,
@@ -180,14 +181,14 @@ const today = computed(() => c.value.usage_today);
       </AppMenu>
     </div>
 
-    <Transition :name="TRANSITIONS.collapse">
-      <div v-if="problems.length" class="banner" role="status">
+    <Collapse :show="problems.length > 0">
+      <div class="banner" role="status">
         <AppIcon :icon="icons.AlertTriangle" :size="20" class="banner-icon" />
         <ul class="type-body-medium">
           <li v-for="p in problems" :key="p">{{ p }}</li>
         </ul>
       </div>
-    </Transition>
+    </Collapse>
 
     <PageSection :title="t('channels.accounts')" :subtitle="t('channels.accountCount', { n: c.accounts.length })" :icon="icons.Users">
       <EmptyState v-if="!accounts.length" :icon="icons.KeyRound" :title="t('channels.noAccounts')" :text="c.keyless ? t('channels.keylessHint') : c.loginable ? t('channels.signInHint') : t('channels.addHint')" />
