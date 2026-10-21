@@ -113,8 +113,8 @@ watch(sort, () => scroller.value?.box?.scrollTo({ top: 0 }));
 </script>
 
 <template>
-  <div ref="root" class="data-table" :class="{ busy }" role="table" :aria-label="label" :aria-rowcount="rows.length + 1" :style="{ '--cols': template, '--row-h': `${rowHeight}px` }">
-    <ScrollArea ref="scroller" :max-height="maxHeight" @end="emit('end')">
+  <div ref="root" class="data-table" role="table" :aria-label="label" :aria-rowcount="rows.length + 1" :style="{ '--cols': template, '--row-h': `${rowHeight}px` }">
+    <ScrollArea ref="scroller" class="frame" :class="{ busy }" :max-height="maxHeight" @end="emit('end')">
       <template #header>
         <div class="row head" role="row">
           <div v-for="c in visible" :key="c.key" class="cell type-label-medium" :class="[c.align ?? 'start']" role="columnheader" :aria-sort="ariaSort(c)">
@@ -162,8 +162,12 @@ watch(sort, () => scroller.value?.box?.scrollTo({ top: 0 }));
 </template>
 
 <style scoped>
-.data-table { min-width: 0; transition: opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard); }
-.data-table.busy { opacity: 0.6; }
+/* The root is what a pane switch (AxisPanes, FadeSwap) slides and fades, with the motion system's
+   transition: a transition of its own here would replace that one, and the pane would jump. The
+   dimming while busy is the frame's inside it. */
+.data-table { min-width: 0; }
+.frame { transition: opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard); }
+.frame.busy { opacity: 0.6; }
 .row { display: grid; grid-template-columns: var(--cols); gap: var(--app-space-3); align-items: center; padding: 0 var(--app-space-3); }
 .head { min-height: 40px; color: var(--md-sys-color-on-surface-variant); border-bottom: 1px solid var(--md-sys-color-outline-variant); }
 .body { height: var(--row-h); border-radius: var(--md-sys-shape-corner-small); }

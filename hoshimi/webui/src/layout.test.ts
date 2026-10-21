@@ -89,3 +89,23 @@ describe('pages', () => {
     expect(rule(file, `.${root}`)).not.toMatch(/(^|[\s;])width:\s*100%/);
   });
 });
+
+/**
+ * A component a pane switch replaces (AxisPanes, FadeSwap, <Transition>) is moved by the motion
+ * system's named transition on its root element. A ``transition`` the component declares on that
+ * root (scoped, so more specific) replaces the named one: the pane's slide then jumps to its end in
+ * one frame while only its own property eases. Such a component keeps its own transitions inside.
+ * The exceptions are never a pane themselves.
+ */
+const OWN_ROOT_TRANSITION = new Set(['ui/AppCard.vue', 'ui/StackedBarChart.vue']);
+const UI_FILES = VUE_FILES.filter((f) => f.replace(/\\/g, '/').startsWith('ui/') && !OWN_ROOT_TRANSITION.has(f.replace(/\\/g, '/')));
+describe('components a pane switch moves', () => {
+  it.each(UI_FILES)('%s leaves its root element to the motion system', (file) => {
+    const source = readFileSync(join(SRC, file), 'utf8');
+    const root = /<template>\s*<[\w-]+[^>]*?\bclass="([\w-]+)/.exec(source)?.[1];
+    if (!root) return;
+    const css = source.slice(source.indexOf('<style'));
+    const own = new RegExp(String.raw`(?:^|\n)\s*\.${root}\s*\{([^}]*)\}`).exec(css)?.[1] ?? '';
+    expect(own).not.toMatch(/(^|[\s;])transition(-property)?\s*:/);
+  });
+});

@@ -513,7 +513,7 @@ watch(slice, () => (detailOpen.value = false));
 <style scoped>
 .usage { display: flex; flex-direction: column; gap: var(--app-space-4); padding: var(--app-space-4) var(--app-space-6) var(--app-space-8); min-width: 0; }
 .report { display: flex; flex-direction: column; gap: var(--app-space-4); min-width: 0; }
-.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--app-space-3); transition: opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard); }
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--app-space-3); }
 /* The bar takes no room: it lies along the toolbar's foot while a report is on its way. */
 .loading { height: 0; margin-top: calc(-1 * var(--app-space-4) + 2px); position: relative; }
 .loading > * { position: absolute; inset-inline: 0; top: 0; }
