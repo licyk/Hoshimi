@@ -32,7 +32,7 @@ def main() -> None:
             assert client.get("/health").status_code == 200
             index = client.get("/")
             assert index.status_code == 200 and "Hoshimi" in index.text
-            assert client.get("/favicon.svg").status_code == 200
+            assert any(a.name.startswith("favicon") for a in (web_dist_dir() / "assets").glob("*.svg"))
             for asset in (web_dist_dir() / "assets").glob("*"):
                 assert client.get(f"/assets/{asset.name}").status_code == 200, asset.name
             assert client.get("/api/v1/providers").status_code == 200

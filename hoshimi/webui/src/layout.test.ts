@@ -73,3 +73,19 @@ describe('scrolling areas', () => {
     if (!HIDDEN_SCROLLBAR.has(file.replace(/\\/g, '/'))) expect(css).not.toMatch(/scrollbar-(width|color|gutter)\s*:/);
   });
 });
+
+/**
+ * A page is the scroller's only child and fills its width as a block. Where scrollbars float
+ * (Firefox with overlay scrollbars), tokens.css gives that child a ``margin-inline-end`` the
+ * lane's width; a page that also sets ``width: 100%`` is then wider than the scroller by that
+ * margin, and a horizontal scrollbar appears though everything fits.
+ */
+const PAGES = VUE_FILES.filter((f) => f.replace(/\\/g, '/').startsWith('views/'));
+describe('pages', () => {
+  it.each(PAGES)('%s fills the scroller without a width of its own', (file) => {
+    const source = readFileSync(join(SRC, file), 'utf8');
+    const root = /<template>\s*<\w+[^>]*\bclass="([\w-]+)/.exec(source)?.[1];
+    expect(root, `${file} has no root class`).toBeTruthy();
+    expect(rule(file, `.${root}`)).not.toMatch(/(^|[\s;])width:\s*100%/);
+  });
+});

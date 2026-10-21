@@ -195,7 +195,7 @@ function onKeydown(event: KeyboardEvent) {
 </template>
 
 <style scoped>
-.playground { display: flex; flex-direction: column; gap: var(--app-space-3); width: 100%; height: 100%; padding: var(--app-space-4) var(--app-space-6) var(--app-space-4); }
+.playground { display: flex; flex-direction: column; gap: var(--app-space-3); height: 100%; padding: var(--app-space-4) var(--app-space-6) var(--app-space-4); }
 .head-controls { display: flex; align-items: flex-start; gap: var(--app-space-2); min-width: 0; flex-wrap: wrap; }
 .model { flex: 1 1 280px; min-width: 0; }
 .effort { flex: 0 1 200px; min-width: 0; }

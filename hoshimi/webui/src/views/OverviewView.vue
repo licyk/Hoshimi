@@ -120,7 +120,7 @@ const openDocs = () => window.open(`${BASE_URL}/docs`, '_blank', 'noopener');
 </template>
 
 <style scoped>
-.overview { display: flex; flex-direction: column; gap: var(--app-space-4); width: 100%; padding: var(--app-space-4) var(--app-space-6) var(--app-space-8); min-width: 0; }
+.overview { display: flex; flex-direction: column; gap: var(--app-space-4); padding: var(--app-space-4) var(--app-space-6) var(--app-space-8); min-width: 0; }
 p { margin: 0; }
 .today { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 320px); gap: var(--app-space-4); align-items: end; }
 .figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: var(--app-space-3); margin: 0; }

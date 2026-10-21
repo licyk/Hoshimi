@@ -194,7 +194,7 @@ const tableValue = (m: Row, key: string): unknown => (key === 'state' ? stateVal
 </template>
 
 <style scoped>
-.models { display: flex; flex-direction: column; gap: var(--app-space-4); width: 100%; padding: var(--app-space-4) var(--app-space-6) var(--app-space-8); min-width: 0; }
+.models { display: flex; flex-direction: column; gap: var(--app-space-4); padding: var(--app-space-4) var(--app-space-6) var(--app-space-8); min-width: 0; }
 .search { flex: 1 1 280px; min-width: 0; }
 .filter { flex: 0 1 220px; }
 .skeletons { display: flex; flex-direction: column; gap: var(--app-space-1); }
