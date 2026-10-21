@@ -1,63 +1,72 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ref } from 'vue';
+import { reactive, ref } from 'vue';
 import SettingsView from '@/views/SettingsView.vue';
 
 const state = vi.hoisted(() => ({ update: vi.fn() }));
-const configured = (id: string, enabled: boolean) => ({ id, enabled, accounts: 0, options: [] as string[] });
-const runtime = (id: string, enabled: boolean) => ({ id, display_name: id, enabled, accounts: 0, requires_authorization: id === 'alpha' });
-const settings = ref({ providers: [configured('zeta', true)], server: { allow_cidrs: [], allow_hosts: [], allow_origins: [] } });
-const providers = ref([runtime('zeta', true), runtime('alpha', false), runtime('beta', false)]);
+const route = reactive({ query: {} as Record<string, string> });
+const settings = ref({
+  data_dir: '/data', config_path: '/data/config.json', restart_required: false, network: { mode: 'auto', proxy_configured: false, system_proxy: false }, providers: [],
+  server: { host: '127.0.0.1', port: 10600, allow_cidrs: ['10.0.0.0/8'], allow_hosts: [], allow_origins: [], auto_checkin: true, auto_refresh: true, default_model: null, max_account_retries: 3, max_body_bytes: 1000, access_token_configured: false, model_api_key_configured: false },
+});
 
+vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ replace: ({ query }: { query: Record<string, string> }) => (route.query = query), push: vi.fn() }) }));
 vi.mock('@/api/queries/app', () => ({
-  useSettings: () => ({ data: settings, isFetching: { value: false } }),
-  useProviders: () => ({ data: providers }),
-  useNetworkDiagnostics: () => ({ data: { value: [] } }),
+  useSettings: () => ({ data: settings }),
+  useModels: () => ({ data: { value: { data: [] } }, isPending: { value: false } }),
   useMeta: () => ({ data: { value: { auth_required: true } } }),
   useVersion: () => ({ data: { value: { version: 'test' } } }),
   useUpdateSettings: () => ({ mutate: state.update }),
 }));
+vi.mock('@/api/queries/channels', () => ({ useChannels: () => ({ data: { value: undefined } }) }));
+vi.mock('@/components/NetworkSettings.vue', () => ({ default: { template: '<div class="network" />' } }));
 vi.mock('@/ui', () => {
   const slot = { template: '<div><slot /></div>' };
   return {
-    icons: {}, Surface: slot, AppButton: slot, DataList: slot, SegmentedButton: slot, SelectField: slot, Skeleton: slot, Slider: slot, TextField: slot, TokenField: slot,
-    Badge: { props: ['value'], template: '<span class="badge">{{ value }}</span>' },
-    Switch: { props: ['modelValue'], template: '<button class="switch" :aria-pressed="modelValue" @click="$emit(\'update:modelValue\', !modelValue)" />' },
+    icons: {}, TRANSITIONS: {}, AppButton: slot, AppIcon: slot, DataList: slot, PickerMenu: slot, SegmentedButton: slot, SelectField: slot, Skeleton: slot, TextField: slot, TokenField: slot,
+    AxisPanes: slot,
+    PageSection: { props: ['title'], template: '<section><h2>{{ title }}</h2><slot /></section>' },
+    Tabs: { props: ['tabs', 'modelValue'], emits: ['update:modelValue'], template: '<nav><button v-for="t in tabs" :key="t.value" class="tab" @click="$emit(\'update:modelValue\', t.value)">{{ t.label }}</button></nav>' },
+    ChipInput: { props: ['label', 'values'], emits: ['change'], template: '<div class="chips" :data-label="label"><button class="add" @click="$emit(\'change\', [...values, \'192.168.0.0/16\'])">{{ values.join(\' \') }}</button></div>' },
+    Switch: { props: ['label', 'modelValue'], emits: ['update:modelValue'], template: '<button class="switch" :aria-pressed="modelValue" @click="$emit(\'update:modelValue\', !modelValue)">{{ label }}</button>' },
     useSnackbar: () => ({ show: vi.fn(), error: vi.fn() }),
   };
 });
 
-describe('settings provider positions', () => {
+describe('settings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    settings.value.providers = [configured('zeta', true)];
-    providers.value = [runtime('zeta', true), runtime('alpha', false), runtime('beta', false)];
+    route.query = {};
+    settings.value.restart_required = false;
   });
 
-  it('keeps the displayed order when toggles change config membership and API ordering', async () => {
-    const wrapper = mount(SettingsView, { global: { plugins: [createPinia()] } });
-    const names = () => wrapper.findAll('.provider .name').map((name) => name.text());
-    const original = names();
-    expect(original).toEqual(['zeta', 'alpha', 'beta']);
-    await wrapper.findAll('.provider')[2].find('button').trigger('click');
-    expect(state.update.mock.calls[0][0]).toEqual({ providers: { beta: { enabled: true } } });
-    // The first save adds beta to the configured rows, ahead of the unconfigured alpha.
-    settings.value.providers.push(configured('beta', true));
-    providers.value = [runtime('beta', true), runtime('zeta', true), runtime('alpha', false)];
+  it('shows one tab at a time and keeps the tab in the address', async () => {
+    const w = mount(SettingsView, { global: { plugins: [createPinia()] } });
+    expect(w.findAll('h2').map((h) => h.text())).toEqual(['General', 'Requests']);
+    await w.findAll('.tab').find((t) => t.text() === 'Security')!.trigger('click');
+    expect(route.query.tab).toBe('security');
+    expect(w.findAll('h2').map((h) => h.text())).toEqual(['Security']);
+  });
+
+  it('saves an allow-list as a list the moment it changes', async () => {
+    route.query = { tab: 'security' };
+    const w = mount(SettingsView, { global: { plugins: [createPinia()] } });
+    await w.find('.chips .add').trigger('click');
+    expect(state.update.mock.calls[0][0]).toEqual({ security: { allow_cidrs: ['10.0.0.0/8', '192.168.0.0/16'] } });
+  });
+
+  it('keeps the automation timers with the other server settings', async () => {
+    route.query = { tab: 'automation' };
+    const w = mount(SettingsView, { global: { plugins: [createPinia()] } });
+    await w.findAll('.switch').find((s) => s.text() === 'Daily check-in')!.trigger('click');
+    expect(state.update.mock.calls[0][0]).toEqual({ server: { auto_checkin: false } });
+  });
+
+  it('says when the saved address waits for a restart', async () => {
+    settings.value.restart_required = true;
+    const w = mount(SettingsView, { global: { plugins: [createPinia()] } });
     await flushPromises();
-    expect(names()).toEqual(original);
-    expect(wrapper.findAll('.provider')[2].find('button').attributes('aria-pressed')).toBe('true');
-    await wrapper.findAll('.provider')[0].find('button').trigger('click');
-    expect(state.update.mock.calls[1][0]).toEqual({ providers: { zeta: { enabled: false } } });
-    settings.value.providers = [configured('beta', true), configured('zeta', false)];
-    providers.value = [runtime('beta', true), runtime('alpha', false), runtime('zeta', false)];
-    await flushPromises();
-    expect(names()).toEqual(original);
-    expect(wrapper.findAll('.provider')[0].find('button').attributes('aria-pressed')).toBe('false');
-    providers.value.push(runtime('new-provider', false));
-    await flushPromises();
-    expect(names()).toEqual([...original, 'new-provider']);
-    wrapper.unmount();
+    expect(w.text()).toContain('127.0.0.1:10600');
   });
 });

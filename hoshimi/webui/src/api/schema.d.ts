@@ -75,6 +75,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/channels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Channels
+         * @description Every lane ``/providers`` lists, with everything known about it in memory.
+         */
+        get: operations["list_channels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/credits": {
         parameters: {
             query?: never;
@@ -284,7 +304,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create Chat Completion */
+        /**
+         * Create Playground Chat Completion
+         * @description The Chat Completions route, filed under its own origin so a test from the web UI is not a client's call.
+         */
         post: operations["create_playground_chat_completion"];
         delete?: never;
         options?: never;
@@ -528,9 +551,61 @@ export interface paths {
         };
         /**
          * Get Stats
-         * @description Totals for the dashboard: per-day and per-model usage, plus the recent calls.
+         * @description Totals, a zero-filled series and breakdowns for one range, plus the lifetime totals.
+         *
+         *     ``24h`` reads hourly buckets (kept 72 hours); the others read daily
+         *     buckets (kept 120 days). ``previous`` is the equal-length span just
+         *     before, as far as the buckets still reach.
          */
         get: operations["get_stats"];
+        put?: never;
+        post?: never;
+        /**
+         * Reset Stats
+         * @description Forget every counter and recorded call. Calls in flight are still recorded when they end.
+         */
+        delete: operations["reset_stats"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stats/calls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Stats Calls
+         * @description The recent-call ring (last 1000 calls), newest first.
+         */
+        get: operations["list_stats_calls"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stats/live": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Stats Live
+         * @description A snapshot of the calls in flight, today's totals and the latest calls, then every change.
+         *
+         *     Frames are ``data: <json>\n\n``; a ``{"type":"ping"}`` heartbeat goes out
+         *     every 15 seconds. The stream ends if the reader falls too far behind —
+         *     reconnecting brings a fresh snapshot, which replaces anything missed.
+         */
+        get: operations["stream_stats_live"];
         put?: never;
         post?: never;
         delete?: never;
@@ -817,6 +892,120 @@ export interface components {
              */
             unit: string;
         };
+        /** CallPage */
+        CallPage: {
+            /** Calls */
+            calls: components["schemas"]["CallRecord"][];
+            /** Next */
+            next: number | null;
+        };
+        /**
+         * CallRecord
+         * @description One served call from the recent-call ring; ``seq`` is the paging cursor.
+         */
+        CallRecord: {
+            /**
+             * Account
+             * @default
+             */
+            account: string;
+            /** At */
+            at: string;
+            /**
+             * Attempts
+             * @default 0
+             */
+            attempts: number;
+            /**
+             * Cache Read
+             * @default 0
+             */
+            cache_read: number;
+            /**
+             * Cache Write
+             * @default 0
+             */
+            cache_write: number;
+            /**
+             * Decode Ms
+             * @default 0
+             */
+            decode_ms: number;
+            /**
+             * Effort
+             * @default
+             */
+            effort: string;
+            /** Elapsed Ms */
+            elapsed_ms: number | null;
+            /**
+             * Error Code
+             * @default
+             */
+            error_code: string;
+            /**
+             * Error Message
+             * @default
+             */
+            error_message: string;
+            /**
+             * Finish Reason
+             * @default
+             */
+            finish_reason: string;
+            /** Id */
+            id: string;
+            /**
+             * Input
+             * @default 0
+             */
+            input: number;
+            /** Model */
+            model: string;
+            /** Name */
+            name: string;
+            /**
+             * No Usage
+             * @default false
+             */
+            no_usage: boolean;
+            /**
+             * Ok
+             * @default true
+             */
+            ok: boolean;
+            /**
+             * Origin
+             * @default chat
+             */
+            origin: string;
+            /**
+             * Output
+             * @default 0
+             */
+            output: number;
+            /**
+             * Provider
+             * @default
+             */
+            provider: string;
+            /**
+             * Reasoning
+             * @default 0
+             */
+            reasoning: number;
+            /** Seq */
+            seq: number;
+            /**
+             * Stream
+             * @default false
+             */
+            stream: boolean;
+            /** Tps */
+            tps: number | null;
+            /** Ttft Ms */
+            ttft_ms: number | null;
+        };
         /** CatalogEvent */
         CatalogEvent: {
             /** Levels */
@@ -852,6 +1041,111 @@ export interface components {
              * @enum {string}
              */
             status: "loading" | "ready" | "failed" | "timeout";
+        };
+        /**
+         * ChannelAccount
+         * @description One account's health: renewal state, refusal hold and today's usage.
+         *
+         *     ``expires_at`` is epoch **milliseconds** (as ``/refresh`` reports it);
+         *     ``last_ok`` is epoch seconds; ``cooled_seconds`` is how long the account
+         *     stays out of rotation.
+         */
+        ChannelAccount: {
+            /**
+             * Cooled Reason
+             * @default
+             */
+            cooled_reason: string;
+            /**
+             * Cooled Seconds
+             * @default 0
+             */
+            cooled_seconds: number;
+            /** Expires At */
+            expires_at: number | null;
+            /**
+             * Failures
+             * @default 0
+             */
+            failures: number;
+            /** Id */
+            id: string;
+            /** Last Error */
+            last_error: string | null;
+            /** Last Ok */
+            last_ok: number | null;
+            /** Last Used At */
+            last_used_at: string | null;
+            /**
+             * Needs Login
+             * @default false
+             */
+            needs_login: boolean;
+            /**
+             * Refreshable
+             * @default false
+             */
+            refreshable: boolean;
+            usage_today: components["schemas"]["UsageTotals"];
+        };
+        /** ChannelView */
+        ChannelView: {
+            /** Accounts */
+            accounts: components["schemas"]["ChannelAccount"][];
+            /**
+             * Addable
+             * @default false
+             */
+            addable: boolean;
+            /** Client Profile */
+            client_profile: string | null;
+            /** Configured */
+            configured: boolean;
+            /** Diagnostics */
+            diagnostics: components["schemas"]["NetworkDiagnostic"][];
+            /** Display Name */
+            display_name: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Forms */
+            forms: components["schemas"]["CredentialFormView"][];
+            /** Id */
+            id: string;
+            /** Keyless */
+            keyless: boolean;
+            /**
+             * Loginable
+             * @default false
+             */
+            loginable: boolean;
+            /** Models */
+            models: number | null;
+            network: components["schemas"]["NetworkView"];
+            /** Options */
+            options: string[];
+            quota: components["schemas"]["PassiveQuota"] | null;
+            /**
+             * Requires Authorization
+             * @default false
+             */
+            requires_authorization: boolean;
+            /**
+             * Status
+             * @default ok
+             * @enum {string}
+             */
+            status: "ok" | "attention" | "disabled" | "empty";
+            usage_today: components["schemas"]["UsageTotals"];
+        };
+        /** ChannelsReport */
+        ChannelsReport: {
+            /** Auto Checkin */
+            auto_checkin: boolean;
+            /** Auto Refresh */
+            auto_refresh: boolean;
+            /** Channels */
+            channels: components["schemas"]["ChannelView"][];
+            checkin: components["schemas"]["CheckinState"];
         };
         /**
          * CheckinState
@@ -997,15 +1291,6 @@ export interface components {
             /** Method */
             method: string;
         };
-        /** DayRow */
-        DayRow: {
-            /** Day */
-            day: string;
-            /** Models */
-            models: components["schemas"]["UsageRow"][];
-            /** Total */
-            total: number;
-        };
         /** EffortOption */
         EffortOption: {
             /**
@@ -1036,34 +1321,6 @@ export interface components {
             /** Message */
             message: string;
         };
-        /** Grand */
-        Grand: {
-            /**
-             * Calls
-             * @default 0
-             */
-            calls: number;
-            /**
-             * Failed
-             * @default 0
-             */
-            failed: number;
-            /**
-             * Input
-             * @default 0
-             */
-            input: number;
-            /**
-             * Output
-             * @default 0
-             */
-            output: number;
-            /**
-             * Reasoning
-             * @default 0
-             */
-            reasoning: number;
-        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1075,6 +1332,146 @@ export interface components {
             auth_required: boolean;
             /** Status */
             status: string;
+        };
+        /**
+         * LatencyStats
+         * @description Time to first token (ms) and decode speed (tokens/s); None where nothing was measurable.
+         */
+        LatencyStats: {
+            /** Tps Avg */
+            tps_avg: number | null;
+            /** Tps P50 */
+            tps_p50: number | null;
+            /** Ttft Avg Ms */
+            ttft_avg_ms: number | null;
+            /** Ttft P50 Ms */
+            ttft_p50_ms: number | null;
+            /** Ttft P95 Ms */
+            ttft_p95_ms: number | null;
+        };
+        /**
+         * LiveCall
+         * @description A call in flight. ``started_at`` is epoch seconds; the token figures are estimates (chars / 4).
+         */
+        LiveCall: {
+            /**
+             * Account
+             * @default
+             */
+            account: string;
+            /**
+             * Attempts
+             * @default 0
+             */
+            attempts: number;
+            /**
+             * Effort
+             * @default
+             */
+            effort: string;
+            /**
+             * Elapsed Ms
+             * @default 0
+             */
+            elapsed_ms: number;
+            /**
+             * Est Output Tokens
+             * @default 0
+             */
+            est_output_tokens: number;
+            /** Id */
+            id: string;
+            /** Model */
+            model: string;
+            /** Name */
+            name: string;
+            /**
+             * Origin
+             * @default chat
+             */
+            origin: string;
+            /**
+             * Output Chars
+             * @default 0
+             */
+            output_chars: number;
+            /**
+             * Phase
+             * @default waiting
+             * @enum {string}
+             */
+            phase: "waiting" | "reasoning" | "answering" | "tool";
+            /**
+             * Provider
+             * @default
+             */
+            provider: string;
+            /**
+             * Reasoning Chars
+             * @default 0
+             */
+            reasoning_chars: number;
+            /** Started At */
+            started_at: number;
+            /**
+             * Stream
+             * @default false
+             */
+            stream: boolean;
+            /** Tps */
+            tps: number | null;
+            /** Ttft Ms */
+            ttft_ms: number | null;
+        };
+        /**
+         * LiveEvent
+         * @description One frame of ``/stats/live``: a snapshot, then started / progress / finished events.
+         */
+        LiveEvent: components["schemas"]["LiveSnapshot"] | components["schemas"]["LiveStarted"] | components["schemas"]["LiveProgress"] | components["schemas"]["LiveFinished"];
+        /** LiveFinished */
+        LiveFinished: {
+            /** Call Id */
+            call_id: string;
+            record: components["schemas"]["CallRecord"];
+            today: components["schemas"]["UsageTotals"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "finished";
+        };
+        /** LiveProgress */
+        LiveProgress: {
+            call: components["schemas"]["LiveCall"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "progress";
+        };
+        /** LiveSnapshot */
+        LiveSnapshot: {
+            /** Active */
+            active: components["schemas"]["LiveCall"][];
+            /** Recent */
+            recent: components["schemas"]["CallRecord"][];
+            /** Server Time */
+            server_time: number;
+            today: components["schemas"]["UsageTotals"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "snapshot";
+        };
+        /** LiveStarted */
+        LiveStarted: {
+            call: components["schemas"]["LiveCall"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "started";
         };
         /** LoginInput */
         LoginInput: {
@@ -1501,64 +1898,6 @@ export interface components {
             /** Provider */
             provider?: string | null;
         };
-        /**
-         * Sample
-         * @description The last calls, kept so a "that answer vanished" report has rows to audit.
-         */
-        Sample: {
-            /** At */
-            at: string;
-            /**
-             * Decode Ms
-             * @default 0
-             */
-            decode_ms: number;
-            /**
-             * Decode Tokens
-             * @default 0
-             */
-            decode_tokens: number;
-            /**
-             * Effort
-             * @default
-             */
-            effort: string;
-            /** Elapsed Ms */
-            elapsed_ms: number | null;
-            /**
-             * Input
-             * @default 0
-             */
-            input: number;
-            /** Model */
-            model: string;
-            /**
-             * No Usage
-             * @default false
-             */
-            no_usage: boolean;
-            /** Ok */
-            ok: boolean;
-            /**
-             * Origin
-             * @default chat
-             */
-            origin: string;
-            /**
-             * Output
-             * @default 0
-             */
-            output: number;
-            /**
-             * Reasoning
-             * @default 0
-             */
-            reasoning: number;
-            /** Tps */
-            tps: number | null;
-            /** Ttft Ms */
-            ttft_ms: number | null;
-        };
         /** ServerView */
         ServerView: {
             /** Access Token Configured */
@@ -1589,6 +1928,14 @@ export interface components {
         /**
          * SettingsView
          * @description Settings as returned to clients: only key presence is disclosed.
+         *
+         *     ``restart_required`` says a saved ``server.host``/``server.port`` has not
+         *     taken effect: the socket is bound once, at start, and a settings save
+         *     cannot move it. Compared against the values this process was *started
+         *     with*, not the socket itself, so a port that fell back to the next free
+         *     one (or a ``--port`` override) is not reported as a pending change no
+         *     restart would resolve. False when the process did not bind a socket of
+         *     its own (an embedder, a test, the schema generator).
          */
         SettingsView: {
             /** Config Path */
@@ -1598,6 +1945,11 @@ export interface components {
             network: components["schemas"]["NetworkView"];
             /** Providers */
             providers: components["schemas"]["ProviderView"][];
+            /**
+             * Restart Required
+             * @default false
+             */
+            restart_required: boolean;
             server: components["schemas"]["ServerView"];
         };
         /**
@@ -1627,19 +1979,10 @@ export interface components {
             /** Key Env */
             key_env: string;
         };
-        /** StatsSnapshot */
-        StatsSnapshot: {
-            /** Days */
-            days: components["schemas"]["DayRow"][];
-            /** Failures */
-            failures: number;
-            grand: components["schemas"]["Grand"];
-            /** Models */
-            models: components["schemas"]["UsageRow"][];
-            /** Requests */
-            requests: number;
-            /** Samples */
-            samples: components["schemas"]["Sample"][];
+        /** StatsReset */
+        StatsReset: {
+            /** Cleared At */
+            cleared_at: string;
         };
         /** UnavailableReset */
         UnavailableReset: {
@@ -1647,17 +1990,25 @@ export interface components {
             cleared: number;
         };
         /**
-         * UsageRow
-         * @description One model's lifetime totals; the rates come from the retained days.
+         * UsageBreakdownRow
+         * @description One model, provider, ``provider/account`` or origin over the range.
          */
-        UsageRow: {
-            /** Avg Ttft Ms */
-            avg_ttft_ms: number | null;
+        UsageBreakdownRow: {
+            /**
+             * Account
+             * @default
+             */
+            account: string;
             /**
              * Cache Read
              * @default 0
              */
             cache_read: number;
+            /**
+             * Cache Write
+             * @default 0
+             */
+            cache_write: number;
             /**
              * Calls
              * @default 0
@@ -1673,10 +2024,71 @@ export interface components {
              * @default 0
              */
             input: number;
-            /** Model */
-            model: string;
-            /** Name */
-            name: string;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Last At */
+            last_at: string | null;
+            /**
+             * No Usage
+             * @default 0
+             */
+            no_usage: number;
+            /**
+             * Output
+             * @default 0
+             */
+            output: number;
+            /**
+             * Provider
+             * @default
+             */
+            provider: string;
+            /**
+             * Reasoning
+             * @default 0
+             */
+            reasoning: number;
+            /** Tps */
+            tps: number | null;
+            /** Ttft Avg Ms */
+            ttft_avg_ms: number | null;
+            /** Ttft P50 Ms */
+            ttft_p50_ms: number | null;
+            /** Ttft P95 Ms */
+            ttft_p95_ms: number | null;
+        };
+        /**
+         * UsagePoint
+         * @description One bucket of the series: ``start`` is ``YYYY-MM-DD`` for days, an ISO local datetime for hours.
+         */
+        UsagePoint: {
+            /**
+             * Cache Read
+             * @default 0
+             */
+            cache_read: number;
+            /**
+             * Cache Write
+             * @default 0
+             */
+            cache_write: number;
+            /**
+             * Calls
+             * @default 0
+             */
+            calls: number;
+            /**
+             * Failed
+             * @default 0
+             */
+            failed: number;
+            /**
+             * Input
+             * @default 0
+             */
+            input: number;
             /**
              * Output
              * @default 0
@@ -1687,8 +2099,88 @@ export interface components {
              * @default 0
              */
             reasoning: number;
+            /** Start */
+            start: string;
             /** Tps */
             tps: number | null;
+            /** Ttft Avg Ms */
+            ttft_avg_ms: number | null;
+        };
+        /** UsageReport */
+        UsageReport: {
+            /** By Account */
+            by_account: components["schemas"]["UsageBreakdownRow"][];
+            /** By Model */
+            by_model: components["schemas"]["UsageBreakdownRow"][];
+            /** By Origin */
+            by_origin: components["schemas"]["UsageBreakdownRow"][];
+            /** By Provider */
+            by_provider: components["schemas"]["UsageBreakdownRow"][];
+            /** Failures */
+            failures: number;
+            /**
+             * Granularity
+             * @enum {string}
+             */
+            granularity: "hour" | "day";
+            latency: components["schemas"]["LatencyStats"];
+            lifetime: components["schemas"]["UsageTotals"];
+            previous: components["schemas"]["UsageTotals"];
+            /** Range */
+            range: string;
+            /** Requests */
+            requests: number;
+            /** Series */
+            series: components["schemas"]["UsagePoint"][];
+            /** Since */
+            since: string;
+            totals: components["schemas"]["UsageTotals"];
+        };
+        /**
+         * UsageTotals
+         * @description Token and call counts. ``input`` is prompt tokens including cache reads and writes.
+         */
+        UsageTotals: {
+            /**
+             * Cache Read
+             * @default 0
+             */
+            cache_read: number;
+            /**
+             * Cache Write
+             * @default 0
+             */
+            cache_write: number;
+            /**
+             * Calls
+             * @default 0
+             */
+            calls: number;
+            /**
+             * Failed
+             * @default 0
+             */
+            failed: number;
+            /**
+             * Input
+             * @default 0
+             */
+            input: number;
+            /**
+             * No Usage
+             * @default 0
+             */
+            no_usage: number;
+            /**
+             * Output
+             * @default 0
+             */
+            output: number;
+            /**
+             * Reasoning
+             * @default 0
+             */
+            reasoning: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -1788,6 +2280,26 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": components["schemas"]["CatalogEvent"];
+                };
+            };
+        };
+    };
+    list_channels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelsReport"];
                 };
             };
         };
@@ -2712,6 +3224,37 @@ export interface operations {
     };
     get_stats: {
         parameters: {
+            query?: {
+                range?: "24h" | "7d" | "30d" | "90d";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageReport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_stats: {
+        parameters: {
             query?: never;
             header?: never;
             path?: never;
@@ -2725,7 +3268,66 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["StatsSnapshot"];
+                    "application/json": components["schemas"]["StatsReset"];
+                };
+            };
+        };
+    };
+    list_stats_calls: {
+        parameters: {
+            query?: {
+                limit?: number;
+                /** @description Return calls older than this seq (the previous page's `next`). */
+                before?: number | null;
+                model?: string | null;
+                provider?: string | null;
+                /** @description An account id, or `provider/account`. */
+                account?: string | null;
+                origin?: string | null;
+                ok?: boolean | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_stats_live: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["LiveEvent"];
                 };
             };
         };

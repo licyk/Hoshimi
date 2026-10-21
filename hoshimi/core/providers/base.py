@@ -20,6 +20,9 @@ from hoshimi.core.net.client import operation
 
 logger = logging.getLogger(__name__)
 
+RouteCallback = Callable[[str, str, int], None]
+"""``on_route(provider_id, account_id, attempt)``: which account answered a turn."""
+
 
 class ProviderError(UpstreamError):
     """Upstream failure with an HTTP status and body."""
@@ -406,9 +409,9 @@ class Provider(ABC):
         """
         return self.accounts
 
-    def stream(self, model: str, body: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    def stream(self, model: str, body: dict[str, Any], *, on_route: RouteCallback | None = None) -> Iterator[dict[str, Any]]:
         """Yield normalized chunks, rotating accounts on quota/auth errors."""
-        return self.stream_using(model, body, self.stream_raw)
+        return self.stream_using(model, body, self.stream_raw, on_route=on_route)
 
     def messages_endpoint(self, account: Account, model: str, *, count_only: bool = False) -> str | None:
         """Return an account's native Messages URL, or require translation."""
@@ -425,8 +428,17 @@ class Provider(ABC):
         send: Callable[[Account, str, dict[str, Any]], Iterator[dict[str, Any]]],
         *,
         candidates: list[Account] | None = None,
+        on_route: RouteCallback | None = None,
     ) -> Iterator[dict[str, Any]]:
-        """Share credential rotation and retry policy between inference protocols."""
+        """Share credential rotation and retry policy between inference protocols.
+
+        ``on_route(provider_id, account_id, attempt)`` is told which account
+        answered, when that attempt yields its *first* chunk — not when it is
+        picked — so a turn that rotated past a refusal reports the account
+        that actually served it, and ``attempt`` counts every account asked
+        (including another pass after a backoff). It observes; the chunks are
+        untouched.
+        """
         candidates = self._stream_candidates(model) if candidates is None else candidates
         if not candidates:
             raise ProviderError(401, f"No accounts configured for provider {self.id!r}.")
@@ -437,6 +449,7 @@ class Provider(ABC):
         attempts = min(len(candidates), getattr(self, "max_retries", len(candidates)))
         emitted = False
         retries_left = self.backoff_retries
+        asked = 0
 
         while True:
             account = self._pick_account(tried, candidates)
@@ -461,11 +474,13 @@ class Provider(ABC):
             elif len(tried) >= attempts:
                 break
             tried.add(account.id)
+            asked += 1
             iterator: Iterator[dict[str, Any]] | None = None
             try:
                 # Consume lazily; quota errors can also surface mid-stream.
                 revision = account.auth_revision
                 iterator = send(account, model, body)
+                answered = False
                 while True:
                     try:
                         with operation("inference"):
@@ -473,6 +488,10 @@ class Provider(ABC):
                     except StopIteration:
                         break
                     emitted = True
+                    if not answered:
+                        answered = True
+                        if on_route is not None:
+                            on_route(self.id, account.id, asked)
                     yield chunk
                 return
             except ModelSaturated:

@@ -21,9 +21,6 @@ export const useNetworkDiagnostics = () => useQuery({
 /** The capability catalogue: every id with its effort menu and its last availability verdict. */
 export const useModelSpecs = () => useCatalog(catalogSpecs);
 
-/** What this gateway served: per-day and per-model totals, plus the recent calls. */
-export const useStats = () => useQuery({ queryKey: keys.stats, queryFn: () => unwrap(api.GET('/api/v1/stats')) });
-
 /** The last probe round: verdicts here, and the models row re-read when a round ends. */
 export const useProbe = () =>
   useQuery({
@@ -60,6 +57,7 @@ export function useUpdateSettings() {
       qc.invalidateQueries({ queryKey: keys.providers });
       qc.invalidateQueries({ queryKey: keys.meta });
       qc.invalidateQueries({ queryKey: keys.catalog });
+      qc.invalidateQueries({ queryKey: keys.channels });
     },
   });
 }

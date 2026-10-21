@@ -12,7 +12,7 @@ vi.mock('@/api/queries/app', () => ({
 vi.mock('@/ui', () => {
   const slot = { template: '<div><slot /></div>' };
   return {
-    icons: {}, SelectField: slot, Skeleton: slot, EmptyState: slot,
+    icons: {}, SelectField: slot, PickerMenu: slot, TRANSITIONS: { list: 'list' }, Skeleton: slot, EmptyState: slot,
     FieldRow: { template: '<div><slot /><slot name="end" /></div>' },
     AppButton: { props: ['disabled'], template: '<button :disabled="disabled" @click="$emit(\'click\')"><slot /></button>' },
     IconButton: { props: ['label', 'disabled'], template: '<button :aria-label="label" :disabled="disabled" @click="$emit(\'click\')" />' },

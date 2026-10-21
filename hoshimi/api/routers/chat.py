@@ -22,6 +22,7 @@ from hoshimi.core.chunks import (
     new_completion_id,
     new_response_id,
 )
+from hoshimi.core.context import Services
 from hoshimi.core.errors import HoshimiError, UpstreamError, ValidationError
 from hoshimi.core.translate.responses import ResponsesRequestError, responses_to_chat
 
@@ -62,13 +63,18 @@ def create_chat_completion(
     services: ServicesDep,
     body: Annotated[dict[str, Any], Body(description="OpenAI Chat Completions request")],
 ) -> Any:
+    return chat_completion(services, body, origin="chat")
+
+
+def chat_completion(services: Services, body: dict[str, Any], *, origin: str) -> Any:
+    """One Chat Completions turn; ``origin`` is what the usage stats file it under."""
     model, body = prepare_request(services, body)
     stream = bool(body.get("stream", True))
 
     completion_id = new_completion_id()
     created = int(time.time())
     chunks = emit_chat_chunks(
-        tracked_chunks(services, model, body, origin="chat"),
+        tracked_chunks(services, model, body, origin=origin, stream=stream),
         model=model,
         completion_id=completion_id,
         created=created,
@@ -113,7 +119,7 @@ def create_response(
 
     response_id = new_response_id()
     created = int(time.time())
-    chunks = tracked_chunks(services, model, chat_body, origin="responses")
+    chunks = tracked_chunks(services, model, chat_body, origin="responses", stream=stream)
 
     if not stream:
         try:

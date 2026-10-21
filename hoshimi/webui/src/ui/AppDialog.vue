@@ -3,7 +3,7 @@ import { nextTick, ref, watch } from 'vue';
 import IconButton from '@/ui/IconButton.vue';
 import { X } from '@/ui/icons';
 import { containerFrom } from '@/ui/motion/transitions';
-import { trapFocus, useLayer } from '@/ui/useLayer';
+import { useLayer } from '@/ui/layers';
 
 /**
  * A modal dialog built from the tokens. With ``fromRect`` it grows from that rectangle (the
@@ -14,31 +14,18 @@ const open = defineModel<boolean>('open', { default: false });
 const emit = defineEmits<{ closed: [] }>();
 const panel = ref<HTMLElement | null>(null);
 const motionStyle = ref<Record<string, string>>({});
-let previousFocus: HTMLElement | null = null;
-// Escape and Tab come through the layer, so a menu or the viewer open above the dialog keeps them.
-function onKey(event: KeyboardEvent) {
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    open.value = false;
-  }
-  trapFocus(event, panel.value);
-}
-useLayer(() => open.value, onKey);
+// Escape, a click outside, focus in and back out, and the page made inert are the layer's.
+const { zIndex } = useLayer({ kind: 'dialog', modal: true, open: () => open.value, close: () => (open.value = false), elements: () => [panel.value], initialFocus: () => panel.value });
 
 watch(
   open,
   async (value) => {
-    if (value) {
-      previousFocus = document.activeElement as HTMLElement | null;
-      motionStyle.value = {};
-      await nextTick();
-      // Offsets ignore the enter transform already applied, unlike getBoundingClientRect().
-      const p = panel.value;
-      motionStyle.value = p ? containerFrom(props.fromRect, new DOMRect(p.offsetLeft, p.offsetTop, p.offsetWidth, p.offsetHeight)) : {};
-      panel.value?.focus();
-    } else {
-      previousFocus?.focus?.();
-    }
+    if (!value) return;
+    motionStyle.value = {};
+    await nextTick();
+    // Offsets ignore the enter transform already applied, unlike getBoundingClientRect().
+    const p = panel.value;
+    motionStyle.value = p ? containerFrom(props.fromRect, new DOMRect(p.offsetLeft, p.offsetTop, p.offsetWidth, p.offsetHeight)) : {};
   },
   { immediate: true },
 );
@@ -47,10 +34,10 @@ watch(
 <template>
   <Teleport to="body">
     <Transition name="scrim">
-      <div v-if="open" class="scrim" @click="open = false" />
+      <div v-if="open" class="scrim" :style="{ zIndex }" />
     </Transition>
     <Transition name="container" @after-leave="emit('closed')">
-      <div v-if="open" class="layer" @click.self="open = false">
+      <div v-if="open" class="layer" :style="{ zIndex }">
         <section ref="panel" class="dialog" :class="width" role="dialog" aria-modal="true" :aria-label="title" tabindex="-1" :style="motionStyle">
           <header v-if="title || $slots.header" class="head">
             <slot name="header"><h2 class="type-headline-small title">{{ title }}</h2></slot>
@@ -65,10 +52,10 @@ watch(
 </template>
 
 <style scoped>
-.scrim { position: fixed; inset: 0; background: color-mix(in srgb, var(--md-sys-color-scrim) 32%, transparent); z-index: var(--app-z-dialog); }
+.scrim { position: fixed; inset: 0; background: color-mix(in srgb, var(--md-sys-color-scrim) 32%, transparent); }
 /* The explicit minmax(0, …) column is what keeps a panel with wide content — a long file name, a
    metadata table — inside the window instead of letting the track grow to its minimum size. */
-.layer { position: fixed; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; padding: var(--app-space-4); z-index: var(--app-z-dialog); }
+.layer { position: fixed; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; padding: var(--app-space-4); }
 .dialog {
   display: flex; flex-direction: column; max-height: calc(100vh - 32px); width: 100%; min-width: 0; outline: none;
   background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface);

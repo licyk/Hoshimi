@@ -5,7 +5,7 @@ import { useModelSpecs, useModels, useProbe, useProviders, useStartProbe } from 
 import { PROBE_STATES, contextWindow, probeTone } from '@/format';
 import { useI18n } from '@/i18n';
 import CatalogStatus from '@/components/CatalogStatus.vue';
-import { AppButton, Badge, EmptyState, IconButton, SearchField, SelectField, Skeleton, Surface, icons, useSnackbar } from '@/ui';
+import { AppButton, AppIcon, Badge, DataTable, EmptyState, IconButton, PageSection, SearchField, SelectField, Skeleton, Toolbar, Tooltip, icons, useSnackbar, type Column, type SortState } from '@/ui';
 
 const { t } = useI18n();
 const router = useRouter();
@@ -116,87 +116,92 @@ async function copy(text: string) {
   }
 }
 const openInPlayground = (id: string) => router.push({ path: '/playground', query: { model: id } });
+
+// One grid for every model: long ids are cut with the full id on hover, never wrapping the row
+// into a stack of badges; what a model can do is three small marks, its verdict one badge.
+const sort = ref<SortState | null>(null);
+const columns = computed<Column[]>(() => [
+  { key: 'id', label: t('models.id'), sortable: true },
+  { key: 'owner', label: t('models.owner'), width: 'minmax(0, 0.5fr)', sortable: true, minWidth: 720 },
+  { key: 'context', label: t('models.context'), align: 'end', width: '80px', sortable: true, minWidth: 900 },
+  { key: 'caps', label: t('models.capabilities'), width: '112px', minWidth: 560 },
+  { key: 'state', label: t('models.availability'), width: '120px', sortable: true },
+  { key: 'actions', label: '', width: '96px' },
+]);
+const capabilityList = (m: Row) => [
+  ...(m.reasoning ? [{ key: 'reasoning', icon: icons.Brain, label: m.efforts ? `${t('models.reasoning')} · ${t('models.effortCount', { n: m.efforts })}` : t('models.reasoning') }] : []),
+  ...(m.vision ? [{ key: 'vision', icon: icons.Eye, label: t('models.vision') }] : []),
+  ...(m.tools ? [{ key: 'tools', icon: icons.Wrench, label: t('models.tools') }] : []),
+];
+const stateValue = (m: Row) => (m.unavailable ? 'unavailable' : (m.state ?? ''));
+const tableValue = (m: Row, key: string): unknown => (key === 'state' ? stateValue(m) : key === 'context' ? m.context || null : (m as unknown as Record<string, unknown>)[key]);
 </script>
 
 <template>
   <div class="models">
-    <div class="head">
-      <p class="type-body-medium muted">
-        {{ t('models.count', { n: rows.length }) }}
-        <template v-if="available"> · {{ t('models.availableCount', { n: available }) }}</template>
-      </p>
-      <div class="head-actions">
+    <Toolbar>
+      <SearchField v-model="query" class="search" :label="t('models.search')" :placeholder="t('models.searchPlaceholder')" />
+      <SelectField v-model="owner" class="filter" :label="t('models.filter')" :options="ownerOptions" />
+      <SelectField v-if="stateOptions.length > 1" v-model="state" class="filter" :label="t('models.availability')" :options="stateOptions" />
+      <template #end>
         <AppButton variant="tonal" :icon="icons.ScanSearch" :loading="running" @click="runProbe">
           {{ running ? t('models.probeRunning') : t('models.probe') }}
         </AppButton>
         <IconButton :icon="icons.RefreshCw" :label="t('common.refresh')" :spin="models.isFetching.value" @click="models.refetch()" />
-      </div>
-    </div>
+      </template>
+    </Toolbar>
 
     <CatalogStatus />
 
-    <div class="filters">
-      <SearchField v-model="query" class="search" :placeholder="t('models.searchPlaceholder')" />
-      <SelectField v-model="owner" class="filter" :label="t('models.filter')" :options="ownerOptions" />
-      <SelectField v-if="stateOptions.length > 1" v-model="state" class="filter" :label="t('models.availability')" :options="stateOptions" />
-    </div>
-
-    <Surface :level="0" shape="large" class="section">
-      <div v-if="!rows.length && models.isFetching.value" class="list">
+    <PageSection :title="t('models.title')" :subtitle="available ? `${t('models.count', { n: rows.length })} · ${t('models.availableCount', { n: available })}` : t('models.count', { n: rows.length })" :icon="icons.Layers">
+      <div v-if="!rows.length && models.isFetching.value" class="skeletons">
         <Skeleton v-for="i in 5" :key="i" height="44px" shape="medium" />
       </div>
-      <EmptyState
-        v-else-if="!rows.length"
-        :icon="icons.Layers"
-        :title="t('models.empty')"
-        :text="t('models.emptyText')"
-      />
+      <EmptyState v-else-if="!rows.length" :icon="icons.Layers" :title="t('models.empty')" :text="t('models.emptyText')" />
       <EmptyState v-else-if="!visible.length" :icon="icons.Search" :title="t('models.none')" :text="t('models.noneText')" />
-      <ul v-else class="list" role="list">
-        <li v-for="m in visible" :key="m.id" class="row">
-          <div class="row-text">
-            <span class="id mono type-body-medium">{{ m.id }}</span>
-            <span class="owner type-body-small muted">
-              {{ m.name && m.name !== m.id ? `${m.name} · ` : '' }}{{ displayName(m.owner) || m.owner || '—' }}
-              <template v-if="m.context"> · {{ contextWindow(m.context) }}</template>
+      <DataTable v-else v-model:sort="sort" :columns="columns" :rows="visible" :row-key="(m) => m.id" :value="tableValue" :label="t('models.title')" :row-height="56">
+        <template #cell-id="{ row }">
+          <span class="name-cell">
+            <span class="text mono" :title="row.id">{{ row.id }}</span>
+            <span class="type-body-small muted text">
+              <template v-if="row.name && row.name !== row.id">{{ row.name }}</template>
+              <template v-if="row.free === true"> · {{ t('models.free') }}</template>
             </span>
-          </div>
-          <!-- The ban outranks the round: it says what the gateway will do to the
-               next call, whereas the round only says what the last one did. -->
-          <Badge v-if="m.unavailable" tone="error" :value="t('models.states.unavailable')" />
-          <Badge v-else-if="m.state" :tone="probeTone(m.state)" :value="t(`models.states.${m.state}`)" />
-          <!-- `=== true`, not truthiness: an unstated price is not a paid one,
-               and the gateway shows a badge it can actually stand behind. -->
-          <Badge v-if="m.free === true" tone="primary" :value="t('models.free')" />
-          <Badge v-if="m.reasoning" tone="neutral" :value="t('models.reasoning')" />
-          <Badge v-if="m.vision" tone="neutral" :value="t('models.vision')" />
-          <Badge v-if="m.tools !== null" tone="neutral" :value="t(m.tools ? 'models.tools' : 'models.noTools')" />
-          <Badge v-if="m.efforts" tone="neutral" :value="t('models.effortCount', { n: m.efforts })" />
-          <IconButton :icon="icons.Copy" :label="t('models.copyId')" @click="copy(m.id)" />
-          <AppButton variant="tonal" :icon="icons.Sparkles" @click="openInPlayground(m.id)">{{ t('models.use') }}</AppButton>
-        </li>
-      </ul>
-    </Surface>
+          </span>
+        </template>
+        <template #cell-owner="{ row }"><span class="text muted">{{ displayName(row.owner) || row.owner || '—' }}</span></template>
+        <template #cell-context="{ row }">{{ contextWindow(row.context) || '—' }}</template>
+        <template #cell-caps="{ row }">
+          <span class="caps">
+            <Tooltip v-for="c in capabilityList(row)" :key="c.key" :text="c.label"><AppIcon :icon="c.icon" :size="18" :label="c.label" /></Tooltip>
+            <span v-if="row.tools === false" class="type-body-small muted">{{ t('models.noTools') }}</span>
+          </span>
+        </template>
+        <template #cell-state="{ row }">
+          <!-- The ban outranks the round: it says what the gateway will do to the next call,
+               whereas the round only says what the last one did. -->
+          <Badge v-if="row.unavailable" tone="error" :value="t('models.states.unavailable')" />
+          <Badge v-else-if="row.state" :tone="probeTone(row.state)" :value="t(`models.states.${row.state}`)" />
+          <span v-else class="type-body-small muted">{{ t('models.states.none') }}</span>
+        </template>
+        <template #cell-actions="{ row }">
+          <IconButton :icon="icons.Copy" :label="t('models.copyId')" @click="copy(row.id)" />
+          <IconButton :icon="icons.Sparkles" :label="t('models.use')" @click="openInPlayground(row.id)" />
+        </template>
+      </DataTable>
+    </PageSection>
   </div>
 </template>
 
 <style scoped>
-.models { display: flex; flex-direction: column; gap: var(--app-space-4); width: 100%; padding: var(--app-space-4) var(--app-space-6) var(--app-space-8); }
-.head { display: flex; align-items: center; justify-content: space-between; gap: var(--app-space-4); flex-wrap: wrap; }
-.head-actions { display: flex; align-items: center; gap: var(--app-space-2); }
-h1 { margin: 0; }
-p { margin: 0; }
-.filters { display: flex; align-items: flex-start; gap: var(--app-space-3); flex-wrap: wrap; }
-.search { flex: 1 1 320px; min-width: 0; }
-.filter { flex: 0 1 240px; }
-.section { padding: var(--app-space-3); }
-.list { display: flex; flex-direction: column; gap: var(--app-space-1); margin: 0; padding: 0; list-style: none; }
-.row { display: flex; align-items: center; gap: var(--app-space-3); padding: var(--app-space-2) var(--app-space-3); border-radius: var(--md-sys-shape-corner-small); background: var(--md-sys-color-surface-container); }
-.row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.id { overflow-wrap: anywhere; }
-.owner { overflow-wrap: anywhere; }
-.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-@media (max-width: 599px) {
+.models { display: flex; flex-direction: column; gap: var(--app-space-4); width: 100%; padding: var(--app-space-4) var(--app-space-6) var(--app-space-8); min-width: 0; }
+.search { flex: 1 1 280px; min-width: 0; }
+.filter { flex: 0 1 220px; }
+.skeletons { display: flex; flex-direction: column; gap: var(--app-space-1); }
+.name-cell { display: flex; flex-direction: column; min-width: 0; }
+.text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.caps { display: inline-flex; align-items: center; gap: var(--app-space-2); color: var(--md-sys-color-on-surface-variant); }
+@container app-content (max-width: 599px) {
   .models { padding: var(--app-space-3); }
 }
 </style>

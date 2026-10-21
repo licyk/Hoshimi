@@ -8,7 +8,7 @@ cloud services and local models through one API and Web UI.
 - **One API** for Chat Completions, Responses and Anthropic Messages.
 - **Account management** with API keys, browser/device login, renewal and rotation.
 - **Model discovery** with capabilities, reasoning menus and availability probes.
-- **Usage visibility** with token totals, first-token latency and generation speed.
+- **Live usage** with calls in flight, token and cache breakdowns, first-token latency and generation speed.
 - **A multilingual Web UI** for channels, models, chat, usage and settings.
 
 ## Quick start

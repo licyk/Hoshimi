@@ -162,11 +162,22 @@ header values. Passive quota is in memory and observation cannot fail generation
 
 ## Usage statistics
 
-`GET /api/v1/stats` reports daily/model totals, lifetime rows, requests/failures,
-TTFT, generation speed and the last 200 calls. `stats.json` survives restart;
-daily rows older than 120 days expire, lifetime rows remain.
+`GET /api/v1/stats?range=24h|7d|30d|90d` reports one range: totals, the previous
+equal-length period, a zero-filled hourly (24h) or daily series, TTFT average/p50/p95,
+generation speed, and breakdowns by model, provider, account and origin. Lifetime
+totals and request/failure counts ride along. `GET /api/v1/stats/calls` pages the
+last 1000 calls (newest first, `before` cursor), each with the account that answered,
+attempts, cache reads/writes, finish reason and a short error. `GET /api/v1/stats/live`
+streams the calls in flight; `DELETE /api/v1/stats` clears everything.
 
-Chat, Responses and Messages each produce one record per request. Routing failures
+`stats.json` (version 2; a version 1 file is migrated in place) survives restart and is
+written at most every two seconds, plus on shutdown. Hourly buckets are kept 72 hours,
+daily buckets 120 days; lifetime rows remain. Cache writes are read from
+`prompt_tokens_details.cache_write_tokens` (or `cache_creation_tokens`, Anthropic's
+`cache_creation_input_tokens`); DeepSeek's `prompt_cache_hit_tokens` counts as a cache read.
+
+Chat, Responses, Messages, classification and the playground each produce one record
+per request. Routing failures
 count as failures; a reader disconnecting is a served call rather than a gateway
 failure. Records include effective effort and origin. Decode windows below 250 ms
 or speeds above 250 tokens/second are excluded from averages and reported as

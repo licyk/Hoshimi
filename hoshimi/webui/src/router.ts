@@ -5,7 +5,9 @@ const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/overview' },
   { path: '/overview', name: 'overview', component: () => import('@/views/OverviewView.vue') },
   { path: '/models', name: 'models', component: () => import('@/views/ModelsView.vue') },
-  { path: '/channels', name: 'channels', component: () => import('@/views/ChannelsView.vue') },
+  // The chosen channel is part of the address, so the list-detail layout survives a reload and the
+  // back gesture returns from a channel to the list on a narrow window.
+  { path: '/channels/:id?', name: 'channels', component: () => import('@/views/ChannelsView.vue'), props: true },
   { path: '/usage', name: 'usage', component: () => import('@/views/UsageView.vue') },
   { path: '/playground', name: 'playground', component: () => import('@/views/PlaygroundView.vue') },
   { path: '/settings', name: 'settings', component: () => import('@/views/SettingsView.vue') },

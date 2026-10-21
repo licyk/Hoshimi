@@ -130,9 +130,17 @@ CodeBuddy `429` 中 `14003` 且仅提供 `SWITCH_MODEL` 时，视为模型拥堵
 
 ## 用量统计
 
-`GET /api/v1/stats` 返回日期和模型总量、长期累计、请求和失败数、首字延迟、生成速度，
-以及最近 200 次请求。`stats.json` 跨重启保存，120 天前的日期行清除，长期累计保留。
+`GET /api/v1/stats?range=24h|7d|30d|90d` 返回一个区间：总量、上一个等长区间、补零的
+按小时（24h）或按日序列、首字延迟均值/p50/p95、生成速度，以及按模型、供应商、账户、来源的
+拆分，并附长期累计与请求/失败数。`GET /api/v1/stats/calls` 分页读取最近 1000 次调用
+（新的在前，`before` 游标），含实际应答账户、尝试次数、缓存读写、结束原因和简短错误。
+`GET /api/v1/stats/live` 推送进行中的调用；`DELETE /api/v1/stats` 清空全部统计。
 
-Chat、Responses、Messages 每次请求各记一行；路由失败计为失败，读者断开连接计为
+`stats.json`（第 2 版，第 1 版文件会原地迁移）跨重启保存，最多每两秒写一次，关闭时补写。
+小时桶保留 72 小时，日期桶保留 120 天，长期累计保留。缓存写入读取
+`prompt_tokens_details.cache_write_tokens`（或 `cache_creation_tokens`、Anthropic 的
+`cache_creation_input_tokens`）；DeepSeek 的 `prompt_cache_hit_tokens` 计为缓存读取。
+
+Chat、Responses、Messages、分类和 Playground 每次请求各记一行；路由失败计为失败，读者断开连接计为
 已服务而非网关失败。记录实际强度与来源。解码窗口不足 250 毫秒或速度超过每秒
 250 Token 时，不计入均值并返回 `null`，避免将不可测值展示为高速结果。

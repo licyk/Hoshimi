@@ -76,7 +76,16 @@ def serve(
 
     app = create_app(services, bound_host=host, bound_port=actual_port, serve_ui=serve_ui)
     config_ = uvicorn.Config(app=app, log_level="warning", lifespan="on")
-    server = uvicorn.Server(config_)
+
+    class Server(uvicorn.Server):
+        async def shutdown(self, sockets=None) -> None:  # type: ignore[no-untyped-def]
+            # A live-stats stream never ends on its own, and a graceful
+            # shutdown waits for every open response: end them first, or
+            # Ctrl+C would sit there until a second one.
+            services.stats.live.close()
+            await super().shutdown(sockets)
+
+    server = Server(config_)
     write_runtime_file(services.data_dir, host, actual_port, url)
     print(f"SERVER_READY url={url}", flush=True)
     logger.info("Hoshimi running on %s", url)

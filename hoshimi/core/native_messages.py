@@ -136,19 +136,30 @@ class MessagesObserver:
                 if block.get("type") in ("tool_use", "server_tool_use"):
                     yield {"type": "tool_call_start"}
                 elif block.get("text") or block.get("thinking"):
-                    yield {"type": "reasoning_delta" if block.get("type") == "thinking" else "text_delta"}
+                    thinking = block.get("type") == "thinking"
+                    yield {"type": "reasoning_delta" if thinking else "text_delta", "text": _text(block.get("thinking" if thinking else "text"))}
         elif kind == "content_block_delta":
             delta = event.get("delta")
             if isinstance(delta, dict):
-                mapped = {"text_delta": "text_delta", "thinking_delta": "reasoning_delta", "input_json_delta": "tool_call_delta"}.get(delta.get("type"))
-                if mapped:
-                    yield {"type": mapped}
+                kind = delta.get("type")
+                # Lengths ride along so the live view can count what streamed;
+                # nothing downstream of the observer forwards these chunks.
+                if kind == "text_delta":
+                    yield {"type": "text_delta", "text": _text(delta.get("text"))}
+                elif kind == "thinking_delta":
+                    yield {"type": "reasoning_delta", "text": _text(delta.get("thinking"))}
+                elif kind == "input_json_delta":
+                    yield {"type": "tool_call_delta", "arguments": _text(delta.get("partial_json"))}
         elif kind == "error":
             self.terminal = True
             yield {"type": "error", "error": event.get("error") or "Upstream Messages error"}
         elif kind == "message_stop":
             self.terminal = True
             yield {"type": "finish"}
+
+
+def _text(value: Any) -> str:
+    return value if isinstance(value, str) else ""
 
 
 def stream_native_messages(provider: Provider, account: Account, model: str, context: MessagesRequest) -> Iterator[dict[str, Any]]:

@@ -98,6 +98,7 @@ export default defineConfig({
   },
   test: {
     environment: 'happy-dom',
+    setupFiles: ['src/test/setup.ts'],
     // Worker threads race each other creating their temporary directory on Windows and fail with
     // EPERM; the vm pool creates it once, in one process, and still isolates each file.
     pool: 'vmThreads',

@@ -8,12 +8,13 @@ withDefaults(defineProps<{ level?: 0 | 1 | 2 | 3 | 4; shape?: 'none' | 'small' |
 </template>
 
 <style scoped>
-.surface { color: var(--md-sys-color-on-surface); }
-.level-0 { background: var(--md-sys-color-surface); }
-.level-1 { background: var(--md-sys-color-surface-container-low); }
-.level-2 { background: var(--md-sys-color-surface-container); }
-.level-3 { background: var(--md-sys-color-surface-container-high); }
-.level-4 { background: var(--md-sys-color-surface-container-highest); }
+/* --app-surface-bg names this surface's tone for what sits on it and must match it (a sticky header). */
+.surface { color: var(--md-sys-color-on-surface); background: var(--app-surface-bg); }
+.level-0 { --app-surface-bg: var(--md-sys-color-surface); }
+.level-1 { --app-surface-bg: var(--md-sys-color-surface-container-low); }
+.level-2 { --app-surface-bg: var(--md-sys-color-surface-container); }
+.level-3 { --app-surface-bg: var(--md-sys-color-surface-container-high); }
+.level-4 { --app-surface-bg: var(--md-sys-color-surface-container-highest); }
 .shape-none { border-radius: var(--md-sys-shape-corner-none); }
 .shape-small { border-radius: var(--md-sys-shape-corner-small); }
 .shape-medium { border-radius: var(--md-sys-shape-corner-medium); }

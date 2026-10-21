@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PROBE_STATES, contextWindow, dayLabel, grouped, millis, probeTone, quotaBadge, rate, when } from '@/format';
+import { PROBE_STATES, bucketLabel, change, compact, contextWindow, dayLabel, duration, grouped, millis, percent, probeTone, quotaBadge, rate, ratio, when } from '@/format';
 
 describe('grouped', () => {
   it('groups digits the way a count is read', () => {
@@ -84,5 +84,22 @@ describe('quotaBadge', () => {
   });
   it('reports the rate limiting in place of a percentage it could not read', () => {
     expect(quotaBadge({ percent: null, stale: false, rateLimited: 3 })).toEqual({ kind: 'limited', tone: 'warning' });
+  });
+});
+
+describe('usage figures', () => {
+  it('compacts counts from a thousand up, and keeps small ones whole', () => {
+    expect([compact(0), compact(999), compact(1284), compact(12_900_000), compact(250_000), compact(null)]).toEqual(['0', '999', '1.3K', '12.9M', '250K', '—']);
+  });
+  it('turns shares into percentages and refuses to divide by nothing', () => {
+    expect([percent(0.4567), percent(1), percent(null), ratio(1, 0), ratio(1, 4)]).toEqual(['45.7%', '100%', '—', null, 0.25]);
+    expect([change(150, 100), change(5, 0)]).toEqual([0.5, null]);
+  });
+  it('says durations the way a person would', () => {
+    expect([duration(850), duration(12_400), duration(95_000), duration(120_000), duration(null)]).toEqual(['850 ms', '12.4 s', '1 min 35 s', '2 min', '—']);
+  });
+  it('labels a day bucket by its date and an hour bucket by its hour', () => {
+    expect(bucketLabel('2026-10-21', 'day')).toBe('10-21');
+    expect(bucketLabel('2026-10-21T14:00:00', 'hour')).toBe('14:00');
   });
 });

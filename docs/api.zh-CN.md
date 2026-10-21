@@ -56,8 +56,9 @@ Messages 详见 [Anthropic Agent 接入](anthropic-api.zh-CN.md)。
 | 接口组 | 用途 |
 | --- | --- |
 | `/app/version`、`/app/health`、`/app/meta` | 版本、健康、路径、配置标记和数量 |
-| `/settings`（`GET`、`PATCH`） | 读取脱敏配置，保存并应用更新 |
+| `/settings`（`GET`、`PATCH`） | 读取脱敏配置，保存并应用更新；`restart_required` 表示已保存的监听地址/端口需重启生效 |
 | `/providers`、`/provider-forms` | 供应商、账户摘要、凭据字段 |
+| `/channels` | 全部渠道及其账户、续期、冷却、被动配额、网络诊断、今日用量与状态（仅读内存，不请求上游） |
 | `/providers/{id}/accounts`（`POST`） | 校验并追加账户 |
 | `/providers/{id}/accounts/{account}`（`DELETE`） | 删除账户 |
 | `/stations` | `agg` 预设 |
@@ -67,7 +68,9 @@ Messages 详见 [Anthropic Agent 接入](anthropic-api.zh-CN.md)。
 | `/refresh`（`GET`、`POST`） | 读取或执行凭据续期 |
 | `/credits`、`/credits/claim`（签到用 `POST`） | 余额、被动配额和签到 |
 | `/login/providers`、`/login/start`、`/login/poll`、`/login/input`、`/login/cancel` | 浏览器与设备授权 |
-| `/stats` | 日期、模型和最近调用统计 |
+| `/stats?range=24h\|7d\|30d\|90d`（`GET`，`DELETE` 清空） | 区间总量、补零序列、延迟分位数，以及按模型、供应商、账户、来源的拆分 |
+| `/stats/calls` | 最近调用，新的在前；支持 `limit`、`before` 游标与筛选 |
+| `/stats/live` | SSE：先发送进行中调用的快照，再推送 `started`/`progress`/`finished` 事件 |
 | `/playground/*` | 使用工具密钥聊天，不暴露模型 API 密钥 |
 
 运行服务的 `/docs` 与 `/openapi.json` 提供完整字段和方法定义，启用鉴权时需要工具密钥。

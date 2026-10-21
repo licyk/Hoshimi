@@ -20,7 +20,8 @@ withDefaults(defineProps<{ icon: Component; size?: 18 | 20 | 24; label?: string;
 </template>
 
 <style scoped>
-.app-icon { flex: none; display: inline-block; vertical-align: middle; }
+/* Lucide icons are strokes; Material buttons fill slotted icons, which would turn them into blobs. */
+.app-icon { flex: none; display: inline-block; vertical-align: middle; fill: none; }
 .spin { animation: app-icon-spin 1s linear infinite; }
 @keyframes app-icon-spin { to { transform: rotate(360deg); } }
 </style>

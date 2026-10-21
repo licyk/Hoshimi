@@ -93,7 +93,7 @@ def test_native_extensions_and_error_metadata_are_not_rebuilt(services):
     assert response.headers["anthropic-ratelimit-unified-status"] == "allowed"
     assert "set-cookie" not in response.headers
     assert json.dumps(body) == original
-    sample = services.stats.snapshot()["samples"][-1]
+    sample = services.stats.calls(limit=1)[0][0]
     assert sample["origin"] == "messages" and sample["effort"] == "xhigh"
 
 
@@ -115,7 +115,7 @@ def test_upstream_errors_and_retry_headers_survive_exactly(services, status):
     assert response.headers["retry-after"] == "7" and response.headers["x-should-retry"] == "false"
     assert response.headers["request-id"] == "req_error"
     assert len(calls) == 1
-    assert services.stats.snapshot()["samples"][-1]["ok"] is False
+    assert services.stats.calls(limit=1)[0][0]["ok"] is False
 
 
 def test_native_rotation_uses_the_next_compatible_account_and_records_one_turn(services):
@@ -133,7 +133,8 @@ def test_native_rotation_uses_the_next_compatible_account_and_records_one_turn(s
         response = client.post("/v1/messages", json=request(), headers={"x-api-key": "gateway-key"})
     assert response.status_code == 200
     assert calls == ["bad", "good"]
-    assert len(services.stats.snapshot()["samples"]) == 1
+    assert len(services.stats.calls()[0]) == 1
+    assert services.stats.calls()[0][0]["attempts"] == 2
 
 
 class Fragments(httpx.SyncByteStream):
@@ -157,9 +158,9 @@ def test_native_sse_keeps_unknown_events_utf8_and_crlf_and_accounts_usage(servic
         response = client.post("/v1/messages", json=request(stream=True), headers={"x-api-key": "gateway-key"})
     assert response.status_code == 200 and response.content == raw
     assert response.headers["request-id"] == "req_stream" and stream.closed
-    sample = services.stats.snapshot()["samples"][-1]
+    sample = services.stats.calls(limit=1)[0][0]
     assert sample["input"] == 15 and sample["output"] == 2
-    assert services.stats.snapshot()["models"][0]["cache_read"] == 5
+    assert services.stats.report("24h")["by_model"][0]["cache_read"] == 5
     assert sample["ok"]
 
 
@@ -170,7 +171,7 @@ def test_truncated_native_sse_reports_error_without_a_successful_stop(services):
         response = client.post("/v1/messages", json=request(stream=True), headers={"x-api-key": "gateway-key"})
     assert b"event: error\n" in response.content and b"event: message_stop" not in response.content
     assert b'"incomplete"' not in response.content
-    assert services.stats.snapshot()["samples"][-1]["ok"] is False
+    assert services.stats.calls(limit=1)[0][0]["ok"] is False
 
 
 @pytest.mark.parametrize("status", [200, 404])
@@ -189,7 +190,7 @@ def test_native_token_count_or_marked_fallback_accepts_full_content(services, st
     assert (response.headers.get("x-hoshimi-token-count") == "estimate") == (status == 404)
     if status == 200:
         assert response.json() == {"input_tokens": 321}
-    assert not services.stats.snapshot()["samples"]
+    assert not services.stats.calls()[0]
 
 
 def test_closing_native_iterator_closes_its_response(services):

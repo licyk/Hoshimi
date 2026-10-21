@@ -571,21 +571,28 @@ def test_stats_endpoint_counts_what_was_served() -> None:
         assert refused.status_code == 404
         payload = client.get("/api/v1/stats").json()
         assert (payload["requests"], payload["failures"]) == (2, 1)
-        rows = {row["model"]: row for row in payload["models"]}
+        assert payload["range"] == "7d" and payload["granularity"] == "day"
+        rows = {row["key"]: row for row in payload["by_model"]}
         assert rows["fake-1"]["calls"] == 1
         assert rows["fake-1"]["failed"] == 0
         assert rows["nope-1"]["failed"] == 1
-        assert payload["grand"] == {"input": 1, "output": 2, "reasoning": 0, "calls": 2, "failed": 1}
+        assert payload["lifetime"] == {"input": 1, "output": 2, "reasoning": 0, "cache_read": 0, "cache_write": 0, "calls": 2, "failed": 1, "no_usage": 1}
+        assert payload["totals"] == payload["lifetime"]
 
-        day = payload["days"][-1]
-        assert day["day"] == datetime.now().astimezone().date().isoformat()
-        assert day["total"] == 3
-        assert {row["model"] for row in day["models"]} == {"fake-1", "nope-1"}
+        day = payload["series"][-1]
+        assert day["start"] == datetime.now().astimezone().date().isoformat()
+        assert (day["input"], day["output"], day["calls"]) == (1, 2, 2)
+        # The answered call is attributed to the account that served it; the
+        # refusal never reached one.
+        assert [row["key"] for row in payload["by_account"]] == ["fake/fake-0"]
+        assert payload["by_provider"][0]["label"] == "Fake"
 
         # The recent-call ring is what a "that answer vanished" report audits.
-        assert payload["samples"][-1]["model"] == "nope-1"
-        assert payload["samples"][-1]["ok"] is False
-        assert payload["samples"][0]["origin"] == "chat"
+        calls = client.get("/api/v1/stats/calls").json()["calls"]
+        assert calls[0]["model"] == "nope-1"
+        assert calls[0]["ok"] is False and calls[0]["error_code"] == "model_not_found"
+        assert calls[1]["origin"] == "chat" and calls[1]["stream"] is False
+        assert (calls[1]["provider"], calls[1]["account"], calls[1]["attempts"]) == ("fake", "fake-0", 1)
 
 
 def test_effort_sample_records_what_the_wire_carried() -> None:
@@ -611,7 +618,7 @@ def test_effort_sample_records_what_the_wire_carried() -> None:
             json={"model": "mimo-v2.6-flash-free", "stream": True, "messages": [{"role": "user", "content": "x"}]},
         )
         assert silent.status_code == 200
-        samples = client.get("/api/v1/stats").json()["samples"]
+        samples = client.get("/api/v1/stats/calls").json()["calls"][::-1]
 
     # The sample reports the rung the body carried; a caller who named none
     # sends none, and must not appear to have asked for the default.

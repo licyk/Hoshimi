@@ -9,6 +9,19 @@ type RefreshReport = components['schemas']['RefreshReport'];
 type LoginSession = components['schemas']['LoginSessionView'];
 export type PassiveQuota = components['schemas']['PassiveQuota'];
 
+/**
+ * Every channel with its accounts, their renewal state, allowance, network and today's usage, in
+ * one answer the server builds without asking any station. Balances need a round trip to the
+ * stations, so they stay a query of their own (``useBalances``), joined in by account.
+ */
+export const useChannels = () =>
+  useQuery({
+    queryKey: keys.channels,
+    queryFn: () => unwrap(api.GET('/api/v1/channels')),
+    // A renewal round that the timer is running shows up as it settles.
+    refetchInterval: (query) => (query.state.data?.auto_refresh ? 30_000 : false),
+  });
+
 /** Remaining balance (or quota window) per account; a lane without an endpoint is skipped. */
 export const useBalances = () => useQuery({ queryKey: keys.balances, queryFn: () => unwrap(api.GET('/api/v1/credits')) });
 
@@ -32,7 +45,10 @@ export function useClaimCredits() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (provider: string | null) => unwrap(api.POST('/api/v1/credits/claim', { body: provider ? { provider } : {} })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.balances }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: keys.balances });
+      qc.invalidateQueries({ queryKey: keys.channels });
+    },
   });
 }
 
@@ -44,6 +60,7 @@ export function useRefreshNow() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: keys.refresh });
       qc.invalidateQueries({ queryKey: keys.providers });
+      qc.invalidateQueries({ queryKey: keys.channels });
     },
   });
 }
@@ -55,6 +72,7 @@ export function useDeleteAccount() {
       unwrap(api.DELETE('/api/v1/providers/{provider_id}/accounts/{account_id}', { params: { path: { provider_id: provider, account_id: account } } })),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: keys.providers });
+      qc.invalidateQueries({ queryKey: keys.channels });
       qc.invalidateQueries({ queryKey: keys.refresh });
       qc.invalidateQueries({ queryKey: keys.balances });
       qc.invalidateQueries({ queryKey: keys.catalog });
@@ -70,6 +88,7 @@ export function useAddAccount() {
       unwrap(api.POST('/api/v1/providers/{provider_id}/accounts', { params: { path: { provider_id: provider } }, body: { account } })),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: keys.providers });
+      qc.invalidateQueries({ queryKey: keys.channels });
       qc.invalidateQueries({ queryKey: keys.settings });
       qc.invalidateQueries({ queryKey: keys.catalog });
     },
@@ -89,6 +108,7 @@ export function useLoginDone() {
   const qc = useQueryClient();
   return () => {
     qc.invalidateQueries({ queryKey: keys.providers });
+      qc.invalidateQueries({ queryKey: keys.channels });
     qc.invalidateQueries({ queryKey: keys.refresh });
     qc.invalidateQueries({ queryKey: keys.balances });
     qc.invalidateQueries({ queryKey: keys.catalog });

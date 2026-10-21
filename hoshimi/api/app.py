@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
 from hoshimi.api.errors import install_error_handlers
-from hoshimi.api.routers import app_info, catalog, chat, classification, credits, health, login, messages, models, playground, probe, providers, refresh, settings, stats
+from hoshimi.api.routers import app_info, catalog, channels, chat, classification, credits, health, login, messages, models, playground, probe, providers, refresh, settings, stats
 from hoshimi.api.security import SecurityMiddleware
 from hoshimi.api.static import SPAStaticFiles, web_dist_dir
 from hoshimi.core.context import Services
@@ -66,12 +66,16 @@ def create_app(
     app = FastAPI(title="Hoshimi", version=VERSION, lifespan=lifespan, docs_url=f"{prefix}/docs", redoc_url=None, openapi_url=f"{prefix}/openapi.json")
     app.state.services = services
     app.state.bound_port = bound_port
+    app.state.bound_host = bound_host
+    # What the socket was opened from, so the settings view can tell a saved
+    # host/port that still needs a restart; unknown when nothing was bound.
+    app.state.started_listen = (services.settings.host, services.settings.port) if bound_host is not None or bound_port is not None else None
     app.state.api_prefix = prefix
     install_error_handlers(app)
 
     # Management API under /api; inference protocols share /v1.
     app.include_router(health.router, prefix=prefix)
-    for module in (app_info, settings, providers, catalog, probe, stats, refresh, credits, login, playground):
+    for module in (app_info, settings, providers, channels, catalog, probe, stats, refresh, credits, login, playground):
         app.include_router(module.router, prefix=f"{prefix}/api")
     for module in INFERENCE_ROUTES:
         app.include_router(module.router, prefix=prefix)

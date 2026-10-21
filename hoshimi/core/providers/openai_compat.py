@@ -275,12 +275,38 @@ def _map_usage(usage: dict[str, Any]) -> dict[str, Any]:
         "completion_tokens": completion,
         "total_tokens": total,
     }
-    prompt_details = usage.get("prompt_tokens_details")
-    if isinstance(prompt_details, dict) and prompt_details.get("cached_tokens") is not None:
-        out["prompt_tokens_details"] = {"cached_tokens": prompt_details["cached_tokens"]}
+    cache = _cache_details(usage)
+    if cache:
+        out["prompt_tokens_details"] = cache
     completion_details = usage.get("completion_tokens_details")
     if isinstance(completion_details, dict) and completion_details.get("reasoning_tokens") is not None:
         out["completion_tokens_details"] = {"reasoning_tokens": completion_details["reasoning_tokens"]}
+    return out
+
+
+def _cache_details(usage: dict[str, Any]) -> dict[str, Any]:
+    """Prompt-cache reads and writes, across the dialects compatible stations speak.
+
+    OpenAI itself reports only ``prompt_tokens_details.cached_tokens``. The
+    stations in front of cache-writing models add the write side: OpenRouter
+    as ``prompt_tokens_details.cache_write_tokens``, others as
+    ``cache_creation_tokens`` there or Anthropic's top-level
+    ``cache_creation_input_tokens``. DeepSeek reports hits as a top-level
+    ``prompt_cache_hit_tokens``. All of them land in the one vocabulary the
+    rest of the gateway reads; a station that names none of them gets no
+    details at all, exactly as before.
+    """
+    details = usage.get("prompt_tokens_details")
+    details = details if isinstance(details, dict) else {}
+    out: dict[str, Any] = {}
+    for value in (details.get("cached_tokens"), usage.get("prompt_cache_hit_tokens"), usage.get("cache_read_input_tokens")):
+        if value is not None:
+            out["cached_tokens"] = value
+            break
+    for value in (details.get("cache_write_tokens"), details.get("cache_creation_tokens"), usage.get("cache_creation_input_tokens")):
+        if value is not None:
+            out["cache_write_tokens"] = value
+            break
     return out
 
 

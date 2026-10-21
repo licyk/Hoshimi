@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import AppIcon from '@/ui/AppIcon.vue';
-import { useLayer } from '@/ui/useLayer';
+import { useLayer } from '@/ui/layers';
 import type { MenuItem } from '@/ui/AppMenu.vue';
 
 /**
@@ -16,6 +16,14 @@ const emit = defineEmits<{ select: [string] }>();
 const list = ref<HTMLElement | null>(null);
 const position = ref<Record<string, string>>({});
 const MARGIN = 8;
+// Escape or a click elsewhere closes the menu alone, not the dialog it opened from.
+const layer = useLayer({
+  kind: 'menu',
+  open: () => open.value,
+  close: () => (open.value = false),
+  elements: () => [list.value],
+  initialFocus: () => list.value?.querySelector<HTMLButtonElement>('button:not([disabled])'),
+});
 
 function place() {
   const menu = list.value?.getBoundingClientRect();
@@ -26,22 +34,14 @@ function place() {
   position.value = { left: `${Math.max(MARGIN, left)}px`, top: `${top}px`, maxHeight: `${window.innerHeight - MARGIN * 2}px` };
 }
 
-const onDoc = (e: Event) => {
-  if (!list.value?.contains(e.target as Node)) open.value = false;
-};
-// A layer, so Escape closes the menu alone, not the viewer or dialog it opened from.
 const onKey = (e: KeyboardEvent) => {
-  if (e.key === 'Escape') {
-    e.preventDefault();
-    open.value = false;
-  } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+  if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && layer.isTop()) {
     const items = [...(list.value?.querySelectorAll<HTMLButtonElement>('button:not([disabled])') ?? [])];
     const i = items.indexOf(document.activeElement as HTMLButtonElement);
     items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
     e.preventDefault();
   }
 };
-useLayer(() => open.value, onKey);
 const close = () => (open.value = false);
 // Scroll events are listened to in the capture phase, so the menu's own list scrolling arrives here too.
 const onScroll = (e: Event) => {
@@ -50,12 +50,12 @@ const onScroll = (e: Event) => {
 
 function listen(on: boolean) {
   if (on) {
-    document.addEventListener('pointerdown', onDoc, true);
+    document.addEventListener('keydown', onKey, true);
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', close);
     window.addEventListener('blur', close);
   } else {
-    document.removeEventListener('pointerdown', onDoc, true);
+    document.removeEventListener('keydown', onKey, true);
     window.removeEventListener('scroll', onScroll, true);
     window.removeEventListener('resize', close);
     window.removeEventListener('blur', close);
@@ -67,7 +67,6 @@ watch(open, async (v) => {
   if (v) {
     await nextTick();
     place();
-    list.value?.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus();
   }
 });
 watch(() => [props.x, props.y], () => open.value && nextTick(place));
@@ -82,7 +81,7 @@ function choose(id: string) {
 <template>
   <Teleport to="body">
     <Transition name="snackbar">
-      <div v-if="open" ref="list" class="menu" role="menu" :style="position" @contextmenu.prevent>
+      <div v-if="open" ref="list" class="menu" role="menu" :style="{ ...position, zIndex: layer.zIndex.value }" @contextmenu.prevent>
         <template v-for="item in items" :key="item.id">
           <div v-if="item.divider" class="divider" role="separator" />
           <button type="button" role="menuitem" class="item state-layer type-label-large" :class="{ danger: item.danger }" :disabled="item.disabled" @click="choose(item.id)">
@@ -97,7 +96,7 @@ function choose(id: string) {
 
 <style scoped>
 .menu {
-  position: fixed; z-index: var(--app-z-menu); min-width: 220px; max-width: min(var(--app-width-menu), calc(100vw - 16px)); padding: var(--app-space-2) 0; overflow-y: auto;
+  position: fixed; min-width: 220px; max-width: min(var(--app-width-menu), calc(100vw - 16px)); padding: var(--app-space-2) 0; overflow-y: auto;
   background: var(--md-sys-color-surface-container); border-radius: var(--md-sys-shape-corner-extra-small); box-shadow: var(--app-elevation-2);
 }
 .item {

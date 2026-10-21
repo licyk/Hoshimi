@@ -32,9 +32,9 @@ def create_classification(body: ClassificationRequest, services: ServicesDep) ->
     provider = services.registry.providers.get(provider_id)
     if not isinstance(provider, TypeSafeProvider) or model not in provider.classifier_models():
         raise ModelNotFoundError("Select a classifier from /v1/classifiers.")
-    turn = services.stats.turn(body.model, origin="classify")
+    turn = services.stats.turn(body.model, origin="classify", provider=provider.id)
     result = None
-    for chunk in turn.wrap(provider.stream(model, {"state": body.state, "questions": body.questions, "_classification": True})):
+    for chunk in turn.wrap(provider.stream(model, {"state": body.state, "questions": body.questions, "_classification": True}, on_route=turn.routed)):
         if chunk.get("type") == "classification":
             result = chunk["result"]
     if result is None:

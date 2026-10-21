@@ -30,7 +30,8 @@ const model = defineModel<T>({ required: true });
 </template>
 
 <style scoped>
-.segmented { display: inline-flex; border: 1px solid var(--md-sys-color-outline); border-radius: var(--md-sys-shape-corner-full); overflow: hidden; height: 40px; }
+/* Its own width, even as a stretched flex or grid item: the outline belongs to the segments. */
+.segmented { display: inline-flex; width: fit-content; max-width: 100%; border: 1px solid var(--md-sys-color-outline); border-radius: var(--md-sys-shape-corner-full); overflow: hidden; height: 40px; }
 .segment {
   display: inline-flex; align-items: center; gap: var(--app-space-2); padding: 0 var(--app-space-3);
   min-width: 48px; justify-content: center; border: 0; background: transparent; color: var(--md-sys-color-on-surface); cursor: pointer; font: inherit;

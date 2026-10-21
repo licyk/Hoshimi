@@ -25,8 +25,9 @@ class Services:
 
     ``settings`` is the effective configuration (config file + CLI overrides), ``registry``
     owns provider HTTP clients and the enabled providers, ``probe`` holds the last
-    availability verdict per model, ``stats`` counts what the gateway served,
-    and ``refresher`` renews credentials on a timer.
+    availability verdict per model, ``stats`` counts what the gateway served
+    (and, through ``stats.live``, what it is serving right now), and
+    ``refresher`` renews credentials on a timer.
     """
 
     settings: Settings
@@ -56,6 +57,8 @@ class Services:
         if self.login is not None:
             self.login.close()
         self.registry.close()
+        # Writes are debounced; whatever the last two seconds counted lands now.
+        self.stats.flush()
 
     def apply_settings(self, settings: Settings) -> bool:
         """Adopt a new configuration: rebuild the lanes it actually moved.

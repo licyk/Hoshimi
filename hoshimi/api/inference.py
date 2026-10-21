@@ -29,20 +29,23 @@ def tracked_chunks(
     body: dict[str, Any],
     *,
     origin: str,
+    stream: bool | None = None,
 ) -> Iterator[dict[str, Any]]:
     """The upstream stream with this call's usage, latency and outcome recorded.
 
     The turn starts here so a routing failure still counts: a request the
     gateway refused is a request it answered. Effort is the rung the wire
     carries: a caller who named none sends none, and the sample must not
-    claim a level the body never had.
+    claim a level the body never had. The account is the one that answered,
+    reported by the registry as the first chunk arrives.
     """
     level = requested_level(body)
     effort = (resolve_level(level, services.registry.spec(model)) or "") if level else ""
-    turn = services.stats.turn(model, effort=effort, origin=origin)
+    streaming = bool(body.get("stream", False)) if stream is None else stream
+    turn = services.stats.turn(model, effort=effort, origin=origin, stream=streaming, provider=services.registry.provider_hint(model))
     try:
-        upstream = services.registry.stream(model, body)
-    except BaseException:
-        turn.fail()
+        upstream = services.registry.stream(model, body, on_route=turn.routed)
+    except BaseException as exc:
+        turn.fail(exc)
         raise
     return turn.wrap(upstream)

@@ -64,6 +64,34 @@ python scripts/generate_openapi.py > hoshimi/webui/openapi.json
 cd hoshimi/webui && bun run typegen   # rewrites src/api/schema.d.ts — commit it
 ```
 
+## Web UI
+
+The interface (`hoshimi/webui`) follows the Material Design 3 system it shares
+with Mizuoto:
+
+- **Tokens and wrappers.** Colour roles come from one seed colour
+  (`theme/scheme.ts`); views use only `--md-sys-*` / `--app-*` tokens and import
+  components only from `@/ui`. `tokens.test.ts`, `imports.test.ts` and
+  `layout.test.ts` enforce this.
+- **Layers and motion.** Everything that opens over the page (dialogs, sheets,
+  menus) stacks through `ui/layers.ts`. Navigation fades through via View
+  Transitions; tabs slide along the shared axis (`AxisPanes`); lists use the
+  `list` motion. Settings › Appearance › Motion (or the system setting) reduces
+  every transition to a short fade.
+- **Page skeleton.** A `Toolbar` row, then one column of `PageSection`s; pages
+  adapt to the content area's width (`@container app-content`). Lists that can
+  grow without bound use `ScrollArea` or `DataTable` (sortable, windowed past
+  200 rows). Channels is a `ListDetail` layout routed at `/channels/:id`.
+- **Charts.** Series take the fixed, colour-blind-validated `--app-chart-1…8`
+  slots in a fixed order. Every chart carries a legend, a hover/focus tooltip
+  and a hidden table.
+- **Live data.** `stores/live.ts` holds one connection to
+  `GET /api/v1/stats/live`, read with `fetch` (`api/sse.ts`) so the access key
+  travels as a header. It drives the top-bar activity sheet, the Usage page and
+  the Overview card. REST stays the source of truth: a finished call
+  invalidates the usage and channel queries, and a reconnect starts from a new
+  snapshot.
+
 ## Architecture
 
 ```

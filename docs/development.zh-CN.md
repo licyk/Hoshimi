@@ -57,6 +57,28 @@ python scripts/generate_openapi.py > hoshimi/webui/openapi.json
 cd hoshimi/webui && bun run typegen
 ```
 
+## Web UI
+
+界面（`hoshimi/webui`）沿用与 Mizuoto 相同的 Material Design 3 体系：
+
+- **令牌与封装层。** 颜色角色由一个种子色生成（`theme/scheme.ts`）；视图只使用
+  `--md-sys-*` / `--app-*` 令牌，只从 `@/ui` 导入组件。`tokens.test.ts`、
+  `imports.test.ts` 和 `layout.test.ts` 负责检查这些规则。
+- **图层与动效。** 所有覆盖在页面上的内容（对话框、侧边面板、菜单）都通过
+  `ui/layers.ts` 叠放。页面切换使用 View Transitions 淡入淡出；标签页沿共享轴
+  滑动（`AxisPanes`）；列表使用 `list` 动效。设置 › 外观 › 动画（或系统设置）
+  会把所有过渡减为简短的淡入淡出。
+- **页面骨架。** 先是一行 `Toolbar`，下面是单列的 `PageSection`；页面根据内容区
+  宽度自适应（`@container app-content`）。可能无限增长的列表使用 `ScrollArea`
+  或 `DataTable`（可排序，超过 200 行时只渲染可见部分）。渠道页是路由为
+  `/channels/:id` 的 `ListDetail` 布局。
+- **图表。** 数据系列按固定顺序使用经过色盲校验的 `--app-chart-1…8` 色位。每个图表
+  都带有图例、悬停/聚焦提示和隐藏表格。
+- **实时数据。** `stores/live.ts` 维持一个到 `GET /api/v1/stats/live` 的连接，
+  用 `fetch` 读取（`api/sse.ts`），使访问密钥可以作为请求头发送。顶栏的活动面板、
+  用量页和概览卡片都由它驱动。REST 仍是唯一可信来源：调用结束时会让用量与渠道
+  查询失效，重连后从新的快照开始。
+
 ## 架构
 
 核心逻辑位于 `hoshimi/core`，不依赖 Web 框架；`hoshimi/api`、`hoshimi/cli`、

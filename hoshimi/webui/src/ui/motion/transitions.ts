@@ -1,12 +1,11 @@
 /** Named transitions and helpers for the motion system. See motion.css. */
+import { ref, watch, type Ref } from 'vue';
 
 export const TRANSITIONS = {
   fadeThrough: 'fade-through',
   sharedAxisX: 'shared-axis-x',
   container: 'container',
   sheet: 'sheet',
-  drawer: 'drawer',
-  pane: 'pane',
   scrim: 'scrim',
   list: 'list',
   collapse: 'collapse',
@@ -21,8 +20,30 @@ export function staggerStyle(index: number): Record<string, string> {
   return { '--stagger': `${Math.min(index, STAGGER_CAP) * STAGGER_MS}ms` };
 }
 
+/**
+ * The way a ``shared-axis-x`` tab change moves, for ``--axis-dir`` (as Hanaikada's tag tabs): 1 to a
+ * tab on the right, -1 to one on the left. Set synchronously, before the panes re-render.
+ */
+export function useAxisDirection<T>(value: Ref<T>, order: () => readonly T[]): Ref<number> {
+  const dir = ref(1);
+  watch(value, (next, prev) => (dir.value = order().indexOf(next) >= order().indexOf(prev) ? 1 : -1), { flush: 'sync' });
+  return dir;
+}
+
+/**
+ * Whether a meter's value last went down, for audio-meter ballistics: a rise shows at once, a fall
+ * settles over a longer transition. Set synchronously, with the value it describes.
+ */
+export function useFalling(value: () => number): Ref<boolean> {
+  const falling = ref(false);
+  watch(value, (next, prev) => (falling.value = next < prev), { flush: 'sync' });
+  return falling;
+}
+
 export function prefersReducedMotion(): boolean {
-  return typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (typeof window === 'undefined') return false;
+  if (document.documentElement.dataset.motion === 'reduced') return true;
+  return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 }
 
 /**
@@ -40,6 +61,19 @@ export function containerFrom(from: DOMRect | null | undefined, to: DOMRect | nu
     '--from-transform': `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY})`,
   };
 }
+
+/**
+ * Hooks for a ``list`` <TransitionGroup> of rows (its container ``position: relative``): the leaving
+ * item is taken out of the flow (motion.css), so it is pinned where it was, at its own size, rather
+ * than reflowing as a box without a width (its fields wrapping into one another) while it fades and
+ * the others slide up.
+ */
+export const keepLeavingInPlace = {
+  onBeforeLeave(el: Element) {
+    const e = el as HTMLElement;
+    Object.assign(e.style, { left: `${e.offsetLeft}px`, top: `${e.offsetTop}px`, width: `${e.offsetWidth}px`, height: `${e.offsetHeight}px` });
+  },
+};
 
 /** Hooks for <Transition name="collapse"> that animate height from and to the content's size. */
 export const collapseHooks = {

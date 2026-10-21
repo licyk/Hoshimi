@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch, type Component } from 'vue';
 import AppIcon from '@/ui/AppIcon.vue';
-import { useLayer } from '@/ui/useLayer';
+import { useLayer } from '@/ui/layers';
 
 export interface MenuItem {
   id: string;
@@ -24,6 +24,14 @@ const open = ref(false);
 const root = ref<HTMLElement | null>(null);
 const list = ref<HTMLElement | null>(null);
 const position = ref<Record<string, string>>({});
+// Escape or a click elsewhere closes the menu alone, not the dialog it opened from; focus goes back to the trigger.
+const layer = useLayer({
+  kind: 'menu',
+  open: () => open.value,
+  close: () => (open.value = false),
+  elements: () => [root.value, list.value],
+  initialFocus: () => list.value?.querySelector<HTMLButtonElement>('button:not([disabled])'),
+});
 
 const MIN_WIDTH = 200;
 const MARGIN = 8;
@@ -48,23 +56,14 @@ function place() {
   };
 }
 
-const onDoc = (e: Event) => {
-  const target = e.target as Node;
-  if (!root.value?.contains(target) && !list.value?.contains(target)) open.value = false;
-};
-// A layer, so Escape closes the menu alone, not the viewer or dialog it opened from.
 const onKey = (e: KeyboardEvent) => {
-  if (e.key === 'Escape') {
-    e.preventDefault();
-    open.value = false;
-  } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+  if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && layer.isTop()) {
     const items = [...(list.value?.querySelectorAll<HTMLButtonElement>('button:not([disabled])') ?? [])];
     const i = items.indexOf(document.activeElement as HTMLButtonElement);
     items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
     e.preventDefault();
   }
 };
-useLayer(() => open.value, onKey);
 // Follows its trigger when a container scrolls; its own list scrolling moves nothing.
 const onReflow = (e?: Event) => {
   if (!open.value || (e?.type === 'scroll' && list.value?.contains(e.target as Node))) return;
@@ -73,22 +72,21 @@ const onReflow = (e?: Event) => {
 
 watch(open, async (v) => {
   if (v) {
-    document.addEventListener('pointerdown', onDoc);
+    document.addEventListener('keydown', onKey);
     // Capture, so scrolling in any container keeps the menu on its trigger.
     window.addEventListener('scroll', onReflow, true);
     window.addEventListener('resize', onReflow);
     await nextTick();
     place();
-    list.value?.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus();
   } else {
-    document.removeEventListener('pointerdown', onDoc);
+    document.removeEventListener('keydown', onKey);
     window.removeEventListener('scroll', onReflow, true);
     window.removeEventListener('resize', onReflow);
   }
 });
 onBeforeUnmount(() => {
   open.value = false;
-  document.removeEventListener('pointerdown', onDoc);
+  document.removeEventListener('keydown', onKey);
   window.removeEventListener('scroll', onReflow, true);
   window.removeEventListener('resize', onReflow);
 });
@@ -105,7 +103,7 @@ const toggle = () => (open.value = !open.value);
     <slot :toggle="toggle" :open="open" />
     <Teleport to="body">
       <Transition name="snackbar">
-        <div v-if="open" ref="list" class="menu" role="menu" :style="position" @click.stop>
+        <div v-if="open" ref="list" class="menu" role="menu" :style="{ ...position, zIndex: layer.zIndex.value }" @click.stop>
           <button
             v-for="item in items"
             :key="item.id"
@@ -128,7 +126,7 @@ const toggle = () => (open.value = !open.value);
 <style scoped>
 .menu-root { display: inline-flex; }
 .menu {
-  position: fixed; z-index: var(--app-z-menu); padding: var(--app-space-2) 0; overflow-y: auto;
+  position: fixed; padding: var(--app-space-2) 0; overflow-y: auto;
   background: var(--md-sys-color-surface-container); border-radius: var(--md-sys-shape-corner-extra-small); box-shadow: var(--app-elevation-2);
 }
 .item {

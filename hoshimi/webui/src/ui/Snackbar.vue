@@ -2,9 +2,13 @@
 import { computed, watch } from 'vue';
 import IconButton from '@/ui/IconButton.vue';
 import { X } from '@/ui/icons';
+import { snackbarZ } from '@/ui/layers';
 import { useSnackbar } from '@/ui/useSnackbar';
 
-/** Renders the head of the snackbar queue. Mount once, in the app shell. */
+/**
+ * Renders the head of the snackbar queue. Mount once, in the app shell. It sits beside the page,
+ * not in it, so it stays live while a modal makes the page inert, and a press on it closes no layer.
+ */
 const { state, dismiss } = useSnackbar();
 const current = computed(() => state.queue[0]);
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -27,19 +31,21 @@ function act() {
 </script>
 
 <template>
-  <div class="snackbar-host" aria-live="polite">
-    <Transition name="snackbar" mode="out-in">
-      <div v-if="current" :key="current.id" class="snackbar" :class="{ error: current.error }" role="status">
-        <span class="type-body-medium text">{{ current.text }}</span>
-        <button v-if="current.actionLabel" type="button" class="action type-label-large state-layer" @click="act">{{ current.actionLabel }}</button>
-        <IconButton :icon="X" label="Dismiss" class="close" @click="dismiss(current.id)" />
-      </div>
-    </Transition>
-  </div>
+  <Teleport to="body">
+    <div class="snackbar-host" aria-live="polite" data-layer-ignore :style="{ zIndex: snackbarZ }">
+      <Transition name="snackbar" mode="out-in">
+        <div v-if="current" :key="current.id" class="snackbar" :class="{ error: current.error }" role="status">
+          <span class="type-body-medium text">{{ current.text }}</span>
+          <button v-if="current.actionLabel" type="button" class="action type-label-large state-layer" @click="act">{{ current.actionLabel }}</button>
+          <IconButton :icon="X" label="Dismiss" class="close" @click="dismiss(current.id)" />
+        </div>
+      </Transition>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
-.snackbar-host { position: fixed; left: 50%; bottom: var(--app-space-4); translate: -50% 0; z-index: var(--app-z-snackbar); width: min(var(--app-width-snackbar), calc(100vw - 32px)); pointer-events: none; }
+.snackbar-host { position: fixed; left: 50%; bottom: var(--app-space-4); translate: -50% 0; width: min(var(--app-width-snackbar), calc(100vw - 32px)); pointer-events: none; }
 .snackbar {
   display: flex; align-items: center; gap: var(--app-space-2); min-height: 48px; padding: var(--app-space-1) var(--app-space-1) var(--app-space-1) var(--app-space-4);
   border-radius: var(--md-sys-shape-corner-extra-small); background: var(--md-sys-color-inverse-surface); color: var(--md-sys-color-inverse-on-surface);

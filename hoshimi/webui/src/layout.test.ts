@@ -15,18 +15,22 @@ const ROWS: [file: string, selector: string][] = [
   ['ui/Snackbar.vue', '.text'],
   ['ui/Chip.vue', '.label'],
   ['ui/ContextMenu.vue', '.label'],
-  ['views/ChannelsView.vue', '.card-text'],
+  ['ui/DataTable.vue', '.cell'],
+  ['ui/PageSection.vue', '.titles'],
+  ['ui/StatTile.vue', '.label, .detail'],
   ['views/ChannelsView.vue', '.row-text'],
   ['views/OverviewView.vue', '.path'],
-  ['views/ModelsView.vue', '.row-text'],
+  ['views/ModelsView.vue', '.name-cell'],
   ['views/PlaygroundView.vue', '.bubble'],
-  ['views/SettingsView.vue', '.provider-text'],
-  ['views/UsageView.vue', '.row-text'],
+  ['views/UsageView.vue', '.name-cell'],
+  ['components/ChannelDetail.vue', '.account-text'],
+  ['components/LiveCallCard.vue', '.titles'],
+  ['components/LiveSheet.vue', '.text'],
 ];
 
 function rule(file: string, selector: string): string {
   const css = readFileSync(join(SRC, file), 'utf8');
-  const match = new RegExp(String.raw`(?:^|\n)\s*${selector.replace('.', '\\.')}\s*\{([^}]*)\}`).exec(css);
+  const match = new RegExp(String.raw`(?:^|\n)\s*${selector.replace(/\./g, '\\.')}\s*\{([^}]*)\}`).exec(css);
   expect(match, `${file} has no rule for ${selector}`).not.toBeNull();
   return match![1];
 }
@@ -34,5 +38,20 @@ function rule(file: string, selector: string): string {
 describe('rows that hold a file name', () => {
   it.each(ROWS)('%s %s can shrink below the name', (file, selector) => {
     expect(rule(file, selector)).toContain('min-width: 0');
+  });
+});
+
+/**
+ * A list that can grow without bound (models, calls, accounts) scrolls inside itself or renders
+ * only what is in view, so a long one never stretches its page into an endless column.
+ */
+const BOUNDED: [file: string, component: string][] = [
+  ['views/ModelsView.vue', '<DataTable'],
+  ['views/UsageView.vue', '<DataTable'],
+  ['components/ChannelDetail.vue', '<ScrollArea'],
+];
+describe('lists that can grow without bound', () => {
+  it.each(BOUNDED)('%s keeps its list in a %s', (file, component) => {
+    expect(readFileSync(join(SRC, file), 'utf8')).toContain(component);
   });
 });

@@ -7,12 +7,15 @@ export type Locale = 'en' | 'zh-CN' | 'ja';
 /** A locale, or ``auto`` to follow the system's language. */
 export type LocalePreference = Locale | 'auto';
 const LOCALE_PREFERENCES: LocalePreference[] = ['auto', 'en', 'zh-CN', 'ja'];
+/** ``system`` follows the operating system's reduced-motion setting; ``reduced`` asks for it here. */
+export type MotionPreference = 'system' | 'reduced';
 
 export interface Preferences {
   theme: ThemeMode;
   sourceColor: string;
   contrast: number;
   locale: LocalePreference;
+  motion: MotionPreference;
 }
 
 const STORAGE_KEY = 'hoshimi:preferences';
@@ -22,6 +25,7 @@ export const DEFAULTS: Preferences = {
   sourceColor: DEFAULT_SOURCE_COLOR,
   contrast: 0,
   locale: 'auto',
+  motion: 'system',
 };
 
 function readLocal(): Partial<Preferences> {
@@ -36,6 +40,7 @@ function merge(base: Preferences, patch: Partial<Preferences>): Preferences {
   const merged = { ...base, ...patch };
   // A locale this build does not know (saved by a newer one, or edited by hand) follows the system.
   if (!LOCALE_PREFERENCES.includes(merged.locale)) merged.locale = 'auto';
+  if (merged.motion !== 'reduced') merged.motion = 'system';
   return merged;
 }
 

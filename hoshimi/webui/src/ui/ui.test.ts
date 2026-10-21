@@ -1,10 +1,9 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
-import { defineComponent, h, nextTick, ref } from 'vue';
+import { nextTick } from 'vue';
 import { translate } from '@/i18n';
 import { windowClass } from '@/theme/breakpoints';
 import { DEFAULT_SOURCE_COLOR, generateScheme } from '@/theme/scheme';
-import AppDialog from '@/ui/AppDialog.vue';
 import Breadcrumbs from '@/ui/Breadcrumbs.vue';
 import Chip from '@/ui/Chip.vue';
 import EmptyState from '@/ui/EmptyState.vue';
@@ -12,7 +11,6 @@ import ExpansionPanel from '@/ui/ExpansionPanel.vue';
 import SegmentedButton from '@/ui/SegmentedButton.vue';
 import { Constellation } from '@/ui/icons';
 import { containerFrom, staggerStyle } from '@/ui/motion/transitions';
-import { closeOnEscape, layerOpen, trapFocus, useLayer } from '@/ui/useLayer';
 import { useSnackbar } from '@/ui/useSnackbar';
 
 describe('ui components', () => {
@@ -72,148 +70,6 @@ describe('ui components', () => {
     expect(s.state.queue[0].text).toBe('two');
     expect(s.state.queue[0].timeout).toBe(6000);
     s.dismiss(s.state.queue[0].id);
-  });
-});
-
-describe('layers', () => {
-  const press = (key: string, init: KeyboardEventInit = {}) => document.dispatchEvent(new KeyboardEvent('keydown', { key, cancelable: true, ...init }));
-  const escape = () => press('Escape');
-  const Layer = defineComponent({
-    setup(_, { expose }) {
-      const open = ref(true);
-      const { isTop } = useLayer(
-        () => open.value,
-        closeOnEscape(() => (open.value = false)),
-      );
-      expose({ open, isTop });
-      return () => null;
-    },
-  });
-
-  it('closes only the topmost layer on Escape, the one under it next', () => {
-    // The viewer, then a delete dialog opened from it.
-    const viewer = mount(Layer);
-    const dialog = mount(Layer);
-    const v = viewer.vm as unknown as { open: boolean; isTop: () => boolean };
-    const d = dialog.vm as unknown as { open: boolean; isTop: () => boolean };
-    expect(d.isTop()).toBe(true);
-    expect(v.isTop()).toBe(false);
-    escape();
-    expect([v.open, d.open]).toEqual([true, false]);
-    expect(v.isTop()).toBe(true);
-    escape();
-    expect(v.open).toBe(false);
-    expect(layerOpen()).toBe(false);
-    viewer.unmount();
-    dialog.unmount();
-  });
-
-  it('leaves the stack when unmounted open', () => {
-    const wrapper = mount(Layer);
-    expect(layerOpen()).toBe(true);
-    wrapper.unmount();
-    expect(layerOpen()).toBe(false);
-  });
-
-  /** A layer recording the keys it is handed, open while ``active`` holds. */
-  const probe = (active = ref(true)) => {
-    const seen: string[] = [];
-    const wrapper = mount(
-      defineComponent({
-        setup() {
-          useLayer(
-            () => active.value,
-            (e) => seen.push(e.key),
-          );
-          return () => null;
-        },
-      }),
-    );
-    return { seen, wrapper, active };
-  };
-
-  it('hands every key to the topmost layer alone', () => {
-    const under = probe();
-    const over = probe();
-    press('ArrowRight');
-    over.active.value = false;
-    press('Delete');
-    expect(over.seen).toEqual(['ArrowRight']);
-    expect(under.seen).toEqual(['Delete']);
-    under.wrapper.unmount();
-    over.wrapper.unmount();
-  });
-
-  it('puts a layer back on top when it opens again, and forgets it once closed or gone', () => {
-    const first = probe();
-    const second = probe();
-    first.active.value = false;
-    first.active.value = true;
-    press('a');
-    first.active.value = false;
-    first.wrapper.unmount();
-    press('b');
-    second.wrapper.unmount();
-    press('c');
-    expect(first.seen).toEqual(['a']);
-    expect(second.seen).toEqual(['b']);
-    expect(layerOpen()).toBe(false);
-  });
-
-  it('leaves a key that a control inside the layer already claimed', () => {
-    const { seen, wrapper } = probe();
-    const event = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
-    event.preventDefault();
-    document.dispatchEvent(event);
-    expect(seen).toEqual([]);
-    wrapper.unmount();
-  });
-
-  it('keeps Tab cycling inside a container and brings stray focus back in', () => {
-    const outside = document.createElement('button');
-    const box = document.createElement('div');
-    box.innerHTML = '<button id="a"></button><button disabled></button><input id="b" />';
-    document.body.append(outside, box);
-    const tab = (shiftKey = false) => {
-      const event = new KeyboardEvent('keydown', { key: 'Tab', shiftKey, cancelable: true });
-      trapFocus(event, box);
-      return event.defaultPrevented;
-    };
-    box.querySelector<HTMLElement>('#b')!.focus();
-    expect(tab()).toBe(true);
-    expect(document.activeElement?.id).toBe('a');
-    expect(tab(true)).toBe(true);
-    expect(document.activeElement?.id).toBe('b');
-    outside.focus();
-    tab();
-    expect(document.activeElement?.id).toBe('a');
-    outside.remove();
-    box.remove();
-  });
-
-  it('closes one of two stacked dialogs per Escape, the newer first', async () => {
-    // Material's buttons need ElementInternals, which happy-dom lacks.
-    const global = { stubs: { IconButton: { props: ['label'], template: '<button type="button" :aria-label="label" />' } } };
-    const outer = ref(true);
-    const inner = ref(false);
-    const wrapper = mount(
-      defineComponent({
-        setup: () => () => [
-          h(AppDialog, { open: outer.value, 'onUpdate:open': (v: boolean) => (outer.value = v), title: 'Outer' }, () => 'outer'),
-          h(AppDialog, { open: inner.value, 'onUpdate:open': (v: boolean) => (inner.value = v), title: 'Inner' }, () => 'inner'),
-        ],
-      }),
-      { attachTo: document.body, global },
-    );
-    inner.value = true;
-    await nextTick();
-    escape();
-    await nextTick();
-    expect([outer.value, inner.value]).toEqual([true, false]);
-    escape();
-    await nextTick();
-    expect(outer.value).toBe(false);
-    wrapper.unmount();
   });
 });
 

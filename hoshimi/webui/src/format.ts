@@ -61,3 +61,55 @@ export const quotaBadge = (q: QuotaFacts | null): { kind: 'limited' | 'percent' 
   if (q.percent <= 25) return { kind: 'percent', tone: 'warning' };
   return { kind: 'percent', tone: 'primary' };
 };
+
+/** A token count in a tile or an axis tick: `1284` → `1.3K`, `12_900_000` → `12.9M`; whole below a thousand. */
+export const compact = (value: number | null | undefined): string => {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
+  const abs = Math.abs(value);
+  const units: [number, string][] = [[1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'K']];
+  for (const [size, unit] of units) {
+    if (abs >= size) {
+      const scaled = value / size;
+      return `${Math.abs(scaled) >= 100 ? Math.round(scaled) : scaled.toFixed(1).replace(/\.0$/, '')}${unit}`;
+    }
+  }
+  return String(Math.round(value));
+};
+
+/** A share as a percentage: `0.4567` → `45.7%`; nothing to divide is a dash. */
+export const percent = (value: number | null | undefined, digits = 1): string =>
+  value === null || value === undefined || !Number.isFinite(value) ? '—' : `${(value * 100).toFixed(digits).replace(/\.0+$/, '')}%`;
+
+/** A share of a whole, or null when there is no whole to share. */
+export const ratio = (part: number, whole: number): number | null => (whole > 0 ? part / whole : null);
+
+/** The change from ``before`` to ``now`` as a fraction, or null when there was nothing before. */
+export const change = (now: number, before: number): number | null => (before > 0 ? (now - before) / before : null);
+
+/** A duration for a person: `850` → `850 ms`, `12_400` → `12.4 s`, `95_000` → `1 min 35 s`. */
+export const duration = (ms: number | null | undefined): string => {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return '—';
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.round((ms % 60_000) / 1000);
+  return seconds ? `${minutes} min ${seconds} s` : `${minutes} min`;
+};
+
+/**
+ * How long ago (negative ``ms``) or from now (positive), in the reader's language: "3 minutes ago",
+ * "in 2 days". The exact moment goes in a tooltip beside it.
+ */
+export const relative = (ms: number, locale: string): string => {
+  const steps: [number, Intl.RelativeTimeFormatUnit][] = [[86_400_000, 'day'], [3_600_000, 'hour'], [60_000, 'minute'], [1000, 'second']];
+  const format = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+  for (const [size, unit] of steps) if (Math.abs(ms) >= size || unit === 'second') return format.format(Math.round(ms / size), unit);
+  return '';
+};
+
+/** An hour bucket's axis label (`14:00`) or a day's (`10-21`), from the start the server reports. */
+export const bucketLabel = (start: string, granularity: 'hour' | 'day'): string => {
+  if (granularity === 'day') return dayLabel(start.slice(0, 10));
+  const date = new Date(start);
+  return Number.isNaN(date.getTime()) ? start : `${String(date.getHours()).padStart(2, '0')}:00`;
+};

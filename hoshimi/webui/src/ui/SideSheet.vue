@@ -1,24 +1,23 @@
 <script setup lang="ts">
+import { ref } from 'vue';
 import IconButton from '@/ui/IconButton.vue';
 import { X } from '@/ui/icons';
-import { closeOnEscape, useLayer } from '@/ui/useLayer';
+import { useLayer } from '@/ui/layers';
 
 /** A modal side sheet that slides in from the right edge (the ``sheet`` transition). */
 withDefaults(defineProps<{ title: string; closeLabel?: string }>(), { closeLabel: 'Close' });
 const open = defineModel<boolean>('open', { default: false });
-useLayer(
-  () => open.value,
-  closeOnEscape(() => (open.value = false)),
-);
+const sheet = ref<HTMLElement | null>(null);
+const { zIndex } = useLayer({ kind: 'sheet', modal: true, open: () => open.value, close: () => (open.value = false), elements: () => [sheet.value], initialFocus: () => sheet.value });
 </script>
 
 <template>
   <Teleport to="body">
     <Transition name="scrim">
-      <div v-if="open" class="scrim" @click="open = false" />
+      <div v-if="open" class="scrim" :style="{ zIndex }" />
     </Transition>
     <Transition name="sheet">
-      <aside v-if="open" class="sheet" role="dialog" aria-modal="true" :aria-label="title">
+      <aside v-if="open" ref="sheet" class="sheet" role="dialog" aria-modal="true" :aria-label="title" tabindex="-1" :style="{ zIndex }">
         <header class="head">
           <h2 class="type-title-large title">{{ title }}</h2>
           <slot name="header-actions" />
@@ -31,9 +30,9 @@ useLayer(
 </template>
 
 <style scoped>
-.scrim { position: fixed; inset: 0; background: color-mix(in srgb, var(--md-sys-color-scrim) 32%, transparent); z-index: var(--app-z-sheet); }
+.scrim { position: fixed; inset: 0; background: color-mix(in srgb, var(--md-sys-color-scrim) 32%, transparent); }
 .sheet {
-  position: fixed; top: 0; right: 0; bottom: 0; width: min(var(--app-width-sheet), 100vw); z-index: var(--app-z-sheet); display: flex; flex-direction: column;
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(var(--app-width-sheet), 100vw); display: flex; flex-direction: column; outline: none;
   background: var(--md-sys-color-surface-container-low); color: var(--md-sys-color-on-surface);
   border-radius: var(--md-sys-shape-corner-large) 0 0 var(--md-sys-shape-corner-large); box-shadow: var(--app-elevation-2);
 }

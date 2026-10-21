@@ -22,6 +22,7 @@ from hoshimi.core.errors import HoshimiError, UpstreamError
 from hoshimi.core.message_chunks import aggregate_messages, emit_messages_events, new_message_id
 from hoshimi.core.native_messages import MessagesRequest
 from hoshimi.core.record import Record
+from hoshimi.core.stats import Turn
 from hoshimi.core.translate.messages import estimate_input_tokens, messages_to_chat, validate_messages_request
 
 logger = logging.getLogger(__name__)
@@ -106,16 +107,29 @@ def _native_response(services: Services, body: dict[str, Any], request: Request,
     context = MessagesRequest(body=body, headers=dict(request.headers), query=list(request.query_params.multi_items()), count_only=count_only)
     effort = body.get("output_config", {})
     effort = str(effort.get("effort") or "") if isinstance(effort, dict) else ""
-    turn = None if count_only else services.stats.turn(body["model"], effort=effort, origin="messages")
+    streaming = bool(body.get("stream", False))
+    # The turn is opened only once the native route is known to exist: when it
+    # is not, the translated path counts this request instead, and a turn
+    # opened here would linger in the live view as a call nobody finishes.
+    # The registry's stream is lazy, so ``routed`` can only fire after then.
+    opened: list[Turn] = []
+
+    def routed(provider: str, account: str, attempt: int) -> None:
+        if opened:
+            opened[0].routed(provider, account, attempt)
+
     try:
-        upstream = services.registry.native_messages(body["model"], context)
-    except BaseException:
-        if turn is not None:
-            turn.fail()
+        upstream = services.registry.native_messages(body["model"], context, on_route=None if count_only else routed)
+    except BaseException as exc:
+        if not count_only:
+            services.stats.turn(body["model"], effort=effort, origin="messages", stream=streaming,
+                                provider=services.registry.provider_hint(body["model"])).fail(exc)
         raise
     if upstream is None:
         return None
-    if turn is not None:
+    if not count_only:
+        turn = services.stats.turn(body["model"], effort=effort, origin="messages", stream=streaming, provider=services.registry.provider_hint(body["model"]))
+        opened.append(turn)
         upstream = turn.wrap(upstream)
     try:
         first = next(upstream)
@@ -161,7 +175,7 @@ def create_message(
         exc.message = f"{provider.id}: {exc.message}"
         raise
     model, chat = prepare_request(services, chat)
-    upstream = tracked_chunks(services, model, chat, origin="messages")
+    upstream = tracked_chunks(services, model, chat, origin="messages", stream=bool(body.get("stream", False)))
     message_id = new_message_id()
     headers = {"request-id": message_id}
     if not body.get("stream", False):

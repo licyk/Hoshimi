@@ -17,7 +17,7 @@ from hoshimi.core.failure import DeadModelStore
 from hoshimi.core.native_messages import MessagesRequest, stream_native_messages
 from hoshimi.core.net.client import NetworkClient
 from hoshimi.core.providers import PROVIDER_ORDER, build_providers
-from hoshimi.core.providers.base import Account, ModelGone, Provider
+from hoshimi.core.providers.base import Account, ModelGone, Provider, RouteCallback
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,16 @@ class Registry:
             f"Model {requested!r} not found. Use `provider/model` or see /v1/models."
         )
 
+    def provider_hint(self, model: str) -> str:
+        """The lane a ``provider/model`` id names, without resolving anything.
+
+        Accounting wants a provider for a turn that failed before any account
+        answered; a bare id would need a catalogue lookup to say, and that is
+        not worth a round trip, so it gets ``""`` until ``on_route`` knows.
+        """
+        head, sep, tail = (model or "").strip().partition("/")
+        return head if sep and tail and head in self.providers else ""
+
     def _order(self) -> list[str]:
         return [pid for pid, _ in self.ordered_providers()]
 
@@ -85,7 +95,8 @@ class Registry:
         extra = [pid for pid in providers if pid not in known]
         return [(pid, providers[pid]) for pid in known + extra]
 
-    def stream(self, model: str, body: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    def stream(self, model: str, body: dict[str, Any], *, on_route: RouteCallback | None = None) -> Iterator[dict[str, Any]]:
+        """One turn on the provider ``model`` resolves to; see :meth:`Provider.stream_using` for ``on_route``."""
         provider, upstream_model = self.resolve(model)
         # The effort policy is part of routing: the budget/patch a model's
         # reasoning level turns into is decided before any wire sees it.
@@ -100,9 +111,9 @@ class Registry:
                 "the station stopped answering for it.",
                 {"provider": provider.id, "model": upstream_model},
             )
-        return self._guarded(provider, upstream_model, prepared)
+        return self._guarded(provider, upstream_model, prepared, on_route)
 
-    def _guarded(self, provider: Provider, model: str, body: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    def _guarded(self, provider: Provider, model: str, body: dict[str, Any], on_route: RouteCallback | None = None) -> Iterator[dict[str, Any]]:
         """Stream one turn, teaching the dead-model store in both directions.
 
         A :class:`ModelGone` on the way out means every account in the pool
@@ -114,7 +125,7 @@ class Registry:
         key = (provider.id, model)
         answered = False
         try:
-            for chunk in provider.stream(model, body):
+            for chunk in provider.stream(model, body, on_route=on_route):
                 if not answered:
                     answered = True
                     self.dead_models.clear(*key)
@@ -123,7 +134,7 @@ class Registry:
             self.dead_models.strike(key[0], key[1], reason=f"HTTP {exc.status}")
             raise
 
-    def native_messages(self, model: str, context: MessagesRequest) -> Iterator[dict[str, Any]] | None:
+    def native_messages(self, model: str, context: MessagesRequest, *, on_route: RouteCallback | None = None) -> Iterator[dict[str, Any]] | None:
         """Route native requests through compatible accounts without Chat conversion."""
         provider, upstream_model = self.resolve(model)
         candidates = [account for account in provider._stream_candidates(upstream_model)
@@ -138,7 +149,7 @@ class Registry:
 
         def guarded() -> Iterator[dict[str, Any]]:
             try:
-                for chunk in provider.stream_using(upstream_model, context.body, send, candidates=candidates):
+                for chunk in provider.stream_using(upstream_model, context.body, send, candidates=candidates, on_route=on_route):
                     if chunk.get("type") == "messages_response" and not context.count_only:
                         self.dead_models.clear(provider.id, upstream_model)
                     yield chunk

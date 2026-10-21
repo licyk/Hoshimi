@@ -60,8 +60,9 @@ Management uses the tool access key under `/api/v1/*`.
 | Route group | Purpose |
 | --- | --- |
 | `/app/version`, `/app/health`, `/app/meta` | Version, health, paths, configured flags and counts |
-| `/settings` (`GET`, `PATCH`) | Read redacted settings, save and apply updates |
+| `/settings` (`GET`, `PATCH`) | Read redacted settings, save and apply updates; `restart_required` flags a saved host/port awaiting restart |
 | `/providers`, `/provider-forms` | Providers, account summaries and credential form metadata |
+| `/channels` | Every provider with accounts, renewal, cooling, passive quota, diagnostics, today's usage and a status word (memory only, no upstream calls) |
 | `/providers/{id}/accounts` (`POST`) | Validate and append an account |
 | `/providers/{id}/accounts/{account}` (`DELETE`) | Remove an account |
 | `/stations` | `agg` presets |
@@ -71,7 +72,9 @@ Management uses the tool access key under `/api/v1/*`.
 | `/refresh` (`GET`, `POST`) | Read or request credential renewal |
 | `/credits`, `/credits/claim` (`POST` for claim) | Balances, passive quota and check-in |
 | `/login/providers`, `/login/start`, `/login/poll`, `/login/input`, `/login/cancel` | Browser/device authorization |
-| `/stats` | Daily, model and recent-call usage |
+| `/stats?range=24h\|7d\|30d\|90d` (`GET`, `DELETE` to reset) | Range totals, zero-filled series, latency percentiles and model/provider/account/origin breakdowns |
+| `/stats/calls` | Recent calls, newest first; `limit`, `before` cursor and filters |
+| `/stats/live` | SSE: a snapshot of calls in flight, then `started`/`progress`/`finished` events |
 | `/playground/*` | Tool-authenticated chat without exposing the model API key |
 
 The running server's `/docs` and `/openapi.json` are the authoritative field and

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
@@ -84,6 +86,20 @@ class PassiveQuota(Record):
     counters: PassiveCounters = Field(default_factory=PassiveCounters)
 
 
+def passive_quota(row: dict[str, Any]) -> PassiveQuota:
+    """One row of :meth:`QuotaStore.snapshot` as the API returns it."""
+    return PassiveQuota(
+        provider=row["provider"],
+        remaining=row["remaining"],
+        limit=row["limit"],
+        percent=row["percent"],
+        source=row["source"],
+        updated_at=row["updated_at"],
+        stale=row["stale"],
+        counters=PassiveCounters(**row["counters"]),
+    )
+
+
 class ClaimRequest(BaseModel):
     """An on-demand claim round: nothing means "every provider"."""
 
@@ -112,20 +128,7 @@ def get_credits(services: ServicesDep, provider: str | None = None) -> BalanceRe
     # The switch is settings, not the credits service, so it travels even on an install
     # with no check-in thread at all.
     report = BalanceReport(checkin=CheckinState(auto_checkin=services.settings.auto_checkin))
-    report.passive = [
-        PassiveQuota(
-            provider=row["provider"],
-            remaining=row["remaining"],
-            limit=row["limit"],
-            percent=row["percent"],
-            source=row["source"],
-            updated_at=row["updated_at"],
-            stale=row["stale"],
-            counters=PassiveCounters(**row["counters"]),
-        )
-        for row in QUOTA.snapshot()
-        if provider is None or row["provider"] == provider
-    ]
+    report.passive = [passive_quota(row) for row in QUOTA.snapshot() if provider is None or row["provider"] == provider]
     report.cooled = [
         CooledAccount(provider=row["provider"], account=row["account"], reason=row["reason"], seconds_left=row["seconds_left"])
         for lane in services.registry.providers.values()

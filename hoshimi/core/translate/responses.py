@@ -480,8 +480,17 @@ def _responses_usage(raw: dict[str, Any]) -> dict[str, Any]:
         "total_tokens": total,
     }
     details = raw.get("input_tokens_details")
-    if _is_object(details) and details.get("cached_tokens") is not None:
-        out["prompt_tokens_details"] = {"cached_tokens": _nonneg(details.get("cached_tokens"))}
+    if _is_object(details):
+        # Writes are OpenRouter's addition to the Responses usage object; the
+        # spelling follows its Chat dialect, or `cache_creation_tokens`.
+        cache: dict[str, Any] = {}
+        if details.get("cached_tokens") is not None:
+            cache["cached_tokens"] = _nonneg(details.get("cached_tokens"))
+        written = details.get("cache_write_tokens", details.get("cache_creation_tokens"))
+        if written is not None:
+            cache["cache_write_tokens"] = _nonneg(written)
+        if cache:
+            out["prompt_tokens_details"] = cache
     details = raw.get("output_tokens_details")
     if _is_object(details) and details.get("reasoning_tokens") is not None:
         out["completion_tokens_details"] = {"reasoning_tokens": _nonneg(details.get("reasoning_tokens"))}

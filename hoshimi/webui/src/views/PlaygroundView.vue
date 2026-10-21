@@ -6,7 +6,7 @@ import { streamChat, type ChatMessage } from '@/api/chat';
 import { useModelSpecs, useModels } from '@/api/queries/app';
 import { useI18n } from '@/i18n';
 import CatalogStatus from '@/components/CatalogStatus.vue';
-import { AppButton, EmptyState, FieldRow, IconButton, SelectField, Skeleton, icons, useSnackbar } from '@/ui';
+import { AppButton, EmptyState, FieldRow, IconButton, PickerMenu, SelectField, Skeleton, TRANSITIONS, icons, useSnackbar } from '@/ui';
 
 const { t } = useI18n();
 const route = useRoute();
@@ -31,7 +31,8 @@ watch(
   },
   { immediate: true },
 );
-const modelOptions = computed(() => (models.data.value?.data ?? []).map((m) => ({ value: m.id, label: m.id })));
+// A catalogue runs to hundreds of ids: the picker searches them, and names a model beside its id.
+const modelOptions = computed(() => (models.data.value?.data ?? []).map((m) => ({ value: m.id, label: m.id, description: [m.display_name !== m.id ? m.display_name : '', m.owned_by].filter(Boolean).join(' · '), keywords: [m.owned_by, m.display_name ?? ''] })));
 /** The model in front of the picker: its effort menu is that model's, not the lane's. */
 const spec = computed(() => specs.data.value?.data.find((m) => m.id === model.value));
 /** `''` sends no level at all — the gateway then leaves the body exactly as it was. */
@@ -126,12 +127,16 @@ function onKeydown(event: KeyboardEvent) {
   <div class="playground">
     <FieldRow>
       <div class="head-controls">
-        <SelectField
+        <PickerMenu
           class="model"
           :model-value="model"
           :label="t('playground.model')"
           :options="modelOptions"
           :disabled="streaming || !modelOptions.length"
+          :loading="models.isFetching.value && !modelOptions.length"
+          :search-label="t('models.search')"
+          :search-from="8"
+          :no-matches="t('models.none')"
           @update:model-value="setModel"
         />
         <SelectField
@@ -161,7 +166,7 @@ function onKeydown(event: KeyboardEvent) {
         :title="models.data.value?.data.length ? t('playground.empty') : t('playground.noModels')"
         :text="models.data.value?.data.length ? t('playground.emptyText') : t('playground.noModelsText')"
       />
-      <template v-else>
+      <TransitionGroup v-else :name="TRANSITIONS.list" tag="div" class="turns">
         <div v-for="(turn, i) in turns" :key="i" class="turn" :class="turn.role">
           <span class="who type-label-medium">{{ turn.role === 'user' ? t('playground.you') : t('playground.assistant') }}</span>
           <div class="bubble type-body-medium">
@@ -169,7 +174,7 @@ function onKeydown(event: KeyboardEvent) {
             <span v-else class="muted">{{ t('playground.streaming') }}</span>
           </div>
         </div>
-      </template>
+      </TransitionGroup>
     </div>
 
     <div class="composer">
@@ -195,6 +200,7 @@ function onKeydown(event: KeyboardEvent) {
 .model { flex: 1 1 280px; min-width: 0; }
 .effort { flex: 0 1 200px; min-width: 0; }
 .thread { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: var(--app-space-3); padding: var(--app-space-2) 0; }
+.turns { display: flex; flex-direction: column; gap: var(--app-space-3); }
 .loading { display: flex; flex-direction: column; gap: var(--app-space-2); }
 .turn { display: flex; flex-direction: column; gap: var(--app-space-1); max-width: min(760px, 100%); }
 .turn.assistant { align-self: flex-start; }

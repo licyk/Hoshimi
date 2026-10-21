@@ -1,148 +1,85 @@
-import { mount, flushPromises } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia } from 'pinia';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ref } from 'vue';
 import ChannelsView from '@/views/ChannelsView.vue';
 
-const state = vi.hoisted(() => ({ provider: 'nvidia', add: vi.fn(), cancel: vi.fn(), submit: vi.fn(), start: vi.fn(), poll: vi.fn(), done: vi.fn() }));
-
-vi.mock('@/api/queries/app', () => ({
-  useProviders: () => ({ data: { value: [{ id: state.provider, display_name: state.provider, keyless: state.provider === 'kilo', account_ids: [], enabled: true }] }, isPending: { value: false }, isFetching: { value: false } }),
-  useSettings: () => ({ data: { value: { server: {} } } }),
-  useUpdateSettings: () => ({ mutate: vi.fn() }),
-}));
-vi.mock('@/api/queries/channels', () => {
-  const query = () => ({ data: { value: {} } });
-  const mutation = () => ({ mutate: vi.fn(), isPending: { value: false } });
-  return {
-    useStations: () => ({ data: { value: [] } }),
-    useProviderForms: () => ({ data: { value: [{ id: state.provider, forms: state.provider === 'ollama'
-      ? [{ method: 'local', defaults: { base_url: 'http://localhost:11434/v1' }, fields: [{ key: 'base_url', kind: 'text', required: false }, { key: 'api_key', kind: 'secret', required: false }] }]
-      : [{ method: 'api_key', defaults: {}, fields: [{ key: 'api_key', kind: 'secret', required: true }] }] }] } }),
-    useLoginProviders: () => ({ data: { value: ['kilo'] } }),
-    useBalances: query, useRefreshStatus: query, useDeleteAccount: mutation, useClaimCredits: mutation, useRefreshNow: mutation,
-    useLoginDone: () => state.done,
-    useAddAccount: () => ({ mutate: state.add, isPending: { value: false } }),
-    startLogin: state.start, pollLogin: state.poll, cancelLogin: state.cancel, submitLoginInput: state.submit,
-  };
+const zero = { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0, calls: 0, failed: 0, no_usage: 0 };
+const channel = (id: string, status: string, accounts = 1) => ({
+  id, display_name: id, status, enabled: status !== 'disabled', keyless: false, configured: true, requires_authorization: false, loginable: false, addable: true,
+  forms: [], models: 0, options: [], network: { mode: 'inherit', proxy_configured: false, system_proxy: false }, client_profile: null, diagnostics: [], quota: null,
+  accounts: Array.from({ length: accounts }, (_, i) => ({ id: `${id}-${i}`, needs_login: false, refreshable: false, expires_at: null, failures: 0, last_error: null, last_ok: null, cooled_reason: '', cooled_seconds: 0, usage_today: zero, last_used_at: null })),
+  usage_today: zero,
 });
+const report = ref({ channels: [channel('zeta', 'ok'), channel('alpha', 'attention'), channel('beta', 'disabled')], checkin: { last_date: '', last_result: '', last_at: 0, auto_checkin: true }, auto_refresh: true, auto_checkin: true });
+const replace = vi.fn();
+
+vi.mock('vue-router', () => ({ useRouter: () => ({ replace, push: vi.fn() }), RouterLink: { props: ['to'], template: '<slot :href="to" :navigate="() => {}" />' } }));
+vi.mock('@/api/queries/channels', () => ({
+  useChannels: () => ({ data: report, isPending: { value: false } }),
+  useBalances: () => ({ data: { value: undefined } }),
+  useClaimCredits: () => ({ mutate: vi.fn(), isPending: { value: false } }),
+  useRefreshNow: () => ({ mutate: vi.fn(), isPending: { value: false } }),
+}));
+vi.mock('@/components/ChannelDetail.vue', () => ({ default: { props: ['channel'], template: '<section class="detail">{{ channel.id }}</section>' } }));
 vi.mock('@/ui', () => {
   const slot = { template: '<div><slot /></div>' };
   return {
-    icons: {}, Surface: slot, Badge: slot, Skeleton: slot, Switch: slot, ConfirmDialog: slot, EmptyState: slot, IconButton: slot,
-    AppButton: { props: ['disabled'], emits: ['click'], template: '<button :disabled="disabled" @click="$emit(\'click\')"><slot /></button>' },
-    TextField: { props: ['label', 'type', 'modelValue'], template: '<label>{{ label }}<input :type="type" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" /></label>' },
-    SelectField: slot,
-    AppDialog: { props: ['open'], template: '<div v-if="open"><slot /><slot name="actions" /></div>' },
+    icons: {}, AppButton: slot, IconButton: slot, Badge: { props: ['value'], template: '<span class="badge">{{ value }}</span>' }, Meter: slot, Skeleton: slot, SearchField: slot,
+    Toolbar: { template: '<div><slot /><slot name="end" /></div>' },
+    EmptyState: { props: ['title'], template: '<p class="empty">{{ title }}</p>' },
+    Chip: { props: ['label', 'count', 'selected'], emits: ['click'], template: '<button class="chip" :aria-pressed="selected" @click="$emit(\'click\')">{{ label }} {{ count }}</button>' },
+    ListDetail: { props: ['detail'], template: '<div><slot name="list" /><slot v-if="detail" name="detail" :wide="true" /><slot v-else name="placeholder" /></div>' },
+    TRANSITIONS: { list: 'list' }, keepLeavingInPlace: {},
     useSnackbar: () => ({ show: vi.fn(), error: vi.fn() }),
   };
 });
 
-describe('channel credential and login flows', () => {
+const names = (w: ReturnType<typeof mount>) => w.findAll('.row .name').map((n) => n.text());
+
+describe('the channels list', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    state.provider = 'nvidia';
-    state.cancel.mockResolvedValue({ cancelled: true });
-    state.submit.mockResolvedValue({ accepted: true });
-    vi.spyOn(window, 'open').mockReturnValue(null);
-  });
-  afterEach(() => vi.useRealTimers());
-  it('adds a NVIDIA key without demanding an aggregator URL', async () => {
-    const wrapper = mount(ChannelsView, { global: { plugins: [createPinia()] } });
-    await wrapper.findAll('button').find((button) => button.text() === 'Add account')!.trigger('click');
-    expect(wrapper.text()).not.toContain('Base URL');
-    await wrapper.find('input[type="password"]').setValue('secret');
-    await wrapper.findAll('button').find((button) => button.text() === 'Save account')!.trigger('click');
-    expect(state.add.mock.calls[0][0]).toEqual({ provider: 'nvidia', account: { api_key: 'secret' } });
-    wrapper.unmount();
-  });
-  it('adds a local Ollama server without requiring a key', async () => {
-    state.provider = 'ollama';
-    const wrapper = mount(ChannelsView, { global: { plugins: [createPinia()] } });
-    await wrapper.findAll('button').find((button) => button.text() === 'Add account')!.trigger('click');
-    await flushPromises();
-    await wrapper.findAll('button').find((button) => button.text() === 'Save account')!.trigger('click');
-    expect(state.add.mock.calls[0][0]).toEqual({ provider: 'ollama', account: { base_url: 'http://localhost:11434/v1' } });
-    wrapper.unmount();
-  });
-  it('shows Kilo logged out, displays device codes, accepts manual input and cancels', async () => {
-    state.provider = 'kilo';
-    const session = { id: 'session', provider: 'kilo', status: 'pending', login_url: 'https://login.example', user_code: 'ABCD', waiting_for: 'manual_code' };
-    state.start.mockResolvedValue(session);
-    state.poll.mockResolvedValue(session);
-    const wrapper = mount(ChannelsView, { global: { plugins: [createPinia()] } });
-    await wrapper.findAll('button').find((button) => button.text() === 'Sign in')!.trigger('click');
-    await flushPromises();
-    expect(wrapper.text()).toContain('ABCD');
-    await wrapper.find('input[type="password"]').setValue('code#state');
-    await wrapper.findAll('button').find((button) => button.text() === 'Submit code')!.trigger('click');
-    await flushPromises();
-    expect(state.submit).toHaveBeenCalledWith('session', 'code#state');
-    await wrapper.findAll('button').find((button) => button.text() === 'Close')!.trigger('click');
-    expect(state.cancel).toHaveBeenCalledWith('session');
-    wrapper.unmount();
-  });
-  it('cancels a session that starts after its dialog has closed', async () => {
-    state.provider = 'kilo';
-    let resolve!: (value: unknown) => void;
-    state.start.mockReturnValue(new Promise((done) => { resolve = done; }));
-    const wrapper = mount(ChannelsView, { global: { plugins: [createPinia()] } });
-    await wrapper.findAll('button').find((button) => button.text() === 'Sign in')!.trigger('click');
-    await wrapper.findAll('button').find((button) => button.text() === 'Close')!.trigger('click');
-    resolve({ id: 'late-session', status: 'pending' });
-    await flushPromises();
-    expect(state.cancel).toHaveBeenCalledWith('late-session');
-    expect(state.poll).not.toHaveBeenCalled();
-    wrapper.unmount();
+    report.value.channels = [channel('zeta', 'ok'), channel('alpha', 'attention'), channel('beta', 'disabled')];
   });
 
-  it('closes after a successful login and refreshes account data without cancelling it', async () => {
-    vi.useFakeTimers();
-    state.provider = 'kilo';
-    const session = { id: 'session', provider: 'kilo', status: 'pending' };
-    state.start.mockResolvedValue(session);
-    state.poll.mockResolvedValueOnce(session).mockResolvedValue({ ...session, status: 'succeeded', account_id: 'kilo-account' });
-    const wrapper = mount(ChannelsView, { global: { plugins: [createPinia()] } });
-    await wrapper.findAll('button').find((button) => button.text() === 'Sign in')!.trigger('click');
+  it('keeps rows where they were when saving moves a channel in the server order', async () => {
+    const w = mount(ChannelsView, { global: { plugins: [createPinia()] } });
+    await w.findAll('.chip').find((c) => c.text().startsWith('All'))!.trigger('click');
+    const original = names(w);
+    expect(original).toEqual(['zeta', 'alpha', 'beta']);
+    // Switching beta on lists it first on the server; its row must not jump.
+    report.value.channels = [channel('beta', 'ok'), channel('zeta', 'ok'), channel('alpha', 'attention')];
     await flushPromises();
-    expect(wrapper.find('.login-body').exists()).toBe(true);
-    await vi.advanceTimersByTimeAsync(1500);
+    expect(names(w)).toEqual(original);
+    report.value.channels = [...report.value.channels, channel('new', 'empty', 0)];
     await flushPromises();
-    expect(wrapper.find('.login-body').exists()).toBe(false);
-    expect(state.done).toHaveBeenCalledOnce();
-    expect(state.cancel).not.toHaveBeenCalled();
-    const calls = state.poll.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(3000);
-    expect(state.poll).toHaveBeenCalledTimes(calls);
-    wrapper.unmount();
+    expect(names(w)).toEqual([...original, 'new']);
   });
 
-  it.each(['failed', 'cancelled', 'expired'])('keeps the dialog open when login is %s', async (status) => {
-    state.provider = 'kilo';
-    state.start.mockResolvedValue({ id: 'session', provider: 'kilo', status: 'pending' });
-    state.poll.mockResolvedValue({ id: 'session', provider: 'kilo', status, message: 'Login did not finish' });
-    const wrapper = mount(ChannelsView, { global: { plugins: [createPinia()] } });
-    await wrapper.findAll('button').find((button) => button.text() === 'Sign in')!.trigger('click');
-    await flushPromises();
-    expect(wrapper.find('.login-body').text()).toContain('Login did not finish');
-    expect(state.done).not.toHaveBeenCalled();
-    wrapper.unmount();
+  it('starts from the channels in use and filters by what needs doing, with a count on each filter', async () => {
+    const w = mount(ChannelsView, { global: { plugins: [createPinia()] } });
+    const chip = (label: string) => w.findAll('.chip').find((c) => c.text().startsWith(label))!;
+    expect(names(w)).toEqual(['zeta', 'alpha']);
+    expect(chip('Needs attention').text()).toBe('Needs attention 1');
+    await chip('Needs attention').trigger('click');
+    expect(names(w)).toEqual(['alpha']);
+    await chip('Off').trigger('click');
+    expect(names(w)).toEqual(['beta']);
   });
 
-  it('keeps the dialog open if starting login or polling fails', async () => {
-    state.provider = 'kilo';
-    state.start.mockRejectedValueOnce(new Error('Cannot start login'));
-    const wrapper = mount(ChannelsView, { global: { plugins: [createPinia()] } });
-    const signIn = () => wrapper.findAll('button').find((button) => button.text() === 'Sign in')!.trigger('click');
-    await signIn();
+  it('shows every station when nothing is in use yet, and a chosen channel the filter would hide', async () => {
+    report.value.channels = [channel('a', 'empty', 0), channel('b', 'disabled')];
+    const w = mount(ChannelsView, { props: { id: 'b' }, global: { plugins: [createPinia()] } });
+    expect(names(w)).toEqual(['a', 'b']);
+  });
+
+  it('opens the chosen channel, and leaves for the list when it goes away', async () => {
+    const w = mount(ChannelsView, { props: { id: 'alpha' }, global: { plugins: [createPinia()] } });
+    expect(w.find('.detail').text()).toBe('alpha');
+    expect(w.find('.row.selected .name').text()).toBe('alpha');
+    report.value.channels = [channel('zeta', 'ok')];
     await flushPromises();
-    expect(wrapper.find('.login-body').text()).toContain('Cannot start login');
-    await wrapper.findAll('button').find((button) => button.text() === 'Close')!.trigger('click');
-    state.start.mockResolvedValue({ id: 'session', provider: 'kilo', status: 'pending' });
-    state.poll.mockRejectedValueOnce(new Error('Network unavailable'));
-    await signIn();
-    await flushPromises();
-    expect(wrapper.find('.login-body').exists()).toBe(true);
-    expect(state.done).not.toHaveBeenCalled();
-    wrapper.unmount();
+    expect(replace).toHaveBeenCalledWith('/channels');
   });
 });

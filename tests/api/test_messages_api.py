@@ -31,8 +31,9 @@ def test_messages_defaults_to_json_and_counts_one_turn(client, services):
     assert message["stop_reason"] == "end_turn"
     assert message["usage"]["input_tokens"] == 1
     assert response.headers["request-id"] == message["id"]
-    sample = services.stats.snapshot()["samples"][-1]
-    assert sample["origin"] == "messages"
+    sample = services.stats.calls(limit=1)[0][0]
+    assert sample["origin"] == "messages" and sample["stream"] is False
+    assert (sample["provider"], sample["account"]) == ("fake", "fake-0")
 
 
 def test_messages_stream_has_named_events_and_no_done(client):
@@ -85,7 +86,7 @@ def test_tool_loop_can_be_replayed_through_the_same_account(client, services, mo
 
 @pytest.mark.parametrize("stream", [False, True])
 def test_early_upstream_errors_keep_the_http_status(client, services, monkeypatch, stream):
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise ProviderError(429, "busy")
 
     monkeypatch.setattr(services.registry, "stream", fail)

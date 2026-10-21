@@ -1,4 +1,4 @@
-/** Query keys, shared by the query modules. */
+/** Query keys, shared by the query modules and the live store. Hierarchical: invalidating a prefix invalidates every key under it. */
 export const keys = {
   meta: ['app', 'meta'] as const,
   version: ['app', 'version'] as const,
@@ -8,7 +8,10 @@ export const keys = {
   network: ['network', 'diagnostics'] as const,
   catalog: ['catalog'] as const,
   stats: ['stats'] as const,
+  usage: (range: string) => ['stats', 'report', range] as const,
+  calls: (filters: Record<string, unknown>) => ['stats', 'calls', filters] as const,
   probe: ['probe'] as const,
+  channels: ['channels'] as const,
   balances: ['credits', 'balances'] as const,
   refresh: ['refresh', 'status'] as const,
   loginProviders: ['login', 'providers'] as const,

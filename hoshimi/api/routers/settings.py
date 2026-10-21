@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Request
 from pydantic import Field
 
 from hoshimi.api.deps import ServicesDep
@@ -48,26 +48,38 @@ class ProviderView(Record):
     client_profile: str | None = None
 
 
-def _network_view(raw: dict[str, Any], default: str = "auto") -> NetworkView:
+def network_view(raw: dict[str, Any], default: str = "auto") -> NetworkView:
     return NetworkView(mode=raw.get("mode", default), proxy_configured=bool(raw.get("proxy")), system_proxy=bool(raw.get("system_proxy")))
 
 
 class SettingsView(Record):
-    """Settings as returned to clients: only key presence is disclosed."""
+    """Settings as returned to clients: only key presence is disclosed.
+
+    ``restart_required`` says a saved ``server.host``/``server.port`` has not
+    taken effect: the socket is bound once, at start, and a settings save
+    cannot move it. Compared against the values this process was *started
+    with*, not the socket itself, so a port that fell back to the next free
+    one (or a ``--port`` override) is not reported as a pending change no
+    restart would resolve. False when the process did not bind a socket of
+    its own (an embedder, a test, the schema generator).
+    """
 
     data_dir: str
     config_path: str
     server: ServerView
     providers: list[ProviderView]
     network: NetworkView = Field(default_factory=NetworkView)
+    restart_required: bool = False
 
 
-def _view(services: Services) -> SettingsView:
+def _view(services: Services, request: Request | None = None) -> SettingsView:
     settings = services.settings
+    started = getattr(request.app.state, "started_listen", None) if request is not None else None
     return SettingsView(
         data_dir=str(services.data_dir),
+        restart_required=started is not None and tuple(started) != (settings.host, settings.port),
         config_path=str(services.config_path),
-        network=_network_view(settings.network.as_dict()),
+        network=network_view(settings.network.as_dict()),
         server=ServerView(
             host=settings.host,
             port=settings.port,
@@ -84,7 +96,7 @@ def _view(services: Services) -> SettingsView:
         ),
         providers=[
             ProviderView(id=pid, enabled=cfg.enabled, accounts=len(cfg.accounts), options=sorted(cfg.options),
-                         network=_network_view(cfg.options.get("network") or {}, "inherit"),
+                         network=network_view(cfg.options.get("network") or {}, "inherit"),
                          client_profile=cfg.options.get("client_profile", "sdk") if pid == "cline" else None)
             for pid, cfg in sorted(settings.providers.items())
         ],
@@ -102,13 +114,14 @@ def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("/settings", operation_id="get_settings")
-def get_settings(services: ServicesDep) -> SettingsView:
-    return _view(services)
+def get_settings(services: ServicesDep, request: Request) -> SettingsView:
+    return _view(services, request)
 
 
 @router.patch("/settings", operation_id="update_settings", responses=ERROR_RESPONSES)
 def update_settings(
     services: ServicesDep,
+    request: Request,
     patch: Annotated[dict[str, Any], Body(description="Partial settings, deep-merged into the config file. A server.access_token set to null is cleared.")],
 ) -> SettingsView:
     """Merge ``patch`` into the config file and into the running gateway alike.
@@ -129,7 +142,7 @@ def update_settings(
         raise ValidationError(problem)
     save_settings(updated)
     services.apply_settings(updated)
-    return _view(services)
+    return _view(services, request)
 
 
 def _validate(settings: Settings) -> str | None:
