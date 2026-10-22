@@ -145,7 +145,7 @@ git push origin v0.5.0
 本站（`site/`）与发行包分开部署：
 
 - **Netlify**（主站，[hoshimi-dev.netlify.app](https://hoshimi-dev.netlify.app)）：每次推送到 `main` 都构建 `site/`，配置在仓库根目录的 `netlify.toml`；`site/` 没有改动时跳过构建。
-- **GitHub Pages**（备份，[licyk.github.io/Hoshimi](https://licyk.github.io/Hoshimi/)）：`.github/workflows/site.yml` 以 `VITE_BASE_PATH=/Hoshimi/` 构建站点，并用 GitHub 官方的 Pages actions 发布。备份站的页面带有指向 Netlify 站点的 canonical 链接。
+- **GitHub Pages**（备份，[licyk.github.io/Hoshimi](https://licyk.github.io/Hoshimi/)）：`.github/workflows/site.yml` 以 `VITE_BASE_PATH=/Hoshimi/` 构建站点，并强制推送到 `gh-pages` 分支，由 Pages 提供服务。备份站的页面带有指向 Netlify 站点的 canonical 链接。
 - CI 的共享检查也会对文档站做类型检查、测试和构建，所以一个让站点构建失败的改动过不了 CI。
 
 站点的结构、写法和本地构建见[文档站](/docs/development-site)。

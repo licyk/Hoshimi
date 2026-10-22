@@ -160,7 +160,7 @@ Both languages share one table; only the words around it differ. Run it again af
 | Site | Address | How |
 | --- | --- | --- |
 | Main | [hoshimi-dev.netlify.app](https://hoshimi-dev.netlify.app) | Netlify builds `site/` on every push to `main`, configured by `netlify.toml` at the repository root; it skips builds when `site/` did not change |
-| Backup | [licyk.github.io/Hoshimi](https://licyk.github.io/Hoshimi/) | `.github/workflows/site.yml` builds with `VITE_BASE_PATH=/Hoshimi/` and publishes with GitHub's official Pages actions |
+| Backup | [licyk.github.io/Hoshimi](https://licyk.github.io/Hoshimi/) | `.github/workflows/site.yml` builds with `VITE_BASE_PATH=/Hoshimi/` and force-pushes the output to the `gh-pages` branch (with the `GITEE_RSA_PRIVATE_KEY` deploy key), which Pages serves |
 
 The site can live under a sub-path: `VITE_BASE_PATH` sets Vite's `base`, and the routes and the search index follow it. Pages on the backup carry a canonical link to the Netlify site, so search engines treat the main site as the original. CI's shared checks also type-check, test and build the site.
 

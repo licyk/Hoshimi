@@ -1,5 +1,5 @@
 # The documentation site (site/), built by Netlify at https://hoshimi-dev.netlify.app on every push to main,
-# with a preview for every pull request. GitHub Pages keeps a copy (.github/workflows/site.yml).
+# with a preview for every pull request. GitHub Pages keeps a copy on the gh-pages branch (.github/workflows/site.yml).
 [build]
   base = "site"
   command = "bun install --frozen-lockfile && bun run build"

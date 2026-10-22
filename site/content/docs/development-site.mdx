@@ -160,7 +160,7 @@ python scripts/generate_provider_inventory.py
 | 站点 | 地址 | 方式 |
 | --- | --- | --- |
 | 主站 | [hoshimi-dev.netlify.app](https://hoshimi-dev.netlify.app) | Netlify 在每次推送到 `main` 时构建 `site/`，配置在仓库根目录的 `netlify.toml`；`site/` 没有改动时跳过 |
-| 备份 | [licyk.github.io/Hoshimi](https://licyk.github.io/Hoshimi/) | `.github/workflows/site.yml` 以 `VITE_BASE_PATH=/Hoshimi/` 构建，用 GitHub 官方的 Pages actions 发布 |
+| 备份 | [licyk.github.io/Hoshimi](https://licyk.github.io/Hoshimi/) | `.github/workflows/site.yml` 以 `VITE_BASE_PATH=/Hoshimi/` 构建，并（用 `GITEE_RSA_PRIVATE_KEY` 部署密钥）强制推送到 `gh-pages` 分支，由 Pages 提供服务 |
 
 站点支持部署在子路径下：`VITE_BASE_PATH` 设置 Vite 的 `base`，路由和搜索索引都跟随它。备份站的页面带有指向 Netlify 站点的 canonical 链接，让搜索引擎以主站为准。CI 的共享检查也会对站点做类型检查、测试和构建。
 
