@@ -21,6 +21,9 @@ import { milliseconds } from '@/ui/motion/transitions';
  * It opens growing out of the composer, its rows coming in one after another; rows that stop
  * matching fade as the rest close up, and a list opened from a command slides in from the side
  * (and back out to it), the menu easing to its new height.
+ *
+ * ``toggle('status')`` opens the status on its own, from a button, leaving the draft alone: it
+ * then takes Escape (or a press elsewhere) to close, and gives way as soon as anything is typed.
  */
 const props = defineProps<{
   draft: string;
@@ -46,7 +49,11 @@ const parsed = computed(() => parseDraft(props.draft));
 /** The command named before a space: its list (or the status) is open, or it waits for Enter with its words. */
 const named = computed(() => (parsed.value?.spaced ? find(parsed.value.name) : undefined));
 type View = 'commands' | SlashPage;
+/** The status opened from its button rather than typed: shown whatever the draft says, until closed or typed over. */
+const shown = ref<'status' | null>(null);
+watch(() => props.draft, () => (shown.value = null));
 const view = computed<View | null>(() => {
+  if (shown.value) return shown.value;
   const draft = parsed.value;
   if (!draft) return null;
   if (!draft.spaced) return 'commands';
@@ -75,8 +82,13 @@ const selectedValue = (o: ComposerOption) =>
 // Closed by Escape (or a press elsewhere) until what the draft names changes.
 const token = computed(() => (parsed.value ? `${view.value}|${parsed.value.name.toLowerCase()}|${parsed.value.spaced}` : ''));
 const dismissed = ref('');
-const open = computed(() => !!view.value && token.value !== dismissed.value && (view.value !== 'commands' || matches.value.length > 0));
-const dismiss = () => (dismissed.value = token.value);
+// Typing another command (or anything else) forgets what was closed: the same one typed again opens.
+watch(token, (next) => next !== dismissed.value && (dismissed.value = ''));
+const open = computed(() => !!shown.value || (!!view.value && token.value !== dismissed.value && (view.value !== 'commands' || matches.value.length > 0)));
+function dismiss() {
+  if (shown.value) shown.value = null;
+  else dismissed.value = token.value;
+}
 
 const active = ref(0);
 watch([token, query], () => {
@@ -179,7 +191,7 @@ function activate(i: number) {
     emit('run', c.id, parsed.value?.spaced ? query.value : '');
     return;
   }
-  if (view.value === 'status') return emit('update:draft', '');
+  if (view.value === 'status') return shown.value ? dismiss() : emit('update:draft', '');
   const o = options.value[i];
   if (!o) return;
   if (o.disabled) return refuse(i);
@@ -191,6 +203,8 @@ const back = () => emit('update:draft', '/');
 /** The composer's keys, before it acts on them; true when the menu dealt with one. */
 function onKey(e: KeyboardEvent): boolean {
   if (!open.value || e.isComposing || e.keyCode === 229) return false;
+  // Opened from its button: the draft is the user's own, and only Escape is the menu's.
+  if (shown.value && e.key !== 'Escape') return false;
   const step = e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n') ? 1 : e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p') ? -1 : 0;
   if (step) {
     e.preventDefault();
@@ -217,6 +231,10 @@ function onKey(e: KeyboardEvent): boolean {
 }
 /** Open again what Escape closed (the draft names a command that lists): Enter on a closed menu. */
 const reopen = () => (dismissed.value = '');
+/** Open the status from its button, or close it if it is open so. */
+function toggle(page: 'status') {
+  shown.value = shown.value === page ? null : page;
+}
 
 const title = computed(() => {
   switch (view.value) {
@@ -240,7 +258,7 @@ const describe = (c: SlashCommand) => {
 };
 const combobox = computed(() => ({ expanded: open.value, controls: `${uid}-list`, active: count.value ? `${uid}-${active.value}` : undefined }));
 
-defineExpose({ onKey, reopen, combobox, open });
+defineExpose({ onKey, reopen, toggle, combobox, open });
 </script>
 
 <template>
@@ -248,14 +266,16 @@ defineExpose({ onKey, reopen, combobox, open });
     <Transition :name="TRANSITIONS.popover">
       <div v-if="open" ref="menu" class="slash-menu" role="dialog" :aria-label="title" :style="{ ...position, zIndex: layer.zIndex.value }">
         <header class="head">
-          <button v-if="view !== 'commands'" type="button" class="back state-layer" :aria-label="t('playground.slash.back')" :title="t('playground.slash.back')" @pointerdown.prevent @click="back">
+          <button v-if="view !== 'commands' && !shown" type="button" class="back state-layer" :aria-label="t('playground.slash.back')" :title="t('playground.slash.back')" @pointerdown.prevent @click="back">
             <AppIcon :icon="icons.ArrowLeft" :size="18" />
           </button>
           <span class="type-title-small">{{ title }}</span>
           <span v-if="view !== 'commands' && query" class="type-body-small muted query">“{{ query }}”</span>
           <span class="keys type-body-small muted" aria-hidden="true">
-            <KeyHint keys="ArrowUp" /><KeyHint keys="ArrowDown" />
-            <KeyHint keys="Enter" />
+            <template v-if="!shown">
+              <KeyHint keys="ArrowUp" /><KeyHint keys="ArrowDown" />
+              <KeyHint keys="Enter" />
+            </template>
             <template v-if="view === 'commands'"><KeyHint keys="Tab" /></template>
             <KeyHint keys="Escape" />
           </span>

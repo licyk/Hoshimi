@@ -650,6 +650,13 @@ describe('Playground commands, compaction and run time', () => {
     expect(calls('POST', /^\/conversations/)).toEqual([]);
     await type(wrapper, '/for');
     expect(menu()).not.toBeNull();
+    // Closed, then typed again from scratch: it opens again.
+    await type(wrapper, '/status ');
+    await key(wrapper, 'Escape');
+    expect(menu()).toBeNull();
+    await type(wrapper, '');
+    await type(wrapper, '/status ');
+    expect(document.querySelector('.slash-menu .status-panel')).not.toBeNull();
     // A path is a message, not a command.
     await type(wrapper, '/etc/hosts');
     expect(menu()).toBeNull();
@@ -716,6 +723,25 @@ describe('Playground commands, compaction and run time', () => {
     expect(panel.textContent).toContain('9.1K of 131K tokens used');
     expect(panel.textContent).toContain('4K cached');
     expect(panel.textContent).toContain('Last reply 1m 23s');
+    // The ring leaves the box alone, and opens the status as often as it is pressed.
+    const box = () => (wrapper.find('.composer textarea').element as HTMLTextAreaElement).value;
+    expect(box()).toBe('');
+    await ring.trigger('click');
+    await flushPromises();
+    expect(menu()).toBeNull();
+    await ring.trigger('click');
+    await flushPromises();
+    expect(menu()).not.toBeNull();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await flushPromises();
+    expect(menu()).toBeNull();
+    await ring.trigger('click');
+    await flushPromises();
+    expect(document.querySelector('.slash-menu .status-panel')).not.toBeNull();
+    // Typing gives the box back: the status closes, and the draft is the user's.
+    await type(wrapper, 'hello');
+    expect(menu()).toBeNull();
+    expect(box()).toBe('hello');
     wrapper.unmount();
   });
 });

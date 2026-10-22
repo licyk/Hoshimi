@@ -485,10 +485,8 @@ function chooseSlash(page: SlashPage, value: string) {
   }
 }
 const onSlashPage = (page: SlashPage) => page === 'status' && void chat.refreshContext();
-function openStatus() {
-  draft.value = '/status ';
-  void nextTick(() => composer.value?.focus());
-}
+/** The ring opens the status over the composer, and closes it again; what is in the box stays as it was. */
+const openStatus = () => slash.value?.toggle('status');
 /**
  * A draft that names a command, sent with Enter once its menu was closed: it runs (or its list opens
  * again) rather than going out as a message. Anything else (a path, a word after a slash) is a message.
