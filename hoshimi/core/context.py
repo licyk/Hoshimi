@@ -18,6 +18,7 @@ from hoshimi.core.probe import PROBE_FILE_NAME, ProbeStore
 from hoshimi.core.refresh import Refresher
 from hoshimi.core.registry import Registry, build_registry
 from hoshimi.core.stats import STATS_FILE_NAME, StatsStore
+from hoshimi.core.updates import UpdateChecker
 
 
 @dataclass
@@ -28,8 +29,9 @@ class Services:
     owns provider HTTP clients and the enabled providers, ``db`` is the one
     ``hoshimi.db`` connection the stores below share, ``probe`` holds the last
     availability verdict per model, ``stats`` counts what the gateway served
-    (and, through ``stats.live``, what it is serving right now), and
-    ``refresher`` renews credentials on a timer.
+    (and, through ``stats.live``, what it is serving right now),
+    ``refresher`` renews credentials on a timer, and ``updates`` asks PyPI
+    whether a newer release exists.
 
     Built directly (tests, embedders), every store keeps its rows in memory.
     """
@@ -42,10 +44,13 @@ class Services:
     refresher: Refresher | None = None
     credits: CreditsService | None = None
     login: LoginManager | None = None
+    updates: UpdateChecker | None = None
 
     def __post_init__(self) -> None:
         MODELSDEV.network = self.settings.network
         self.stats.keep_days = self.settings.stats_keep_days
+        if self.updates is not None:
+            self.updates.network = self.settings.network
 
     @property
     def data_dir(self) -> Path:
@@ -62,6 +67,8 @@ class Services:
             self.credits.stop()
         if self.login is not None:
             self.login.close()
+        if self.updates is not None:
+            self.updates.stop()
         self.registry.close()
         # Writes are batched; whatever the last second counted lands now. Then
         # the database closes — a second close (the lifespan and the serve
@@ -103,6 +110,13 @@ class Services:
             self.credits.settings = settings
         if self.login is not None:
             self.login.settings = settings
+        if self.updates is not None:
+            self.updates.network = settings.network
+            # Switched on or off in the file: the timer follows without a restart.
+            if settings.check_updates:
+                self.updates.start()
+            else:
+                self.updates.stop()
         if before == after:
             return False
         self.registry.rebuild(
@@ -181,4 +195,5 @@ def build_services(settings: Settings | None = None) -> Services:
         refresher=Refresher(settings=settings, registry=registry),
         credits=CreditsService(settings=settings, registry=registry, store=CheckinStore(data_dir / CHECKIN_FILE_NAME, db=db)),
         login=LoginManager(settings=settings, on_persist=rebuild_after_login),
+        updates=UpdateChecker(network=settings.network),
     )

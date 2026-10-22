@@ -7,7 +7,7 @@ import { useChannels } from '@/api/queries/channels';
 import NetworkSettings from '@/components/NetworkSettings.vue';
 import { useI18n } from '@/i18n';
 import { usePreferencesStore } from '@/stores/preferences';
-import { AppButton, AppIcon, AxisPanes, ChipInput, Collapse, DataList, PageSection, PickerMenu, SegmentedButton, SelectField, Skeleton, Switch, Tabs, TextField, TokenField, icons, useSnackbar } from '@/ui';
+import { AppButton, AppIcon, AxisPanes, ChipInput, Collapse, DataList, NumberField, PageSection, PickerMenu, SegmentedButton, SelectField, Skeleton, Switch, Tabs, TextField, TokenField, icons, useSnackbar } from '@/ui';
 
 /**
  * Settings in tabs, one concern each, sliding along the shared axis as the tab changes; the tab
@@ -47,6 +47,9 @@ function save(patch: Record<string, unknown>, restart = false) {
   });
 }
 const num = (v: string | number | null) => (v === '' || v === null ? null : Number(v));
+const MIB = 1024 * 1024;
+/** The arrows' names on a number field, from the field's own label. */
+const arrows = (label: string) => ({ increaseLabel: t('common.increase', { name: t(label) }), decreaseLabel: t('common.decrease', { name: t(label) }) });
 
 // General
 const NO_MODEL = '';
@@ -119,13 +122,14 @@ async function copy(text: string) {
         </PageSection>
         <PageSection :title="t('settings.requests')" :subtitle="t('settings.requestsHint')">
           <div class="row">
-            <TextField :model-value="s.server.max_account_retries" type="number" :min="1" :label="t('settings.maxAccountRetries')" :supporting-text="t('settings.maxAccountRetriesHelp')" @change="save({ server: { max_account_retries: num($event) } })" />
-            <TextField :model-value="s.server.max_body_bytes" type="number" :min="1" :label="t('settings.maxBodyBytes')" :supporting-text="t('settings.maxBodyBytesHelp')" @change="save({ server: { max_body_bytes: num($event) } })" />
+            <NumberField :model-value="s.server.max_account_retries" :min="1" :label="t('settings.maxAccountRetries')" :supporting-text="t('settings.maxAccountRetriesHelp')" v-bind="arrows('settings.maxAccountRetries')" @change="save({ server: { max_account_retries: num($event) } })" />
+            <!-- Stepped by the mebibyte: a byte at a time would take a million clicks to matter. -->
+            <NumberField :model-value="s.server.max_body_bytes" :min="1" :step="MIB" :label="t('settings.maxBodyBytes')" :supporting-text="t('settings.maxBodyBytesHelp')" v-bind="arrows('settings.maxBodyBytes')" @change="save({ server: { max_body_bytes: num($event) } })" />
           </div>
         </PageSection>
         <PageSection :title="t('settings.history')" :subtitle="t('settings.historyHint')">
           <div class="row">
-            <TextField :model-value="s.server.stats_keep_days" type="number" :min="1" :label="t('settings.keepDays')" :supporting-text="t('settings.keepDaysHelp')" @change="save({ server: { stats_keep_days: num($event) } })" />
+            <NumberField :model-value="s.server.stats_keep_days" :min="1" :label="t('settings.keepDays')" :supporting-text="t('settings.keepDaysHelp')" v-bind="arrows('settings.keepDays')" @change="save({ server: { stats_keep_days: num($event) } })" />
           </div>
         </PageSection>
       </div>
@@ -134,7 +138,7 @@ async function copy(text: string) {
         <PageSection :title="t('settings.listen')" :subtitle="t('common.restartNeeded')">
           <div class="row">
             <TextField :model-value="s.server.host" :label="t('settings.host')" @change="save({ server: { host: $event } }, true)" />
-            <TextField :model-value="s.server.port" type="number" :label="t('settings.port')" @change="save({ server: { port: num($event) } }, true)" />
+            <NumberField :model-value="s.server.port" :min="0" :max="65535" :label="t('settings.port')" v-bind="arrows('settings.port')" @change="save({ server: { port: num($event) } }, true)" />
           </div>
           <p v-if="s.listening" class="type-body-medium listening" :class="{ fallback: s.listening.fallback }" role="status">
             <AppIcon :icon="s.listening.fallback ? icons.AlertTriangle : icons.Radio" :size="18" />

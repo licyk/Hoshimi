@@ -60,6 +60,7 @@ Management uses the tool access key under `/api/v1/*`.
 | Route group | Purpose |
 | --- | --- |
 | `/app/version`, `/app/health`, `/app/meta` | Version, health, paths, configured flags and counts |
+| `/app/update` | Whether PyPI lists a newer release: `status` (`checking`, `available`, `current`, `failed`, `disabled`) and `latest` |
 | `/settings` (`GET`, `PATCH`) | Read redacted settings, save and apply updates; `restart_required` flags a saved host/port awaiting restart; `listening` is the socket actually bound (`port`, `requested_port`, `fallback` when the requested port was taken — never a restart reason) |
 | `/providers`, `/provider-forms` | Providers, account summaries and credential form metadata |
 | `/channels` | Every provider with accounts, renewal, cooling, passive quota, diagnostics, today's usage, its last five check-in outcomes (`recent_checkins`) and a status word (local state only, no upstream calls) |

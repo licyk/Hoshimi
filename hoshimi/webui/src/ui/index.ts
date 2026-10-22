@@ -73,6 +73,7 @@ export type { StepItem } from '@/ui/Stepper.vue';
 export { default as Surface } from '@/ui/Surface.vue';
 export { default as Switch } from '@/ui/Switch.vue';
 export { default as Tabs } from '@/ui/Tabs.vue';
+export { default as NumberField } from '@/ui/NumberField.vue';
 export { default as TextField } from '@/ui/TextField.vue';
 export { default as TokenField } from '@/ui/TokenField.vue';
 export { default as Toolbar } from '@/ui/Toolbar.vue';

@@ -6,6 +6,7 @@ from hoshimi.api.deps import ServicesDep
 from hoshimi.core.net.ports import is_loopback
 from hoshimi.core.providers import real_account_count
 from hoshimi.core.record import Record
+from hoshimi.core.updates import UpdateStatus
 from hoshimi.version import VERSION
 
 router = APIRouter(prefix="/v1/app", tags=["app"])
@@ -34,6 +35,22 @@ class AppMeta(Record):
     accounts: int
 
 
+class UpdateInfo(Record):
+    """Whether PyPI lists a newer release than this server runs.
+
+    ``checking`` until the first background check lands; ``failed`` when no
+    check has succeeded yet (a later failure keeps the last good answer);
+    ``disabled`` when ``server.check_updates`` is off. ``latest`` is the newest
+    final release on PyPI, once known.
+    """
+
+    status: UpdateStatus
+    current: str
+    latest: str | None = None
+    checked_at: float | None = None
+    """Unix seconds of the last check that answered."""
+
+
 @router.get("/version", operation_id="get_app_version")
 def get_version() -> AppVersion:
     return AppVersion(version=VERSION)
@@ -42,6 +59,15 @@ def get_version() -> AppVersion:
 @router.get("/health", operation_id="get_health")
 def get_health(services: ServicesDep) -> Health:
     return Health(status="ok", auth_required=bool(services.settings.access_token))
+
+
+@router.get("/update", operation_id="get_app_update")
+def get_update(services: ServicesDep) -> UpdateInfo:
+    checker = services.updates
+    if checker is None or not services.settings.check_updates:
+        return UpdateInfo(status="disabled", current=VERSION)
+    state = checker.state
+    return UpdateInfo(status=state.status, current=state.current, latest=state.latest, checked_at=state.checked_at)
 
 
 @router.get("/meta", operation_id="get_app_meta")

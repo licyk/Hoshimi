@@ -56,6 +56,7 @@ Messages 详见 [Anthropic Agent 接入](anthropic-api.zh-CN.md)。
 | 接口组 | 用途 |
 | --- | --- |
 | `/app/version`、`/app/health`、`/app/meta` | 版本、健康、路径、配置标记和数量 |
+| `/app/update` | PyPI 上是否有新版本：`status`（`checking`、`available`、`current`、`failed`、`disabled`）和 `latest` |
 | `/settings`（`GET`、`PATCH`） | 读取脱敏配置，保存并应用更新；`restart_required` 表示已保存的监听地址/端口需重启生效；`listening` 为实际绑定的套接字（`port`、`requested_port`，请求端口被占用而改用其他端口时 `fallback` 为真，这不算需要重启） |
 | `/providers`、`/provider-forms` | 供应商、账户摘要、凭据字段 |
 | `/channels` | 全部渠道及其账户、续期、冷却、被动配额、网络诊断、今日用量、最近五次签到结果（`recent_checkins`）与状态（仅读本地状态，不请求上游） |

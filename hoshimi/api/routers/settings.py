@@ -34,6 +34,7 @@ class ServerView(Record):
     default_model: str | None
     auto_refresh: bool
     auto_checkin: bool
+    check_updates: bool = True
     stats_keep_days: int = 90
 
 
@@ -125,6 +126,7 @@ def _view(services: Services, request: Request | None = None) -> SettingsView:
             default_model=settings.default_model,
             auto_refresh=settings.auto_refresh,
             auto_checkin=settings.auto_checkin,
+            check_updates=settings.check_updates,
             stats_keep_days=settings.stats_keep_days,
         ),
         providers=[

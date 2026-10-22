@@ -7,6 +7,7 @@ export type SettingsView = S['SettingsView'];
 export type ServerView = S['ServerView'];
 export type ProviderView = S['ProviderView'];
 export type AppMeta = S['AppMeta'];
+export type UpdateInfo = S['UpdateInfo'];
 export type ProviderSummary = S['ProviderSummary'];
 export type ModelList = S['ModelList'];
 export type ModelObject = S['ModelObject'];

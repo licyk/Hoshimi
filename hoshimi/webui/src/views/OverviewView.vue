@@ -3,7 +3,7 @@ import { computed, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import { BASE_URL } from '@/api/baseUrl';
 import { useCatalog } from '@/api/catalog';
-import { useMeta, useVersion } from '@/api/queries/app';
+import { useMeta, useUpdate, useVersion } from '@/api/queries/app';
 import { useChannels } from '@/api/queries/channels';
 import { useUsageReport, type UsageSlice } from '@/api/queries/usage';
 import CatalogStatus from '@/components/CatalogStatus.vue';
@@ -15,6 +15,7 @@ import { AppButton, Badge, DataList, EmptyState, IconButton, LiveDot, PageSectio
 const { t } = useI18n();
 const meta = useMeta();
 const version = useVersion();
+const update = useUpdate();
 const channels = useChannels();
 const catalog = useCatalog();
 const live = useLiveStore();
@@ -109,12 +110,24 @@ const openDocs = () => window.open(`${BASE_URL}/docs`, '_blank', 'noopener');
     </PageSection>
 
     <PageSection :title="t('overview.about')" :icon="icons.Info">
-      <DataList
-        :rows="[
-          { label: t('overview.version'), value: version.data.value?.version ?? meta.data.value?.version ?? '—' },
-          { label: t('overview.defaultModel'), value: meta.data.value?.default_model ?? t('overview.noDefaultModel') },
-        ]"
-      />
+      <DataList :rows="[{ label: t('overview.version'), value: version.data.value?.version ?? meta.data.value?.version ?? '—' }]">
+        <!-- What PyPI lists, from the server's background check; left out where the check is switched off. -->
+        <template v-if="update.data.value && update.data.value.status !== 'disabled'">
+          <dt class="muted">{{ t('overview.latestVersion') }}</dt>
+          <dd class="latest" aria-live="polite">
+            <template v-if="update.data.value.latest">
+              <span>{{ update.data.value.latest }}</span>
+              <Badge
+                :tone="update.data.value.status === 'available' ? 'primary' : 'neutral'"
+                :value="update.data.value.status === 'available' ? t('overview.updateAvailable') : t('overview.upToDate')"
+              />
+            </template>
+            <span v-else class="muted">{{ update.data.value.status === 'failed' ? t('overview.updateFailed') : t('overview.updateChecking') }}</span>
+          </dd>
+        </template>
+        <dt class="muted">{{ t('overview.defaultModel') }}</dt>
+        <dd>{{ meta.data.value?.default_model ?? t('overview.noDefaultModel') }}</dd>
+      </DataList>
     </PageSection>
   </div>
 </template>
@@ -137,6 +150,7 @@ p { margin: 0; }
 }
 .channel-head { display: flex; align-items: center; gap: var(--app-space-2); min-width: 0; }
 .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.latest { display: flex; flex-wrap: wrap; align-items: center; gap: var(--app-space-2); }
 @container app-content (max-width: 599px) {
   .overview { padding: var(--app-space-3); padding-inline-end: max(var(--app-space-1), calc(var(--app-space-3) - var(--app-scroll-lane))); }
   .today { grid-template-columns: minmax(0, 1fr); }

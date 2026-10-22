@@ -2,6 +2,7 @@
 export const keys = {
   meta: ['app', 'meta'] as const,
   version: ['app', 'version'] as const,
+  update: ['app', 'update'] as const,
   health: ['app', 'health'] as const,
   settings: ['settings'] as const,
   providers: ['providers'] as const,

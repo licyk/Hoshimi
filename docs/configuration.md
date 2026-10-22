@@ -62,6 +62,7 @@ contains demonstration credentials and is not a ready-to-run account bundle.
 | `server.max_body_bytes` / `server.max_account_retries` | limits |
 | `server.auto_refresh` | renew credentials on a timer (`false` = rotate tokens by hand) |
 | `server.auto_checkin` | daily check-in timer for free credits (`false` = claim by hand) |
+| `server.check_updates` | ask PyPI at startup and once a day whether a newer release exists, shown on the Overview page (`false` = no request) |
 | `server.stats_keep_days` | days each recorded call is kept in `hoshimi.db` (default `90`, at least `1`); daily totals and lifetime counters are kept regardless |
 | `security.allow_cidrs` | client IP allowlist; required to bind non-loopback |
 | `security.allow_origins` | CORS origins; requires `server.access_token` |

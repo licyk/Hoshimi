@@ -153,3 +153,16 @@ describe('scrollbar lanes', () => {
     expect(css).toMatch(/:root\[data-scrollbars='overlay'\] \.app-scroll:not\(\.app-scroll-auto\) >/);
   });
 });
+
+/**
+ * The bottom bar lays its destinations side by side. A destination that keeps its indicator's 64px
+ * as a minimum makes six of them 384px, wider than a small phone: the shell's one column then grows
+ * past the screen and every page is cut at its end edge.
+ */
+describe('bottom navigation', () => {
+  it('lets its destinations share any width', () => {
+    expect(rule('ui/NavigationBar.vue', '.dest')).toMatch(/min-width:\s*0/);
+    expect(rule('ui/NavigationBar.vue', '.indicator')).toMatch(/max-width:\s*64px/);
+    expect(rule('ui/NavigationBar.vue', '.indicator')).not.toMatch(/(^|[\s;])width:\s*64px/);
+  });
+});

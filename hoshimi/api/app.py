@@ -63,6 +63,9 @@ def create_app(
             services.refresher.start()
         if services.credits is not None and services.settings.auto_checkin:
             services.credits.start()
+        # Asks PyPI on its own thread; startup never waits on the answer.
+        if services.updates is not None and services.settings.check_updates:
+            services.updates.start()
         try:
             yield
         finally:

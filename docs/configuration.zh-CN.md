@@ -58,6 +58,7 @@ hoshimi config path
 | `server.max_account_retries` | 账户重试上限 |
 | `server.auto_refresh` | 自动凭据续期 |
 | `server.auto_checkin` | 自动每日签到 |
+| `server.check_updates` | 启动后及每天向 PyPI 检查是否有新版本，结果显示在概览页（`false` = 不发出请求） |
 | `server.stats_keep_days` | 每条调用记录在 `hoshimi.db` 中保留的天数（默认 `90`，至少 `1`）；按日总量和累计计数始终保留 |
 | `security.allow_cidrs` | 允许访问的客户端网段 |
 | `security.allow_origins` | 跨域来源，要求设置工具访问密钥 |

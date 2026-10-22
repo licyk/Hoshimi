@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/app/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Update */
+        get: operations["get_app_update"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/app/version": {
         parameters: {
             query?: never;
@@ -2023,6 +2040,11 @@ export interface components {
             auto_checkin: boolean;
             /** Auto Refresh */
             auto_refresh: boolean;
+            /**
+             * Check Updates
+             * @default true
+             */
+            check_updates: boolean;
             /** Default Model */
             default_model: string | null;
             /** Host */
@@ -2110,6 +2132,28 @@ export interface components {
         UnavailableReset: {
             /** Cleared */
             cleared: number;
+        };
+        /**
+         * UpdateInfo
+         * @description Whether PyPI lists a newer release than this server runs.
+         *
+         *     ``checking`` until the first background check lands; ``failed`` when no
+         *     check has succeeded yet (a later failure keeps the last good answer);
+         *     ``disabled`` when ``server.check_updates`` is off. ``latest`` is the newest
+         *     final release on PyPI, once known.
+         */
+        UpdateInfo: {
+            /** Checked At */
+            checked_at: number | null;
+            /** Current */
+            current: string;
+            /** Latest */
+            latest: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "checking" | "available" | "current" | "failed" | "disabled";
         };
         /**
          * UsageBreakdownRow
@@ -2416,6 +2460,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AppMeta"];
+                };
+            };
+        };
+    };
+    get_app_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateInfo"];
                 };
             };
         };

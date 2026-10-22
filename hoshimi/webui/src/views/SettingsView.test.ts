@@ -25,7 +25,7 @@ vi.mock('@/components/NetworkSettings.vue', () => ({ default: { template: '<div 
 vi.mock('@/ui', () => {
   const slot = { template: '<div><slot /></div>' };
   return {
-    icons: {}, TRANSITIONS: {}, AppButton: slot, AppIcon: slot, DataList: slot, PickerMenu: slot, SegmentedButton: slot, SelectField: slot, Skeleton: slot, TextField: slot, TokenField: slot,
+    icons: {}, TRANSITIONS: {}, AppButton: slot, AppIcon: slot, DataList: slot, NumberField: slot, PickerMenu: slot, SegmentedButton: slot, SelectField: slot, Skeleton: slot, TextField: slot, TokenField: slot,
     AxisPanes: slot,
     Collapse: { props: ['show'], template: '<div v-if="show"><slot /></div>' },
     PageSection: { props: ['title'], template: '<section><h2>{{ title }}</h2><slot /></section>' },

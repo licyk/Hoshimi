@@ -9,6 +9,17 @@ export const useMeta = () => useQuery({ queryKey: keys.meta, queryFn: () => unwr
 
 export const useVersion = () => useQuery({ queryKey: keys.version, queryFn: () => unwrap(api.GET('/api/v1/app/version')), staleTime: Infinity });
 
+/**
+ * Whether PyPI lists a newer release. The server asks in the background after it starts, so this
+ * polls briefly until that first answer lands, then hourly to pick up the server's daily re-check.
+ */
+export const useUpdate = () =>
+  useQuery({
+    queryKey: keys.update,
+    queryFn: () => unwrap(api.GET('/api/v1/app/update')),
+    refetchInterval: (query) => (query.state.data?.status === 'checking' ? 3_000 : 60 * 60_000),
+  });
+
 export const useHealth = () => useQuery({ queryKey: keys.health, queryFn: () => unwrap(api.GET('/api/v1/app/health')) });
 
 export const useSettings = () => useQuery({ queryKey: keys.settings, queryFn: () => unwrap(api.GET('/api/v1/settings')) });

@@ -672,3 +672,27 @@ def test_model_api_key_alone_still_keys_the_model_surface(services: Any) -> None
         assert ok.status_code == 200
         # No tool access key was set, so the management API is public.
         assert client.get("/api/v1/app/meta").status_code == 200
+
+
+def test_app_update_reports_the_background_check(services: Any) -> None:
+    import httpx
+    from fastapi.testclient import TestClient
+
+    from hoshimi.api.app import create_app
+    from hoshimi.core.updates import UpdateChecker
+    from hoshimi.version import VERSION
+
+    # Built directly, Services has no checker: the interface hears "disabled", not "checking" forever.
+    with TestClient(create_app(services, serve_ui=False), base_url="http://localhost") as client:
+        assert client.get("/api/v1/app/update").json() == {"status": "disabled", "current": VERSION, "latest": None, "checked_at": None}
+
+    document = {"info": {"version": "999.0.0"}, "releases": {"999.0.0": [{"yanked": False}]}}
+    services.updates = UpdateChecker(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=document)))
+    services.updates.check_now()
+    with TestClient(create_app(services, serve_ui=False), base_url="http://localhost") as client:
+        payload = client.get("/api/v1/app/update").json()
+        assert (payload["status"], payload["current"], payload["latest"]) == ("available", VERSION, "999.0.0")
+        # Switched off in the file: no check runs and none is reported.
+        client.patch("/api/v1/settings", json={"server": {"check_updates": False}})
+        assert client.get("/api/v1/app/update").json()["status"] == "disabled"
+    assert services.updates._thread is None

@@ -1,7 +1,8 @@
 import { mount } from '@vue/test-utils';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import DatePicker from '@/ui/DatePicker.vue';
+import NumberField from '@/ui/NumberField.vue';
 import SegmentedControl from '@/ui/SegmentedControl.vue';
 import StackedBarChart from '@/ui/StackedBarChart.vue';
 
@@ -96,5 +97,46 @@ describe('StackedBarChart', () => {
     await w.find('svg').trigger('keydown', { key: 'Enter' });
     expect(w.emitted('select')![1]).toEqual(['2026-10-20']);
     expect(w.findAll('.column')[1].classes()).toContain('muted');
+  });
+});
+
+describe('NumberField', () => {
+  const field = (props: Record<string, unknown>) => mount(NumberField, { props: { increaseLabel: 'Increase', decreaseLabel: 'Decrease', ...props } });
+  const shown = (w: ReturnType<typeof field>) => (w.find('md-outlined-text-field').element as unknown as { value: string }).value;
+  const arrow = (w: ReturnType<typeof field>, label: string) => w.find(`button[aria-label="${label}"]`);
+
+  it('steps at once and reports one change when the arrows pause', async () => {
+    vi.useFakeTimers();
+    try {
+      const w = field({ modelValue: 3, min: 1 });
+      for (let i = 0; i < 3; i++) await arrow(w, 'Increase').trigger('click');
+      expect(shown(w)).toBe('6');
+      expect(w.emitted('change')).toBeUndefined();
+      vi.advanceTimersByTime(600);
+      expect(w.emitted('change')).toEqual([['6']]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps to its bounds and its step grid, and disables an arrow at its bound', async () => {
+    const w = field({ modelValue: 1000, min: 1, step: 1024 });
+    await arrow(w, 'Increase').trigger('click');
+    expect(shown(w)).toBe('1024');
+    await arrow(w, 'Decrease').trigger('click');
+    await arrow(w, 'Decrease').trigger('click');
+    expect(shown(w)).toBe('1');
+    expect(arrow(w, 'Decrease').attributes('disabled')).toBeDefined();
+    const top = field({ modelValue: 65535, min: 0, max: 65535 });
+    expect(arrow(top, 'Increase').attributes('disabled')).toBeDefined();
+    expect(arrow(top, 'Decrease').attributes('disabled')).toBeUndefined();
+  });
+
+  it('keeps the arrows out of the tab order, and reports a waiting step on leaving the field', async () => {
+    const w = field({ modelValue: 5 });
+    expect(w.findAll('button').map((b) => b.attributes('tabindex'))).toEqual(['-1', '-1']);
+    await arrow(w, 'Decrease').trigger('click');
+    await w.find('md-outlined-text-field').trigger('focusout');
+    expect(w.emitted('change')).toEqual([['4']]);
   });
 });

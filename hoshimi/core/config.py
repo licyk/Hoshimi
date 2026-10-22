@@ -53,6 +53,9 @@ class Settings:
     auto_refresh: bool = True
     # Daily check-in timer (see hoshimi.core.credits). Off for pure gateways.
     auto_checkin: bool = True
+    # Ask PyPI whether a newer release exists (see hoshimi.core.updates). Off
+    # for an install that should make no requests of its own.
+    check_updates: bool = True
     # Days each recorded call is kept in hoshimi.db (daily totals are kept forever).
     stats_keep_days: int = DEFAULT_STATS_KEEP_DAYS
     # Provider accounts managed by this gateway.
@@ -120,6 +123,10 @@ def settings_from_dict(data: dict[str, Any], settings: Settings | None = None) -
         settings.auto_refresh = server["auto_refresh"]
     if isinstance(server.get("auto_checkin"), bool):
         settings.auto_checkin = server["auto_checkin"]
+    if "check_updates" in server:
+        if not isinstance(server["check_updates"], bool):
+            raise ValueError("server.check_updates must be true or false")
+        settings.check_updates = server["check_updates"]
     if "strict_port" in server:
         if not isinstance(server["strict_port"], bool):
             raise ValueError("server.strict_port must be true or false")
@@ -220,6 +227,7 @@ def settings_to_dict(settings: Settings) -> dict[str, Any]:
             "max_account_retries": settings.max_account_retries,
             "auto_refresh": settings.auto_refresh,
             "auto_checkin": settings.auto_checkin,
+            "check_updates": settings.check_updates,
             "stats_keep_days": settings.stats_keep_days,
         },
         "security": {
