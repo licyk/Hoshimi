@@ -3,13 +3,23 @@
 The anonymous path follows dsh-our-free-model's src/upstream.js at f0b979f:
 v2 client headers, descending session encoding, and exact read/shell declarations.
 Caller tools keep their own definitions through aliases and historical replay.
+
+The read/shell declarations are there for the lane's gate, not for the caller:
+a caller that declared no such tools (a chat with no tools at all, the
+Playground) cannot run them. A model that calls one anyway is answered here,
+the way a coding agent answers a tool it does not have (Codex's
+``unsupported call: <name>``), and asked again; the caller sees only the text,
+and its own tool calls. A model that keeps calling them is given up on after
+:data:`MAX_UNSUPPORTED_ROUNDS` such answers.
 """
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import os
 import re
+from collections.abc import Iterator
 from typing import Any, ClassVar
 
 from hoshimi.core.catalog import ModelSpec, opencode_spec
@@ -47,6 +57,9 @@ _BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 _MUSE_SPARK_RE = re.compile(r"^muse[-_]?spark(?:$|[-_:.\s])", re.IGNORECASE)
 
 DEFAULT_MAX_TOKENS = 8192
+
+MAX_UNSUPPORTED_ROUNDS = 2
+"""How many times a model calling only tools the caller never offered is answered and asked again."""
 
 
 def _format_id(prefix: str, raw: bytes) -> str:
@@ -129,13 +142,38 @@ def _session_seed(body: dict[str, Any]) -> str:
     return "global"
 
 
-def _renamed(chunks: Any, rename: dict[str, str], allowed_tools: set[str] | None = None) -> Any:
-    for chunk in chunks:
-        if isinstance(chunk, dict) and chunk.get("type") == "tool_call_start":
-            if allowed_tools is not None and chunk.get("name") not in allowed_tools:
-                raise ProviderError(502, "opencode: upstream requested a tool that the caller did not authorize", retryable=False)
-            chunk = {**chunk, "name": restore_tool_name(chunk.get("name"), rename)}
-        yield chunk
+def unsupported_result(name: str) -> str:
+    """What a model is told for a tool it called that this request does not offer."""
+    return f"unsupported call: {name}. This tool is not available here; answer without it."
+
+
+def _add_usage(total: dict[str, Any] | None, more: dict[str, Any]) -> dict[str, Any]:
+    """Two rounds' usage as one: every count added, field by field."""
+    if total is None:
+        return copy.deepcopy(more)
+    out = copy.deepcopy(total)
+    for key, value in more.items():
+        if isinstance(value, bool):
+            out[key] = value
+        elif isinstance(value, (int, float)):
+            out[key] = (out.get(key) or 0) + value
+        elif isinstance(value, dict):
+            out[key] = _add_usage(out.get(key) if isinstance(out.get(key), dict) else None, value)
+        else:
+            out.setdefault(key, value)
+    return out
+
+
+def _with_unsupported_answers(body: dict[str, Any], text: str, calls: list[dict[str, Any]]) -> dict[str, Any]:
+    """The conversation carried one round on: the model's turn with its calls, and an answer to each."""
+    messages = list(body.get("messages") or [])
+    messages.append({
+        "role": "assistant",
+        "content": text or None,
+        "tool_calls": [{"id": call["id"], "type": "function", "function": {"name": call["name"], "arguments": call["arguments"] or "{}"}} for call in calls],
+    })
+    messages += [{"role": "tool", "tool_call_id": call["id"], "content": unsupported_result(call["name"])} for call in calls]
+    return {**body, "messages": messages}
 
 
 class OpencodeProvider(OpenAiCompatProvider):
@@ -213,8 +251,67 @@ class OpencodeProvider(OpenAiCompatProvider):
         return out
 
     def stream_raw(self, account: Account, model: str, body: dict[str, Any]) -> Any:
-        wire = wire_for(model)
+        """One reply, over as many upstream rounds as it takes to answer calls the caller cannot run.
+
+        A round whose only tool calls are to tools the caller never declared
+        (the lane's read/shell gate, or a name the model made up) is not the
+        caller's: its text is passed on, the calls are answered here as
+        unsupported, and the model is asked again in the same session. Calls
+        to the caller's own tools always go to the caller; next to them,
+        undeclared ones are left out. Usage is added up over the rounds.
+        """
         anonymous = self._api_key(account) == "public"
+        current = body
+        usage: dict[str, Any] | None = None
+        for round_number in range(MAX_UNSUPPORTED_ROUNDS + 1):
+            text: list[str] = []
+            held: dict[int, dict[str, Any]] = {}
+            held_ids: set[str] = set()
+            passed_calls = 0
+            finish: dict[str, Any] | None = None
+            for chunk, own in self._stream_once(account, model, current, anonymous=anonymous):
+                kind = chunk.get("type")
+                if kind == "tool_call_start" and not own:
+                    held[int(chunk.get("index") or 0)] = {"id": str(chunk.get("id") or f"call_{len(held)}"), "name": str(chunk.get("name") or ""), "arguments": str(chunk.get("arguments") or "")}
+                    held_ids.add(str(chunk.get("id") or ""))
+                    continue
+                if kind == "tool_call_delta" and int(chunk.get("index") or 0) in held:
+                    held[int(chunk.get("index") or 0)]["arguments"] += str(chunk.get("arguments") or "")
+                    continue
+                if kind == "reasoning_details" and any(isinstance(d, dict) and d.get("call_id") in held_ids for d in chunk.get("details") or []):
+                    continue
+                if kind == "usage" and isinstance(chunk.get("usage"), dict):
+                    usage = _add_usage(usage, chunk["usage"])
+                    continue
+                if kind == "finish":
+                    finish = chunk
+                    continue
+                if kind == "tool_call_start":
+                    passed_calls += 1
+                elif kind == "text_delta":
+                    text.append(str(chunk.get("text") or ""))
+                yield chunk
+            if held and not passed_calls:
+                if round_number == MAX_UNSUPPORTED_ROUNDS:
+                    names = ", ".join(sorted({call["name"] for call in held.values()}))
+                    raise ProviderError(502, f"opencode: the model kept calling tools this request does not offer ({names})", retryable=False)
+                current = _with_unsupported_answers(current, "".join(text), [held[i] for i in sorted(held)])
+                continue
+            if usage is not None:
+                yield {"type": "usage", "usage": usage}
+            if finish is not None:
+                # Only undeclared calls were left out: what remains is the caller's to act on.
+                yield finish if passed_calls or finish.get("reason") != "tool_calls" else {**finish, "reason": "stop"}
+            return
+
+    def _stream_once(self, account: Account, model: str, body: dict[str, Any], *, anonymous: bool) -> Iterator[tuple[dict[str, Any], bool]]:
+        """One upstream request: each chunk, and for a tool call whether it is to one of the caller's tools.
+
+        Calls are told apart by the name the model was sent, before aliases
+        are undone: a caller's own ``read`` travels as ``read_client`` beside
+        the gate's ``read``. On a keyed account every tool is the caller's.
+        """
+        wire = wire_for(model)
         session = session_for_conversation(_session_seed(body), namespace=f"{account.id}\0{self._api_key(account)}")
 
         if wire == "responses":
@@ -234,9 +331,8 @@ class OpencodeProvider(OpenAiCompatProvider):
         tools_disabled = choice == "none" or (isinstance(choice, dict) and choice.get("type") == "none")
         rename = apply_fingerprint(payload, style) if anonymous else {}
         sent_aliases = {original: sent for sent, original in rename.items()}
-        allowed_tools = {sent_aliases.get(name, name) for name in caller_tools} if anonymous else None
-        if anonymous and tools_disabled:
-            allowed_tools = set()
+        # A caller that turned tools off (the gate drops ``none`` upstream) takes no call at all.
+        callable_names = set() if tools_disabled else {sent_aliases.get(name, name) for name in caller_tools}
 
         headers = self.build_headers(
             account,
@@ -259,7 +355,13 @@ class OpencodeProvider(OpenAiCompatProvider):
                 chunks = iter_anthropic_chunks(response.iter_lines())
             else:
                 chunks = consume_openai_sse(response.iter_lines(), provider=self.id)
-            yield from _renamed(chunks, rename, allowed_tools)
+            for chunk in chunks:
+                if isinstance(chunk, dict) and chunk.get("type") == "tool_call_start":
+                    sent = chunk.get("name")
+                    own = not anonymous or sent in callable_names
+                    yield ({**chunk, "name": restore_tool_name(sent, rename)} if own else chunk), own
+                else:
+                    yield chunk, True
 
     def fetch_models(self) -> list[str]:
         try:

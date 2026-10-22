@@ -20,6 +20,11 @@ export interface ComposerOption {
  * the choice, opening a menu over it — or under it, when there is more room there. The menu has a
  * heading, a search for a long list and a check on the current choice; the arrows move through it
  * and Enter picks. It is rendered at the end of the document, so the composer never clips it.
+ *
+ * It lines up with its control (``align="start"``), or stands centred over the composer the control
+ * is in (``align="center"``: a long list to choose from, centred on a phone's screen); either way it
+ * is kept inside the window. A menu with a search keeps one size whatever the search leaves in it,
+ * so it does not shrink and jump as the list empties.
  */
 const props = withDefaults(
   defineProps<{
@@ -39,8 +44,10 @@ const props = withDefaults(
     /** The search shows from this many options. */
     searchFrom?: number;
     noMatches?: string;
+    /** Where the menu stands: lined up with its control, or centred over the composer it is in. */
+    align?: 'start' | 'center';
   }>(),
-  { searchFrom: 0, noMatches: '' },
+  { searchFrom: 0, noMatches: '', align: 'start' },
 );
 const model = defineModel<string | null>({ default: null });
 
@@ -75,13 +82,18 @@ const MARGIN = 8;
 
 function place() {
   const anchor = root.value?.getBoundingClientRect();
-  const box = menu.value?.getBoundingClientRect();
-  if (!anchor || !box) return;
+  const el = menu.value;
+  if (!anchor || !el) return;
+  // The menu's own layout size, not its box on screen: it opens scaled down, and a box measured
+  // mid-way through that is narrower than the menu will be, which then runs off the window.
+  const box = { width: el.offsetWidth, height: el.offsetHeight };
   const below = window.innerHeight - anchor.bottom - MARGIN;
   const above = anchor.top - MARGIN;
   // Over the control (it sits at the foot of the page), unless the menu fits only under it.
   const up = box.height <= above - GAP || above >= below;
-  const left = Math.min(Math.max(MARGIN, anchor.left), Math.max(MARGIN, window.innerWidth - box.width - MARGIN));
+  const frame = props.align === 'center' ? (root.value?.closest('.composer')?.getBoundingClientRect() ?? null) : null;
+  const wanted = frame ? frame.left + (frame.width - box.width) / 2 : anchor.left;
+  const left = Math.min(Math.max(MARGIN, wanted), Math.max(MARGIN, window.innerWidth - box.width - MARGIN));
   position.value = {
     left: `${left}px`,
     top: up ? '' : `${anchor.bottom + GAP}px`,
@@ -137,8 +149,9 @@ watch(open, async (isOpen) => {
   place();
   itemAt(active.value)?.scrollIntoView({ block: 'nearest' });
 });
-// A search starts the highlight over at its first match.
+// A search starts the highlight over at its first match; what is left may need another place.
 watch(query, () => (active.value = 0));
+watch(shown, () => open.value && void nextTick(place));
 // The control can go away while its menu is open (no more effort levels for the new model).
 watch(() => props.disabled, (disabled) => disabled && (open.value = false));
 onBeforeUnmount(() => {
@@ -160,7 +173,7 @@ function pick(o: ComposerOption) {
     <ChipButton :icon="icon" :text="display" :label="text || current ? `${label}: ${display}` : label" menu :open="open" :disabled="disabled" :loading="loading" @click="toggle" />
     <Teleport to="body">
       <Transition :name="TRANSITIONS.popover">
-        <div v-if="open" ref="menu" class="menu" role="dialog" :aria-label="label" :style="{ ...position, zIndex: layer.zIndex.value }" @keydown="onKey">
+        <div v-if="open" ref="menu" class="menu" :class="{ fixed: searchable }" role="dialog" :aria-label="label" :style="{ ...position, zIndex: layer.zIndex.value }" @keydown="onKey">
           <header class="head">
             <span class="type-title-small">{{ label }}</span>
             <span v-if="hint" class="type-body-small muted">{{ hint }}</span>
@@ -225,4 +238,9 @@ function pick(o: ComposerOption) {
 .item[aria-selected='true'] .meta { color: var(--md-sys-color-on-surface-variant); }
 .check { flex: none; }
 .empty { margin: 0; padding: var(--app-space-2); }
+/* With a search, one size whatever it leaves: the menu as wide as a menu grows (within the window),
+   the list as tall as it may be (within the room the placement gives it), "no matches" in its middle. */
+.menu.fixed { width: min(var(--app-width-menu), calc(100vw - 16px)); }
+.menu.fixed .list { flex: 1 1 320px; height: 320px; max-height: none; }
+.menu.fixed .empty { margin: auto; text-align: center; }
 </style>

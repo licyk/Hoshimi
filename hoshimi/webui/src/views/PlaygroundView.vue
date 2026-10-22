@@ -494,6 +494,7 @@ onBeforeUnmount(() => {
             <input ref="fileInput" class="file-input" type="file" multiple tabindex="-1" aria-hidden="true" @change="onPick" />
             <ComposerMenu
               class="model"
+              align="center"
               :model-value="chat.model"
               :label="t('playground.model')"
               :options="modelOptions"

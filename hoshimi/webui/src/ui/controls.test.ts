@@ -1,6 +1,7 @@
-import { mount } from '@vue/test-utils';
-import { describe, expect, it, vi } from 'vitest';
+import { flushPromises, mount } from '@vue/test-utils';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
+import ComposerMenu from '@/ui/ComposerMenu.vue';
 import DatePicker from '@/ui/DatePicker.vue';
 import NumberField from '@/ui/NumberField.vue';
 import SegmentedControl from '@/ui/SegmentedControl.vue';
@@ -138,5 +139,74 @@ describe('NumberField', () => {
     await arrow(w, 'Decrease').trigger('click');
     await w.find('md-outlined-text-field').trigger('focusout');
     expect(w.emitted('change')).toEqual([['4']]);
+  });
+});
+
+describe('ComposerMenu', () => {
+  const options = Array.from({ length: 12 }, (_, i) => ({ value: `m${i}`, label: `provider/model-${i}`, description: 'Provider' }));
+  const rect = (r: Partial<DOMRect>) => () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}), ...r }) as DOMRect;
+  let restore: (() => void)[] = [];
+  afterEach(() => {
+    restore.forEach((r) => r());
+    restore = [];
+    document.body.innerHTML = '';
+    vi.unstubAllGlobals();
+  });
+  /** The menu's layout size, as the browser gives it whatever transform it is opening with. */
+  function layoutSize(width: number, height: number) {
+    for (const [key, value] of [['offsetWidth', width], ['offsetHeight', height]] as const) {
+      const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, key)!;
+      Object.defineProperty(HTMLElement.prototype, key, { configurable: true, get(this: HTMLElement) { return this.classList.contains('menu') ? value : original.get!.call(this); } });
+      restore.push(() => Object.defineProperty(HTMLElement.prototype, key, original));
+    }
+  }
+  async function openIn(composerLeft: number, composerWidth: number, props: Record<string, unknown>) {
+    const host = document.createElement('div');
+    host.className = 'composer';
+    host.getBoundingClientRect = rect({ left: composerLeft, width: composerWidth, top: 600, bottom: 700 });
+    document.body.appendChild(host);
+    const w = mount(ComposerMenu, { attachTo: host, props: { label: 'Model', options, modelValue: 'm0', searchLabel: 'Search', searchFrom: 8, noMatches: 'None match', ...props } });
+    w.element.getBoundingClientRect = rect({ left: composerLeft + 40, width: 120, top: 640, bottom: 676 });
+    await w.find('button').trigger('click');
+    await flushPromises();
+    await nextTick();
+    return { w, menu: document.body.querySelector<HTMLElement>('.menu[role="dialog"]')! };
+  }
+
+  it('stands centred over its composer, inside a phone\'s window, whatever scale it opens at', async () => {
+    vi.stubGlobal('innerWidth', 360);
+    vi.stubGlobal('innerHeight', 740);
+    layoutSize(344, 400);
+    const { menu } = await openIn(12, 336, { align: 'center' });
+    // Centred on the composer (12 + (336 - 344) / 2 = 8), and never past the window's edge.
+    expect(menu.style.left).toBe('8px');
+    expect(parseFloat(menu.style.left) + 344).toBeLessThanOrEqual(360 - 8);
+  });
+
+  it('lines up with its control by default, kept inside the window', async () => {
+    vi.stubGlobal('innerWidth', 1280);
+    vi.stubGlobal('innerHeight', 860);
+    layoutSize(240, 200);
+    const { menu } = await openIn(400, 768, {});
+    expect(menu.style.left).toBe('440px');
+  });
+
+  it('keeps one size when the search leaves nothing in it', async () => {
+    layoutSize(360, 414);
+    const { menu } = await openIn(100, 600, { align: 'center' });
+    expect(menu.classList.contains('fixed')).toBe(true);
+    const search = menu.querySelector<HTMLInputElement>('input[role="searchbox"]')!;
+    search.value = 'nothing like it';
+    search.dispatchEvent(new Event('input'));
+    await flushPromises();
+    expect(menu.querySelectorAll('[role="option"]')).toHaveLength(0);
+    expect(menu.classList.contains('fixed')).toBe(true);
+    expect(menu.querySelector('.list .empty')?.textContent).toBe('None match');
+  });
+
+  it('a short menu without a search sizes to its options', async () => {
+    layoutSize(240, 120);
+    const { menu } = await openIn(100, 600, { options: options.slice(0, 3) });
+    expect(menu.classList.contains('fixed')).toBe(false);
   });
 });

@@ -11,6 +11,7 @@ import pytest
 from hoshimi.core.providers.base import Account, ProviderError
 from hoshimi.core.providers.opencode import (
     CLIENT_UA,
+    MAX_UNSUPPORTED_ROUNDS,
     REQUEST_RE,
     SESSION_RE,
     OpencodeProvider,
@@ -18,6 +19,7 @@ from hoshimi.core.providers.opencode import (
     is_free_lane,
     mint_request_id,
     session_for_conversation,
+    unsupported_result,
     wire_for,
 )
 from hoshimi.core.providers.opencode_fingerprint import FINGERPRINT_TOOL_DEFINITIONS, fingerprint_tool
@@ -278,15 +280,96 @@ def test_stream_sends_v2_headers_restores_tool_aliases_and_isolates_accounts() -
     assert json.loads(requests[0].content)["tool_choice"]["function"]["name"] == "read_client"
 
 
+def _chat_reply(*, text: str = "", calls: list[tuple[str, str]] = (), tokens: tuple[int, int] = (3, 2)) -> str:
+    """A chat-completions SSE body: some text, some tool calls (id, name), usage, and the finish reason."""
+    events = []
+    if text:
+        events.append(json.dumps({"choices": [{"delta": {"content": text}}]}))
+    if calls:
+        events.append(json.dumps({"choices": [{"delta": {"tool_calls": [
+            {"index": i, "id": call_id, "type": "function", "function": {"name": name, "arguments": '{"path": "a.txt"}'}} for i, (call_id, name) in enumerate(calls)
+        ]}, "finish_reason": "tool_calls"}]}))
+    events.append(json.dumps({"choices": [{"delta": {}, "finish_reason": "tool_calls" if calls else "stop"}], "usage": {"prompt_tokens": tokens[0], "completion_tokens": tokens[1], "total_tokens": sum(tokens)}}))
+    return "\n".join(_frames(*events))
+
+
+def _scripted(*replies: str) -> tuple[OpencodeProvider, list[httpx.Request]]:
+    """An anonymous provider answering each request with the next reply."""
+    requests: list[httpx.Request] = []
+    queue = list(replies)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, text=queue.pop(0), headers={"Content-Type": "text/event-stream"})
+
+    return OpencodeProvider(httpx.Client(transport=httpx.MockTransport(handle)), [Account({}, provider_id="opencode")]), requests
+
+
 @pytest.mark.parametrize("choice", [None, "none"])
-def test_injected_tools_are_not_exposed_as_callable_client_tools(choice: str | None) -> None:
-    response = "\n".join(_frames('{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c","function":{"name":"read","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}'))
-    provider = OpencodeProvider(httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(200, text=response))), [Account({}, provider_id="opencode")])
-    body: dict = {"messages": [{"role": "user", "content": "hello"}]}
+def test_a_call_to_a_tool_the_caller_never_offered_is_answered_here_and_the_model_asked_again(choice: str | None) -> None:
+    """The lane's read/shell gate is not the caller's to run: like a coding agent answering a tool it does
+    not have ("unsupported call"), the gateway answers it and the caller sees only the reply that follows."""
+    provider, requests = _scripted(_chat_reply(text="Let me look. ", calls=[("call_1", "read")]), _chat_reply(text="It says hello.", tokens=(9, 4)))
+    body: dict = {"messages": [{"role": "user", "content": "what is in a.txt?"}], "session_id": "chat-1"}
     if choice:
         body["tool_choice"] = choice
-    with pytest.raises(ProviderError, match="did not authorize"):
-        list(provider.stream_raw(provider.accounts[0], "mimo-v2.6-flash-free", body))
+    original = copy.deepcopy(body)
+    chunks = list(provider.stream_raw(provider.accounts[0], "mimo-v2.6-flash-free", body))
+    assert [c["text"] for c in chunks if c["type"] == "text_delta"] == ["Let me look. ", "It says hello."]
+    assert not [c for c in chunks if c["type"] == "tool_call_start"]
+    assert [c for c in chunks if c["type"] == "usage"] == [{"type": "usage", "usage": {"prompt_tokens": 12, "completion_tokens": 6, "total_tokens": 18}}]
+    assert chunks[-1] == {"type": "finish", "reason": "stop"}
+    assert len(requests) == 2 and requests[0].headers["x-opencode-session"] == requests[1].headers["x-opencode-session"]
+    follow_up = json.loads(requests[1].content)["messages"]
+    assert follow_up[-2] == {"role": "assistant", "content": "Let me look. ", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "read", "arguments": '{"path": "a.txt"}'}}]}
+    assert follow_up[-1] == {"role": "tool", "tool_call_id": "call_1", "content": unsupported_result("read")}
+    assert body == original
+
+
+def test_a_model_that_keeps_calling_them_is_given_up_on() -> None:
+    replies = [_chat_reply(calls=[(f"call_{i}", "shell")]) for i in range(MAX_UNSUPPORTED_ROUNDS + 1)]
+    provider, requests = _scripted(*replies)
+    with pytest.raises(ProviderError, match=r"kept calling tools this request does not offer \(shell\)"):
+        list(provider.stream_raw(provider.accounts[0], "mimo-v2.6-flash-free", {"messages": [{"role": "user", "content": "hi"}]}))
+    assert len(requests) == MAX_UNSUPPORTED_ROUNDS + 1
+
+
+def test_next_to_the_caller_s_own_calls_undeclared_ones_are_left_out() -> None:
+    provider, requests = _scripted(_chat_reply(calls=[("call_1", "search"), ("call_2", "read")]))
+    body = {"messages": [{"role": "user", "content": "find it"}], "tools": [{"type": "function", "function": {"name": "search", "description": "Search", "parameters": {"type": "object"}}}]}
+    chunks = list(provider.stream_raw(provider.accounts[0], "mimo-v2.6-flash-free", body))
+    assert [(c["id"], c["name"]) for c in chunks if c["type"] == "tool_call_start"] == [("call_1", "search")]
+    assert chunks[-1] == {"type": "finish", "reason": "tool_calls"}
+    assert len(requests) == 1
+
+
+def test_a_caller_s_own_read_is_told_apart_from_the_gate_s() -> None:
+    """A caller's ``read`` travels as ``read_client``: its call is the caller's, the gate's ``read`` is answered here."""
+    provider, requests = _scripted(_chat_reply(calls=[("call_1", "read")]), _chat_reply(calls=[("call_2", "read_client")]))
+    body = {"messages": [{"role": "user", "content": "read it"}], "tools": [{"type": "function", "function": {"name": "read", "description": "Mine", "parameters": {"type": "object"}}}]}
+    chunks = list(provider.stream_raw(provider.accounts[0], "mimo-v2.6-flash-free", body))
+    assert [(c["id"], c["name"]) for c in chunks if c["type"] == "tool_call_start"] == [("call_2", "read")]
+    assert len(requests) == 2
+
+
+def test_the_follow_up_carries_the_answer_on_the_responses_wire() -> None:
+    first = "\n".join(_frames(
+        '{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","name":"read","call_id":"call_1","arguments":""}}',
+        '{"type":"response.function_call_arguments.delta","output_index":0,"delta":"{}"}',
+        '{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":5,"output_tokens":1}}}',
+    ))
+    second = "\n".join(_frames(
+        '{"type":"response.output_text.delta","output_index":0,"delta":"Done."}',
+        '{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":7,"output_tokens":2}}}',
+    ))
+    provider, requests = _scripted(first, second)
+    chunks = list(provider.stream_raw(provider.accounts[0], "muse-spark-1.3-contributor-free", {"messages": [{"role": "user", "content": "hi"}]}))
+    assert [c["text"] for c in chunks if c["type"] == "text_delta"] == ["Done."]
+    assert chunks[-1] == {"type": "finish", "reason": "stop"}
+    items = json.loads(requests[1].content)["input"]
+    assert {"type": "function_call", "call_id": "call_1", "name": "read"}.items() <= next(i for i in items if i.get("type") == "function_call").items()
+    output = next(i for i in items if i.get("type") == "function_call_output")
+    assert (output["call_id"], output["output"]) == ("call_1", unsupported_result("read"))
 
 
 # -- chat -> responses ------------------------------------------------------ #
@@ -380,3 +463,35 @@ def test_responses_stream_surfaces_upstream_errors() -> None:
     lines = _frames('{"type":"error","error":{"type":"RateLimitError","message":"free tier exhausted"}}')
     chunks = list(iter_responses_chunks(lines))
     assert chunks == [{"type": "error", "error": "free tier exhausted"}]
+
+
+def _anthropic(*events: dict) -> str:
+    return "\n".join(line for e in events for line in (f"event: {e['type']}", f"data: {json.dumps(e)}", ""))
+
+
+def test_the_follow_up_carries_the_answer_on_the_messages_wire() -> None:
+    first = _anthropic(
+        {"type": "message_start", "message": {"usage": {"input_tokens": 5, "output_tokens": 0}}},
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "toolu_1", "name": "shell", "input": {}}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": '{"command": "ls"}'}},
+        {"type": "content_block_stop", "index": 0},
+        {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 3}},
+        {"type": "message_stop"},
+    )
+    second = _anthropic(
+        {"type": "message_start", "message": {"usage": {"input_tokens": 9, "output_tokens": 0}}},
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "No shell here."}},
+        {"type": "content_block_stop", "index": 0},
+        {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 4}},
+        {"type": "message_stop"},
+    )
+    provider, requests = _scripted(first, second)
+    chunks = list(provider.stream_raw(provider.accounts[0], "union-alpha", {"messages": [{"role": "user", "content": "list files"}]}))
+    assert [c["text"] for c in chunks if c["type"] == "text_delta"] == ["No shell here."]
+    assert not [c for c in chunks if c["type"] == "tool_call_start"]
+    messages = json.loads(requests[1].content)["messages"]
+    use = next(b for m in messages if m["role"] == "assistant" for b in m["content"] if b.get("type") == "tool_use")
+    result = next(b for m in messages if m["role"] == "user" and isinstance(m["content"], list) for b in m["content"] if b.get("type") == "tool_result")
+    assert (use["id"], use["name"], use["input"]) == ("toolu_1", "shell", {"command": "ls"})
+    assert (result["tool_use_id"], result["content"]) == ("toolu_1", unsupported_result("shell"))
