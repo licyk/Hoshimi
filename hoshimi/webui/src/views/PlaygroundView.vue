@@ -86,6 +86,30 @@ const fullAccessOn = computed(() => fullAccessEverywhere.value || chat.fullAcces
 const fullAccessLabel = computed(() =>
   fullAccessEverywhere.value ? t('playground.fullAccessEverywhere') : chat.fullAccess ? t('playground.fullAccessOn') : t('playground.fullAccessOff'),
 );
+// Steering: while a reply with tools runs, what is written goes to it, read at its next round.
+const steerable = computed(() => chat.busy && !!chat.conversation && toolsOn.value.length > 0);
+async function steerNow() {
+  const text = draft.value.trim();
+  if (!text) return;
+  draft.value = '';
+  try {
+    if (await chat.steer(text)) return void toBottom(true);
+    draft.value = text;
+    snackbar.show(t('playground.steerLate'));
+  } catch (error) {
+    draft.value = text;
+    snackbar.error(error instanceof Error && error.message ? error.message : t('playground.sendFailed'));
+  }
+}
+// A reply that ended (stopped, failed) before reading what was sent to it: the words come back to the box.
+watch(
+  () => chat.busy,
+  (busy) => {
+    if (busy) return;
+    const unread = chat.takeUnread();
+    if (unread.length) draft.value = [...unread, draft.value].filter((s) => s.trim()).join('\n\n');
+  },
+);
 const runningTerminals = computed(() => chat.terminals.filter((term) => term.running));
 async function approve(step: ToolStep, decision: ApprovalDecision) {
   try {
@@ -496,6 +520,10 @@ onBeforeUnmount(() => {
               @approve="approve"
             />
           </template>
+          <div v-for="q in chat.queued" :key="q.id" class="queued" role="status">
+            <p class="bubble type-body-large">{{ q.text }}</p>
+            <span class="type-body-small muted">{{ t('playground.steerQueued') }}</span>
+          </div>
         </div>
       </div>
 
@@ -505,13 +533,16 @@ onBeforeUnmount(() => {
           ref="composer"
           v-model="draft"
           :label="t('playground.message')"
-          :placeholder="chat.temporary ? t('playground.placeholderTemporary') : t('playground.placeholder')"
+          :placeholder="steerable ? t('playground.placeholderSteer') : chat.temporary ? t('playground.placeholderTemporary') : t('playground.placeholder')"
           :send-label="t('playground.send')"
           :stop-label="t('playground.stop')"
+          :steer-label="t('playground.steer')"
           :busy="chat.busy"
+          :steerable="steerable"
           :can-send="!!chat.model && !uploading"
           :attached="attached.length > 0"
           @send="send"
+          @steer="steerNow"
           @stop="chat.stop()"
           @recall="recall"
         >
@@ -678,6 +709,12 @@ onBeforeUnmount(() => {
 .tray { display: flex; flex-wrap: wrap; gap: var(--app-space-2); padding: var(--app-space-3) var(--app-space-4) 0; }
 .file-input { display: none; }
 .attach, .effort, .tools-menu, .full-access { flex: none; }
+/* A message sent to the reply under way, waiting for its next round: a question's bubble, faded. */
+.queued { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.queued .bubble {
+  max-width: min(85%, 560px); margin: 0; padding: var(--app-space-2) var(--app-space-4); border-radius: 20px;
+  background: var(--md-sys-color-surface-container-high); white-space: pre-wrap; overflow-wrap: anywhere; opacity: 0.6;
+}
 /* On a phone the shield says "full access" by its colour alone: the model's name needs the room. */
 @media (max-width: 599px) {
   .full-access :deep(.text) { display: none; }

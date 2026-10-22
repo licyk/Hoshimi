@@ -543,6 +543,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/playground/conversations/{conversation_id}/steer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Steer Reply
+         * @description Send a message to the reply under way (one with tools), for the model to read at its next round.
+         *
+         *     409 when no reply takes one: none runs, it has no tools, or it has just
+         *     ended; send the message as a message of its own then.
+         */
+        post: operations["steer_conversation_reply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/playground/conversations/{conversation_id}/terminals": {
         parameters: {
             query?: never;
@@ -2741,6 +2764,19 @@ export interface components {
             /** Cleared At */
             cleared_at: string;
         };
+        /** SteerSend */
+        SteerSend: {
+            /** Content */
+            content: string;
+        };
+        /**
+         * SteerView
+         * @description A message queued for the reply under way; the reply's ``steer`` event with this ``id`` says the model read it.
+         */
+        SteerView: {
+            /** Id */
+            id: string;
+        };
         /** TerminalList */
         TerminalList: {
             /** Terminals */
@@ -4482,6 +4518,77 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                     "text/event-stream": unknown;
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    steer_conversation_reply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SteerSend"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SteerView"];
                 };
             };
             /** @description Bad Request */

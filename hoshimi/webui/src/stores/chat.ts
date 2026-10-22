@@ -44,6 +44,8 @@ export const useChatStore = defineStore('chat', () => {
   const toolsOff = ref<ToolGroup[]>([]);
   /** Its tools run without asking, whatever the approval mode in Settings. */
   const fullAccess = ref(false);
+  /** Messages sent to the reply under way that it has not read yet. */
+  const queued = ref<{ id: string; text: string }[]>([]);
   /** The background commands its tools started. */
   const terminals = ref<TerminalView[]>([]);
   const busy = ref(false);
@@ -178,6 +180,15 @@ export const useChatStore = defineStore('chat', () => {
           if (m) {
             m.content += event.text;
             addTo(m, 'text', event.text);
+          }
+          break;
+        }
+        case 'steer': {
+          queued.value = queued.value.filter((q) => q.id !== event.step.id);
+          const m = messages.get(reply);
+          if (m) {
+            m.steps ??= [];
+            stepsOf(m).push(event.step);
           }
           break;
         }
@@ -355,6 +366,31 @@ export const useChatStore = defineStore('chat', () => {
     if (id) void conversationsApi.update(id, { tools_off: off }).catch(() => undefined);
   }
 
+  /**
+   * A message for the reply under way, read at its next round. False when no reply takes it (none
+   * runs, it has no tools, or it has just ended): the caller keeps the text to send on its own.
+   */
+  async function steer(text: string): Promise<boolean> {
+    const id = conversation.value?.id;
+    if (!id || !busy.value) return false;
+    try {
+      const { id: steerId } = await conversationsApi.steer(id, text);
+      // Read already (the event can beat the answer to this request), or waiting to be.
+      if (!stepsOf(messages.get(leaf.value) ?? ({} as MessageView)).some((s) => s.type === 'user' && s.id === steerId)) queued.value = [...queued.value, { id: steerId, text }];
+      return true;
+    } catch (error) {
+      if ((error as { status?: number }).status === 409) return false;
+      throw error;
+    }
+  }
+
+  /** What was sent to a reply that ended before reading it, given back once (to put in the composer). */
+  function takeUnread(): string[] {
+    const texts = queued.value.map((q) => q.text);
+    queued.value = [];
+    return texts;
+  }
+
   /** Let this chat's tools run without asking, or ask again; it holds from the next call on, even mid-reply. */
   function chooseFullAccess(on: boolean) {
     fullAccess.value = on;
@@ -402,7 +438,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   return {
-    conversation, messages, leaf, temporary, model, effort, toolsOff, fullAccess, terminals, busy, stage, listChanged, children, path,
-    siblings, leafUnder, load, open, startNew, submit, edit, retry, stop, switchTo, branch, rename, title, choose, chooseTools, chooseFullAccess, approve, refreshTerminals, stopTerminal, forget,
+    conversation, messages, leaf, temporary, model, effort, toolsOff, fullAccess, queued, terminals, busy, stage, listChanged, children, path,
+    siblings, leafUnder, load, open, startNew, submit, edit, retry, stop, switchTo, branch, rename, title, choose, chooseTools, chooseFullAccess, steer, takeUnread, approve, refreshTerminals, stopTerminal, forget,
   };
 });

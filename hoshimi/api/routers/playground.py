@@ -25,7 +25,7 @@ from hoshimi.api.routers.models import ModelList, list_models
 from hoshimi.core.agent.tools import GROUPS
 from hoshimi.core.context import Services
 from hoshimi.core.conversations import AttachmentInfo, ChatMessage, Conversation
-from hoshimi.core.errors import NotFoundError, ValidationError
+from hoshimi.core.errors import ConflictError, NotFoundError, ValidationError
 from hoshimi.core.record import Record
 
 router = APIRouter(prefix="/v1/playground", tags=["playground"])
@@ -174,6 +174,16 @@ class Approval(Record):
     """The user's answer to a call that waits: ``allow`` it, ``always`` allow this tool in this conversation, or ``deny`` it."""
 
     decision: Literal["allow", "always", "deny"]
+
+
+class SteerSend(Record):
+    content: str
+
+
+class SteerView(Record):
+    """A message queued for the reply under way; the reply's ``steer`` event with this ``id`` says the model read it."""
+
+    id: str
 
 
 class TerminalView(Record):
@@ -407,6 +417,22 @@ def answer_approval(services: ServicesDep, conversation_id: str, call_id: str, b
     if not services.agent.approvals.answer(conversation_id, call_id, body.decision):
         raise NotFoundError(f"No call '{call_id}' waits for approval.")
     return Response(status_code=204)
+
+
+@router.post("/conversations/{conversation_id}/steer", operation_id="steer_conversation_reply", status_code=202, responses=ERROR_RESPONSES)
+def steer_reply(services: ServicesDep, conversation_id: str, body: SteerSend) -> SteerView:
+    """Send a message to the reply under way (one with tools), for the model to read at its next round.
+
+    409 when no reply takes one: none runs, it has no tools, or it has just
+    ended; send the message as a message of its own then.
+    """
+    _conversation(services, conversation_id)
+    if not body.content.strip():
+        raise ValidationError("Write a message.")
+    steer = services.agent.steering.push(conversation_id, body.content)
+    if steer is None:
+        raise ConflictError("No reply is running that can take a message now; send it as a new message.")
+    return SteerView(id=steer.id)
 
 
 @router.get("/conversations/{conversation_id}/terminals", operation_id="list_conversation_terminals", responses=ERROR_RESPONSES)

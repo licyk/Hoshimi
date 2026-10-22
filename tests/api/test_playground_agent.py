@@ -325,3 +325,60 @@ def test_the_tools_are_set_in_settings(client: Any, services: Services) -> None:
     assert client.patch("/api/v1/settings", json={"playground": {"approval": "full"}}).json()["playground"]["approval"] == "full"
     for bad in ({"tools": ["rm"]}, {"approval": "never"}, {"max_steps": 0}, {"search_url": "searx.local"}):
         assert client.patch("/api/v1/settings", json={"playground": bad}).status_code == 400, bad
+
+# -- steering ------------------------------------------------------------------------------ #
+def test_a_message_sent_mid_run_is_read_at_the_next_round(services: Services, provider: AgentProvider) -> None:
+    cid, events = _reply(services, [["read", {"path": "a.txt"}]])
+    for item in events:
+        if item["type"] == "tool" and item["step"]["status"] == "running":
+            break
+    steer = services.agent.steering.push(cid, "Also check b.txt")
+    assert steer is not None
+    rest = list(events)
+    steered = [e for e in rest if e["type"] == "steer"]
+    assert [(e["step"]["id"], e["step"]["text"], e["step"]["round"]) for e in steered] == [(steer.id, "Also check b.txt", 1)]
+    # The model read it after the call's result, before its next words.
+    assert [m["role"] for m in provider.seen[-1]["messages"]][-3:] == ["assistant", "tool", "user"]
+    assert provider.seen[-1]["messages"][-1] == {"role": "user", "content": "Also check b.txt"}
+    reply = rest[-1]["message"]
+    assert [s["type"] for s in reply.steps] == ["reasoning", "text", "tool", "user", "text"]
+    assert reply.content == "Let me look.\n\nno tools needed"
+    # The reply is over: nothing takes a message now.
+    assert services.agent.steering.push(cid, "too late") is None
+
+
+def test_a_message_sent_as_the_model_finishes_keeps_the_reply_going(services: Services, provider: AgentProvider) -> None:
+    conversation = services.conversations.create(model="agent")
+    question = services.conversations.add_message(conversation.id, None, "user", "hello")
+    assert question is not None
+    events = PlaygroundRunner(services).reply(conversation.id, question.id, model="agent", effort="")
+    # Sent while the model writes its last words.
+    assert next(item for item in events if item["type"] == "delta")
+    assert services.agent.steering.push(conversation.id, "one more thing") is not None
+    rest = list(events)
+    reply = rest[-1]["message"]
+    assert [(s["type"], s["round"]) for s in reply.steps] == [("text", 0), ("user", 1), ("text", 1)]
+    assert provider.seen[-1]["messages"][-2:] == [{"role": "assistant", "content": "no tools needed"}, {"role": "user", "content": "one more thing"}]
+    # Sent again later, the steering message goes where it was read.
+    follow = services.conversations.add_message(conversation.id, reply.id, "user", "thanks")
+    assert follow is not None
+    list(PlaygroundRunner(services).reply(conversation.id, follow.id, model="agent", effort=""))
+    assert [(m["role"], m["content"]) for m in provider.seen[-1]["messages"]] == [
+        ("user", "hello"), ("assistant", "no tools needed"), ("user", "one more thing"), ("assistant", "no tools needed"), ("user", "thanks"),
+    ]
+
+
+def test_a_stopped_reply_takes_no_more_messages(services: Services) -> None:
+    cid, events = _reply(services, [["read", {"path": "a.txt"}]])
+    next(events)
+    next(events)
+    services.agent.steering.push(cid, "never read")
+    events.close()
+    assert services.agent.steering.push(cid, "after the stop") is None
+
+
+def test_steer_over_http_needs_a_reply_with_tools_running(client: Any) -> None:
+    cid = _new(client)
+    assert client.post(f"/api/v1/playground/conversations/{cid}/steer", json={"content": "hi"}).status_code == 409
+    assert client.post(f"/api/v1/playground/conversations/{cid}/steer", json={"content": "  "}).status_code == 400
+    assert client.post("/api/v1/playground/conversations/missing/steer", json={"content": "hi"}).status_code == 404

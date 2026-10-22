@@ -22,6 +22,8 @@ export const TOOL_GROUPS: ToolGroup[] = ['read', 'apply_patch', 'shell', 'termin
 /** One step of a reply that used tools (``MessageView.steps``), in the order it happened. */
 export type ReasoningStep = { type: 'reasoning'; text: string; ms: number; round: number };
 export type TextStep = { type: 'text'; text: string; round: number };
+/** A message the user sent while the reply ran, where the model read it. */
+export type UserStep = { type: 'user'; id: string; text: string; round: number };
 export type ToolStatus = 'pending' | 'waiting' | 'running' | 'done' | 'error' | 'denied' | 'stopped';
 export type ToolStep = {
   type: 'tool';
@@ -39,7 +41,7 @@ export type ToolStep = {
   approval: string;
   round: number;
 };
-export type Step = ReasoningStep | TextStep | ToolStep;
+export type Step = ReasoningStep | TextStep | ToolStep | UserStep;
 export type ApprovalDecision = 'allow' | 'always' | 'deny';
 export type ProviderSummary = S['ProviderSummary'];
 export type ModelList = S['ModelList'];

@@ -3,7 +3,7 @@ import { computed, type Ref } from 'vue';
 import { authedFetch, readSse } from '@/api/chat';
 import { api, unwrap } from '@/api/client';
 import { keys } from '@/api/queries/keys';
-import type { ApprovalDecision, AttachmentView, MessageView, Notice, ToolGroup, ToolStep } from '@/api/types';
+import type { ApprovalDecision, AttachmentView, MessageView, Notice, ToolGroup, ToolStep, UserStep } from '@/api/types';
 
 /**
  * The Playground's kept conversations. A conversation is a tree of messages; sending, editing and
@@ -18,6 +18,7 @@ export type ReplyEvent =
   | { type: 'reasoning'; text: string }
   | { type: 'delta'; text: string }
   | { type: 'tool'; step: ToolStep }
+  | { type: 'steer'; step: UserStep }
   | { type: 'done'; message: MessageView };
 
 export interface SendBody {
@@ -51,6 +52,9 @@ export const conversationsApi = {
   /** Answer a tool call that waits for approval in the reply streaming now. */
   approve: (id: string, callId: string, decision: ApprovalDecision) =>
     unwrap(api.POST('/api/v1/playground/conversations/{conversation_id}/approvals/{call_id}', { params: { path: { conversation_id: id, call_id: callId } }, body: { decision } })),
+  /** A message for the reply under way, read at its next round; a 409 when no reply takes one. */
+  steer: (id: string, content: string) =>
+    unwrap(api.POST('/api/v1/playground/conversations/{conversation_id}/steer', { ...path(id), body: { content } })),
   /** The background commands this conversation's tools started. */
   terminals: (id: string) => unwrap(api.GET('/api/v1/playground/conversations/{conversation_id}/terminals', path(id))),
   stopTerminal: (id: string, sessionId: number) =>

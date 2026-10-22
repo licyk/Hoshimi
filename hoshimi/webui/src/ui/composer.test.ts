@@ -34,6 +34,25 @@ describe('Composer', () => {
   });
 });
 
+describe('Composer steering', () => {
+  it('sends to the answer under way while there is text, and stops it otherwise', async () => {
+    const wrapper = mount(Composer, { props: { ...LABELS, steerLabel: 'Steer', modelValue: '', busy: true, steerable: true } });
+    expect(wrapper.find('button[aria-label="Stop"]').exists()).toBe(true);
+    await wrapper.setProps({ modelValue: 'also this' });
+    await wrapper.find('textarea').trigger('keydown', { key: 'Enter' });
+    await wrapper.find('button[aria-label="Steer"]').trigger('click');
+    expect(wrapper.emitted('steer')).toHaveLength(2);
+    expect(wrapper.emitted('send')).toBeUndefined();
+    // Escape still stops; without steering, text does not change the button.
+    await wrapper.find('textarea').trigger('keydown', { key: 'Escape' });
+    expect(wrapper.emitted('stop')).toHaveLength(1);
+    await wrapper.setProps({ steerable: false });
+    expect(wrapper.find('button[aria-label="Stop"]').exists()).toBe(true);
+    await wrapper.find('textarea').trigger('keydown', { key: 'Enter' });
+    expect(wrapper.emitted('steer')).toHaveLength(2);
+  });
+});
+
 describe('ComposerMenu', () => {
   const options = [
     { value: 'a/one', label: 'a/one', description: 'One · alpha' },

@@ -22,7 +22,7 @@ vi.mock('@/ui', async (importOriginal) => ({ ...(await importOriginal<typeof imp
 // -- a server in memory: conversations as trees, replies streamed by the test -----------------
 interface Msg { id: string; parent_id: string | null; role: 'user' | 'assistant'; content: string; model: string; effort: string; status: string; error: string; notices: { kind: string; name: string; model: string }[]; created_at: number; attachments: unknown[]; reasoning?: string; reasoning_ms?: number; steps?: unknown[] }
 interface Conv { id: string; title: string; title_state: string; model: string; effort: string; archived: boolean; temporary: boolean; branched_from: string; created_at: number; updated_at: number; current_leaf: string; messages: Msg[]; tools_off?: string[]; full_access?: boolean }
-let server: { conversations: Map<string, Conv>; session: string | null; calls: { method: string; path: string; body: unknown }[]; ids: number; clock: number; terminals?: unknown[] };
+let server: { conversations: Map<string, Conv>; session: string | null; calls: { method: string; path: string; body: unknown }[]; ids: number; clock: number; terminals?: unknown[]; steerOpen?: boolean };
 /** The reply streams the test has not yet finished: it writes their events and closes them. */
 let streams: { send: (event: object) => void; close: () => void; signal: AbortSignal }[];
 
@@ -105,6 +105,7 @@ async function handle(input: RequestInfo | URL, init?: RequestInit): Promise<Res
     return sse(request.signal, [{ type: 'assistant', message: reply }]);
   }
   if (sub === 'approvals') return json(null, 204);
+  if (sub === 'steer') return server.steerOpen ? json({ id: `steer${++server.ids}` }, 202) : json({ code: 'conflict', message: 'No reply is running' }, 409);
   if (sub === 'terminals' && request.method === 'GET') return json({ terminals: server.terminals ?? [] });
   if (sub === 'terminals' && request.method === 'DELETE') {
     server.terminals = [];
@@ -369,6 +370,46 @@ describe('Playground chat', () => {
     await flushPromises();
     expect(calls('DELETE', /\/terminals\/3$/)).toHaveLength(1);
     expect(wrapper.find('.terminals').exists()).toBe(false);
+    state.tools = [];
+    wrapper.unmount();
+  });
+
+  it('steers a reply with tools while it runs, and gives back what it never read', async () => {
+    state.tools = ['shell'];
+    const { wrapper } = await openPlayground();
+    await ask(wrapper, 'work on it');
+    server.steerOpen = true;
+    const textarea = wrapper.find('.composer textarea');
+    expect(textarea.attributes('placeholder')).toBe('Add to what it’s doing…');
+    await textarea.setValue('use the other file');
+    await textarea.trigger('keydown', { key: 'Enter' });
+    await flushPromises();
+    const sent = calls('POST', /\/steer$/);
+    expect(sent.map((c) => c.body)).toEqual([{ content: 'use the other file' }]);
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('');
+    expect(wrapper.find('.queued').text()).toContain('use the other file');
+    expect(wrapper.find('.queued').text()).toContain('Read after the current step');
+    // The model reads it at its next round: it moves into the reply, where it was read.
+    streams[0].send({ type: 'delta', text: 'Starting.' });
+    streams[0].send({ type: 'steer', step: { type: 'user', id: 'steer' + (server.ids), text: 'use the other file', round: 1 } });
+    await flushPromises();
+    expect(wrapper.find('.queued').exists()).toBe(false);
+    expect(wrapper.find('.assistant-message .steered').text()).toBe('use the other file');
+    // Another one, never read before the stop, comes back to the box.
+    await textarea.setValue('and hurry');
+    await textarea.trigger('keydown', { key: 'Enter' });
+    await flushPromises();
+    await wrapper.find('.composer button[aria-label="Stop"]').trigger('click');
+    await flushPromises();
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('and hurry');
+    // Once nothing takes a message, the text stays in the box with a word why.
+    server.steerOpen = false;
+    await ask(wrapper, 'again');
+    await textarea.setValue('late words');
+    await textarea.trigger('keydown', { key: 'Enter' });
+    await flushPromises();
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('late words');
+    expect(state.show).toHaveBeenCalledWith('The reply had already ended; your message is back in the box.');
     state.tools = [];
     wrapper.unmount();
   });

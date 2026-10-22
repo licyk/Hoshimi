@@ -12,6 +12,9 @@ import { TRANSITIONS } from '@/ui/motion/transitions';
  * input method composes is the method's own. Escape stops an answer coming in, and the up arrow in
  * an empty box asks for the last message back (``recall``), to edit it. What is attached goes in
  * ``above`` (over the text); ``attached`` lets a message go with no text of its own.
+ *
+ * With ``steerable``, an answer coming in can be written to: while there is text, the button (and
+ * Enter) sends it to the answer under way (``steer``) instead of stopping it; Escape still stops.
  */
 const props = withDefaults(defineProps<{
   /** The text's accessible name. */
@@ -25,12 +28,18 @@ const props = withDefaults(defineProps<{
   canSend?: boolean;
   /** Something is attached: the message can go without text. */
   attached?: boolean;
-}>(), { canSend: true, attached: false });
-const emit = defineEmits<{ send: []; stop: []; recall: [] }>();
+  /** The answer coming in takes messages while it runs. */
+  steerable?: boolean;
+  steerLabel?: string;
+}>(), { canSend: true, attached: false, steerable: false, steerLabel: '' });
+const emit = defineEmits<{ send: []; stop: []; recall: []; steer: [] }>();
 const text = defineModel<string>({ default: '' });
 
 const input = ref<HTMLTextAreaElement | null>(null);
 const ready = computed(() => !props.busy && props.canSend && (!!text.value.trim() || props.attached));
+/** Busy, with something to say to the answer under way: the button sends it rather than stopping. */
+const steering = computed(() => props.busy && props.steerable && !!text.value.trim());
+const stopping = computed(() => props.busy && !steering.value);
 
 /** Fit the box to the text; its max-height takes over from there and it scrolls. */
 function fit() {
@@ -43,7 +52,8 @@ watch(text, () => nextTick(fit));
 onMounted(fit);
 
 function submit() {
-  if (ready.value) emit('send');
+  if (steering.value) emit('steer');
+  else if (ready.value) emit('send');
 }
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
@@ -87,14 +97,14 @@ defineExpose({ focus: () => input.value?.focus() });
           <button
             type="button"
             class="send"
-            :class="{ ready, busy }"
+            :class="{ ready: ready || steering, busy: stopping }"
             :disabled="!busy && !ready"
-            :aria-label="busy ? stopLabel : sendLabel"
-            :title="busy ? stopLabel : sendLabel"
-            @click="busy ? emit('stop') : submit()"
+            :aria-label="steering ? steerLabel : stopping ? stopLabel : sendLabel"
+            :title="steering ? steerLabel : stopping ? stopLabel : sendLabel"
+            @click="stopping ? emit('stop') : submit()"
           >
             <Transition :name="TRANSITIONS.iconSwap">
-              <AppIcon v-if="busy" key="stop" :icon="Square" :size="18" class="glyph stop" />
+              <AppIcon v-if="stopping" key="stop" :icon="Square" :size="18" class="glyph stop" />
               <AppIcon v-else key="send" :icon="ArrowUp" :size="20" class="glyph" />
             </Transition>
           </button>

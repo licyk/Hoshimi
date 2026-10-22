@@ -17,7 +17,8 @@ import Markdown from '@/ui/Markdown.vue';
  * yet (reading an image, waiting for the model), how it ended when it did not end
  * well, and what the reader should know about how it was made (an image described by another
  * model). A reply that used tools is its steps in order: what it reasoned, said and called, each
- * call a line that opens (and asks for approval when it must). Under it: Copy, Try again (with the model now in the composer), Branch in a new chat, the
+ * call a line that opens (and asks for approval when it must), and what the user said to it while
+ * it ran, where it read it. Under it: Copy, Try again (with the model now in the composer), Branch in a new chat, the
  * way between its versions, and More (Copy as API request). The latest reply keeps its actions in view.
  */
 const props = defineProps<{
@@ -77,6 +78,7 @@ const failure = computed(() => [t('playground.replyFailed'), props.message.error
           @copied="emit('copied')"
           @copy-failed="emit('copy-failed')"
         />
+        <p v-else-if="s.type === 'user'" class="steered type-body-large">{{ s.text }}</p>
         <ToolCall v-else :step="s" @approve="(decision) => emit('approve', s, decision)" />
       </template>
     </template>
@@ -117,6 +119,11 @@ const failure = computed(() => [t('playground.replyFailed'), props.message.error
 <style scoped>
 .assistant-message { display: flex; flex-direction: column; gap: var(--app-space-2); min-width: 0; }
 .content { color: var(--md-sys-color-on-surface); }
+/* What the user said while it ran, where the model read it: a question's bubble, inside the reply. */
+.steered {
+  align-self: flex-end; max-width: min(85%, 560px); margin: var(--app-space-1) 0; padding: var(--app-space-2) var(--app-space-4);
+  border-radius: 20px; background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); white-space: pre-wrap; overflow-wrap: anywhere;
+}
 .waiting { display: flex; align-items: center; gap: var(--app-space-2); min-height: 28px; }
 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--md-sys-color-primary); animation: waiting-pulse 1.2s var(--md-sys-motion-easing-standard) infinite; }
 @keyframes waiting-pulse { 0%, 100% { opacity: 0.35; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }

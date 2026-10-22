@@ -1,9 +1,10 @@
-"""What the Playground's agent keeps between calls: background commands, and approvals asked and given."""
+"""What the Playground's agent keeps between calls: background commands, approvals asked and given, and messages that steer a reply under way."""
 
 from __future__ import annotations
 
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -72,10 +73,71 @@ class Approvals:
             self.always.pop(conversation_id, None)
 
 
+@dataclass(frozen=True)
+class Steer:
+    id: str
+    text: str
+
+
+class Steering:
+    """Messages the user sends while a reply runs, for it to read at its next round.
+
+    A reply that can be steered opens its conversation's queue as it starts
+    and takes what is in it between rounds. It closes the queue only when the
+    queue is empty, so a message sent as it ends is never lost: the reply
+    goes on to answer it, or the send is refused and the page sends it as a
+    message of its own.
+    """
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.queues: dict[str, list[Steer]] = {}
+
+    def open(self, conversation_id: str) -> None:
+        with self.lock:
+            self.queues.setdefault(conversation_id, [])
+
+    def push(self, conversation_id: str, text: str) -> Steer | None:
+        """Queue a message for the reply under way; None when no reply takes one."""
+        with self.lock:
+            queue = self.queues.get(conversation_id)
+            if queue is None:
+                return None
+            steer = Steer(f"steer_{uuid.uuid4().hex[:16]}", text)
+            queue.append(steer)
+            return steer
+
+    def take(self, conversation_id: str) -> list[Steer]:
+        with self.lock:
+            queue = self.queues.get(conversation_id)
+            if not queue:
+                return []
+            taken = list(queue)
+            queue.clear()
+            return taken
+
+    def finish(self, conversation_id: str) -> list[Steer]:
+        """Close the queue if nothing waits in it; otherwise what waits (and it stays open)."""
+        with self.lock:
+            queue = self.queues.get(conversation_id)
+            if queue:
+                taken = list(queue)
+                queue.clear()
+                return taken
+            self.queues.pop(conversation_id, None)
+            return []
+
+    def close(self, conversation_id: str) -> list[Steer]:
+        """Close the queue whatever waits in it (the reply was stopped or failed); returns what was never read."""
+        with self.lock:
+            return self.queues.pop(conversation_id, None) or []
+
+
 class AgentRuntime:
     def __init__(self) -> None:
         self.terminals = TerminalManager()
         self.approvals = Approvals()
+        self.steering = Steering()
 
     def end(self, conversation_id: str) -> None:
         """A conversation is gone: its background commands stop, its approvals are forgotten."""

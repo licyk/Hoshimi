@@ -22,14 +22,22 @@ Such a reply keeps its *steps*, in order:
 
 - ``{"type": "reasoning", "text", "ms", "round"}``;
 - ``{"type": "text", "text", "round"}``;
+- ``{"type": "user", "id", "text", "round"}``: a message the user sent while
+  the reply ran (it *steered* it), read by the model at the start of its round;
 - ``{"type": "tool", "id", "name", "arguments", "status", "output", "exit_code",
   "ms", "meta", "approval", "round"}``, where ``status`` is ``pending`` (being
   written), ``waiting`` (for approval, ``approval`` saying why), ``running``,
   ``done``, ``error``, ``denied`` or ``stopped``.
 
 Its ``content`` is its text steps together. Sent to a model again, each round
-becomes an assistant message with its ``tool_calls`` and a ``tool`` message
-per call (or, with no tools offered, the same as text).
+becomes its steering messages (as user messages), an assistant message with its
+``tool_calls`` and a ``tool`` message per call (or, with no tools offered, the
+same as text).
+
+A reply with tools can be steered: what the user sends while it runs
+(:class:`hoshimi.core.agent.runtime.Steering`) is read at the next round,
+after the calls under way. One sent as the model finishes keeps the reply
+going for another round, to answer it.
 
 The reply streams back as events (see :func:`event`) while it is kept: it is
 filed as ``streaming`` before the first word, and settles as ``complete``,
@@ -54,6 +62,7 @@ from typing import Any
 
 from hoshimi.api.inference import tracked_chunks
 from hoshimi.core.agent.base import Tool, ToolContext, ToolError, needs_approval
+from hoshimi.core.agent.runtime import Steer
 from hoshimi.core.agent.tools import GROUPS, parse_arguments, run_tool, tools_for, unsupported
 from hoshimi.core.context import Services
 from hoshimi.core.conversations import Attachment, ChatMessage, Conversation, ConversationStore, Status, path_to
@@ -93,6 +102,7 @@ def event(kind: str, **fields: Any) -> dict[str, Any]:
     - ``delta``: more of the reply (``text``);
     - ``reasoning``: more of what the model reasons before it answers (``text``), for a model that shows it;
     - ``tool``: a tool call as it now stands (``step``, a tool step; the page replaces the one with its ``id``);
+    - ``steer``: a message the user sent while the reply ran, now read by the model (``step``, a user step with the ``id`` the send was given);
     - ``done``: the reply as kept, with how it ended (``message``).
 
     ``delta`` and ``reasoning`` add to the last step when it is of their kind,
@@ -149,6 +159,12 @@ class Run:
                 break
         self._reasoning_since = None
 
+    def add_user(self, steer_id: str, text: str) -> dict[str, Any]:
+        self.end_reasoning()
+        step = {"type": "user", "id": steer_id, "text": text, "round": self.round}
+        self.steps.append(step)
+        return step
+
     def add_call(self, call_id: str, name: str) -> dict[str, Any]:
         self.end_reasoning()
         if not call_id or any(s.get("id") == call_id for s in self.steps):
@@ -175,8 +191,8 @@ class Run:
         return [s for s in self.steps if s["type"] == "tool"]
 
     def kept_steps(self) -> list[dict[str, Any]]:
-        """The steps to keep: a reply that called no tool is its text and reasoning alone."""
-        return self.steps if self.calls else []
+        """The steps to keep: a reply that called no tool and was not steered is its text and reasoning alone."""
+        return self.steps if any(s["type"] in ("tool", "user") for s in self.steps) else []
 
     def stop_calls(self) -> None:
         """Calls the stop cut short before they ran."""
@@ -213,6 +229,7 @@ def replay(message: ChatMessage, *, tools: bool) -> list[dict[str, Any]]:
         rounds.setdefault(int(step.get("round") or 0), []).append(step)
     for number in sorted(rounds):
         steps = rounds[number]
+        out.extend({"role": "user", "content": s["text"]} for s in steps if s["type"] == "user")
         text = "".join(s["text"] for s in steps if s["type"] == "text")
         calls = [s for s in steps if s["type"] == "tool"]
         if not calls:
@@ -486,36 +503,61 @@ class PlaygroundRunner:
         self, run: Run, conversation_id: str, message_id: str, model: str, effort: str, messages: list[dict[str, Any]], tools: list[Tool],
         cancel: threading.Event, notice: Any,
     ) -> Iterator[dict[str, Any]]:
-        """Rounds of streaming and calling, until a round calls nothing."""
+        """Rounds of streaming and calling, until a round calls nothing (and no message steers it on)."""
         limit = self.services.settings.playground_max_steps
         ctx = self.context(conversation_id, cancel)
+        steering = self.services.agent.steering
         if tools:
             try:
                 ctx.workspace.mkdir(parents=True, exist_ok=True)
             except OSError as exc:
                 logger.warning("could not create the workspace %s: %s", ctx.workspace, exc)
+            steering.open(conversation_id)
         offered = {t.name: t for t in tools}
-        while True:
-            last_round = bool(tools) and run.round >= limit
-            calls = yield from self._stream(model, self._body(model, effort, messages, tools, last_round=last_round), run)
-            if not calls:
-                return
-            if last_round:
+        try:
+            while True:
+                last_round = bool(tools) and run.round >= limit
+                calls = yield from self._stream(model, self._body(model, effort, messages, tools, last_round=last_round), run)
+                said = "".join(s["text"] for s in run.steps if s["type"] == "text" and s["round"] == run.round)
+                if not calls:
+                    # A message sent as the model finished: it goes on, to answer it.
+                    waiting = steering.finish(conversation_id) if tools else []
+                    if not waiting:
+                        return
+                    if said:
+                        messages.append({"role": "assistant", "content": said})
+                    run.round += 1
+                    yield from self._steer(run, message_id, waiting, messages)
+                    continue
+                if last_round:
+                    for step in calls:
+                        step.update(status="stopped", output=f"Not run: this reply reached its limit of {limit} rounds of tool calls.")
+                        yield event("tool", step=step)
+                    yield from notice({"kind": "step-limit", "name": str(limit)})
+                    return
+                messages.append({
+                    "role": "assistant",
+                    "content": said or None,
+                    "tool_calls": [{"id": c["id"], "type": "function", "function": {"name": c["name"], "arguments": c["arguments"] or "{}"}} for c in calls],
+                })
                 for step in calls:
-                    step.update(status="stopped", output=f"Not run: this reply reached its limit of {limit} rounds of tool calls.")
-                    yield event("tool", step=step)
-                yield from notice({"kind": "step-limit", "name": str(limit)})
-                return
-            messages.append({
-                "role": "assistant",
-                "content": "".join(s["text"] for s in run.steps if s["type"] == "text" and s["round"] == run.round) or None,
-                "tool_calls": [{"id": c["id"], "type": "function", "function": {"name": c["name"], "arguments": c["arguments"] or "{}"}} for c in calls],
-            })
-            for step in calls:
-                yield from self._call(step, offered.get(step["name"]), ctx)
-                messages.append({"role": "tool", "tool_call_id": step["id"], "content": call_result(step)})
-                self.store.save_steps(message_id, run.steps, run.text)
-            run.round += 1
+                    yield from self._call(step, offered.get(step["name"]), ctx)
+                    messages.append({"role": "tool", "tool_call_id": step["id"], "content": call_result(step)})
+                    self.store.save_steps(message_id, run.steps, run.text)
+                run.round += 1
+                yield from self._steer(run, message_id, steering.take(conversation_id), messages)
+        finally:
+            if tools:
+                steering.close(conversation_id)
+
+    def _steer(self, run: Run, message_id: str, steers: list[Steer], messages: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+        """What the user sent while the reply ran, read now, at the start of a round."""
+        for steer in steers:
+            step = run.add_user(steer.id, steer.text)
+            messages.append({"role": "user", "content": steer.text})
+            yield event("steer", step=step)
+        if steers:
+            self.store.save_steps(message_id, run.steps, run.text)
 
     def _call(self, step: dict[str, Any], tool: Tool | None, ctx: ToolContext) -> Iterator[dict[str, Any]]:
         """Run one call (asking first, when it must) and keep how it went on its step."""
