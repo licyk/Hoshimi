@@ -46,6 +46,7 @@ export default {
   },
   app: {
     title: 'Hoshimi',
+    help: '帮助与文档',
   },
   catalog: {
     loading: '正在加载供应商：{loaded}/{total}',

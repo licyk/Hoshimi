@@ -46,6 +46,7 @@ export default {
   },
   app: {
     title: 'Hoshimi',
+    help: 'Help and documentation',
   },
   catalog: {
     loading: 'Loading providers: {loaded}/{total}',

@@ -71,6 +71,8 @@ const footer = computed<NavItem[]>(() => [{ to: addressOf('settings'), label: t(
 
 const NEXT_THEME = { light: 'dark', dark: 'system', system: 'light' } as const;
 const cycleTheme = () => (prefs.prefs.theme = NEXT_THEME[prefs.prefs.theme]);
+// The documentation site, which shows itself in the browser's language.
+const DOCS_URL = 'https://hoshimi.netlify.app/docs';
 const themeIcon = computed(() => ({ light: icons.Sun, dark: icons.Moon, system: icons.SunMoon })[prefs.prefs.theme]);
 const running = computed(() => live.active.length);
 const liveLabel = computed(() => (running.value ? t('live.chip', { n: running.value }) : t('live.idle')));
@@ -83,6 +85,7 @@ const liveLabel = computed(() => (running.value ? t('live.chip', { n: running.va
     </template>
     <template #actions>
       <IconButton :icon="running ? icons.Loader2 : icons.Activity" :spin="running > 0" :label="liveLabel" :badge="running || null" @click="liveOpen = true" />
+      <IconButton :icon="icons.CircleHelp" :label="t('app.help')" :href="DOCS_URL" />
       <IconButton :icon="themeIcon" :label="`${t('settings.theme')}: ${t(`settings.themes.${prefs.prefs.theme}`)}`" @click="cycleTheme" />
     </template>
     <RouterView v-slot="{ Component, route: r }">

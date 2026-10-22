@@ -46,6 +46,7 @@ export default {
   },
   app: {
     title: 'Hoshimi',
+    help: 'ヘルプとドキュメント',
   },
   catalog: {
     loading: 'プロバイダーを読み込み中：{loaded}/{total}',
