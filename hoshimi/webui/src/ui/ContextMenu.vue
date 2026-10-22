@@ -96,15 +96,16 @@ function choose(id: string) {
 
 <style scoped>
 .menu {
-  position: fixed; min-width: 220px; max-width: min(var(--app-width-menu), calc(100vw - 16px)); padding: var(--app-space-2) 0;
+  /* Items stretch rather than take width: 100%, which overflows beside a floating scrollbar (see AppMenu). */
+  position: fixed; display: flex; flex-direction: column; min-width: 220px; max-width: min(var(--app-width-menu), calc(100vw - 16px)); padding: var(--app-space-2) 0;
   background: var(--md-sys-color-surface-container); border-radius: var(--md-sys-shape-corner-extra-small); box-shadow: var(--app-elevation-2);
 }
 .item {
-  display: flex; align-items: center; gap: var(--app-space-3); width: 100%; height: 40px; padding: 0 var(--app-space-3);
+  display: flex; flex: none; align-items: center; gap: var(--app-space-3); height: 40px; padding: 0 var(--app-space-3);
   border: 0; background: transparent; color: var(--md-sys-color-on-surface); cursor: pointer; text-align: left; font: inherit;
 }
 .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item:disabled { opacity: var(--app-disabled-content-opacity); cursor: default; }
 .item.danger { color: var(--md-sys-color-error); }
-.divider { height: 1px; margin: var(--app-space-1) 0; background: var(--md-sys-color-outline-variant); }
+.divider { flex: none; height: 1px; margin: var(--app-space-1) 0; background: var(--md-sys-color-outline-variant); }
 </style>

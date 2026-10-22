@@ -126,11 +126,13 @@ const toggle = () => (open.value = !open.value);
 <style scoped>
 .menu-root { display: inline-flex; }
 .menu {
-  position: fixed; padding: var(--app-space-2) 0;
+  /* Items stretch as flex items rather than taking width: 100%: where scrollbars float, an .app-scroll
+     area's children step back by the lane's width (tokens.css), and 100% plus that margin overflows. */
+  position: fixed; display: flex; flex-direction: column; padding: var(--app-space-2) 0;
   background: var(--md-sys-color-surface-container); border-radius: var(--md-sys-shape-corner-extra-small); box-shadow: var(--app-elevation-2);
 }
 .item {
-  display: flex; align-items: center; gap: var(--app-space-3); width: 100%; height: 48px; padding: 0 var(--app-space-3);
+  display: flex; flex: none; align-items: center; gap: var(--app-space-3); height: 48px; padding: 0 var(--app-space-3);
   border: 0; background: transparent; color: var(--md-sys-color-on-surface); cursor: pointer; text-align: left; font: inherit; white-space: nowrap;
 }
 .item:disabled { opacity: var(--app-disabled-content-opacity); cursor: default; }
