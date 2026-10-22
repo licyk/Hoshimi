@@ -14,7 +14,7 @@ import httpx
 from hoshimi.core.catalog import ModelSpec
 from hoshimi.core.errors import ValidationError
 from hoshimi.core.provider_definitions import PROVIDER_BY_ID
-from hoshimi.core.providers.base import Account, ProviderError
+from hoshimi.core.providers.base import Account, ContextOverflow
 from hoshimi.core.providers.catalog_profiles import CatalogProfile, discover_catalog
 from hoshimi.core.providers.configured import ConfiguredProvider
 from hoshimi.core.providers.keyed import account_token
@@ -115,7 +115,7 @@ class LocalProvider(ConfiguredProvider):
             output = body.get("max_tokens", body.get("max_completion_tokens", 0))
             output = output if type(output) is int and output > 0 else 0
             if context and size // 4 + output > context:
-                raise ProviderError(400, "LM Studio request exceeds this model's loaded context window")
+                raise ContextOverflow(400, "LM Studio request exceeds this model's loaded context window")
         yield from super().stream_raw(account, model, body)
 
     def specs(self) -> dict[str, ModelSpec]:

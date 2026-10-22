@@ -119,6 +119,9 @@ No other keys are allowed in `network`. Each channel can override this policy in
 | `playground.approval` | `"ask"`, `"auto"` or `"full"` | `"ask"` | When tools ask first: `ask` before commands, file changes and anything outside the workspace; `auto` only before reading or changing files outside the workspace; `full` never. An empty string counts as `ask` |
 | `playground.max_steps` | integer 1–500 | `50` | The most rounds of tool calls one reply makes; the last round must answer |
 | `playground.search_url` | string | `""` | A SearXNG instance for `web_search` (with its JSON format on); must start with `http://` or `https://`. Empty searches DuckDuckGo |
+| `playground.auto_compact` | boolean | `true` | Compact a conversation by itself as it nears its model's context window; a request refused as too long is compacted either way |
+| `playground.compact_threshold` | number 0.5–0.95 | `0.85` | The share of the window at which a conversation is compacted; sooner when what is left could not hold a reply |
+| `playground.compact_model` | string | `""` | The model that writes compaction summaries; empty uses the conversation's own model |
 
 <Callout type="warn" title="Tools run on this machine">
 
@@ -180,6 +183,7 @@ Every save (Web UI, API, `hoshimi config set`) and every start (`hoshimi serve`,
 | `playground.approval must be ask, auto or full.` | Misspelt approval mode |
 | `playground.max_steps must be between 1 and 500.` | Rounds out of range |
 | `playground.search_url must be an http(s) address.` | SearXNG address is not http(s) |
+| `playground.compact_threshold must be between 0.5 and 0.95.` | Compaction threshold out of range |
 | `security.allow_origins requires server.access_token …` | Allowed origins without a tool access key |
 | `Refusing to bind a non-loopback host without both security.allow_cidrs and server.access_token. …` | Non-loopback address without a network allowlist or a tool access key |
 

@@ -28,6 +28,7 @@ OPENAI_ERROR_TYPES = {
     "conflict": "invalid_request_error",
     "upstream_error": "upstream_error",
     "quota_exceeded": "upstream_error",
+    "context_length_exceeded": "invalid_request_error",
     "auth_failed": "upstream_error",
     "internal_error": "server_error",
 }

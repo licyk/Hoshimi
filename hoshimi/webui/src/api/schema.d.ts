@@ -479,6 +479,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/playground/conversations/{conversation_id}/compact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Compact Conversation
+         * @description Compact the conversation on screen now: a model summarises it, and from then on is sent the summary in its place.
+         *
+         *     Events: ``checkpoint`` (filed, while the summary is written) and ``done``
+         *     (kept; with ``status`` ``error`` it was not, and the conversation is as it
+         *     was). 409 while a reply is running; 400 when there is nothing to compact.
+         */
+        post: operations["compact_conversation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/playground/conversations/{conversation_id}/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Conversation Context
+         * @description How full the conversation on screen is against its model's context window, what it has taken, and how long its replies worked.
+         */
+        get: operations["get_conversation_context"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/playground/conversations/{conversation_id}/messages": {
         parameters: {
             query?: never;
@@ -1671,6 +1715,103 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** Compact */
+        Compact: {
+            /**
+             * Instructions
+             * @default
+             */
+            instructions: string;
+        };
+        /** CompactionSummary */
+        CompactionSummary: {
+            /**
+             * At
+             * @default 0
+             */
+            at: number;
+            /**
+             * Tokens After
+             * @default 0
+             */
+            tokens_after: number;
+            /**
+             * Tokens Before
+             * @default 0
+             */
+            tokens_before: number;
+            /**
+             * Trigger
+             * @default
+             */
+            trigger: string;
+        };
+        /**
+         * ContextView
+         * @description How full the conversation on screen is, against its model's window, and what its replies took.
+         */
+        ContextView: {
+            /**
+             * Approval
+             * @default
+             */
+            approval: string;
+            /** Auto Compact */
+            auto_compact: boolean;
+            /** Compactions */
+            compactions: number;
+            /**
+             * Effort
+             * @default
+             */
+            effort: string;
+            /** Headroom */
+            headroom: number;
+            last: components["schemas"]["TokenCounts"];
+            last_compaction: components["schemas"]["CompactionSummary"] | null;
+            /**
+             * Last Duration Ms
+             * @default 0
+             */
+            last_duration_ms: number;
+            /** Limit */
+            limit: number;
+            /** Model */
+            model: string;
+            /**
+             * Provider
+             * @default
+             */
+            provider: string;
+            /** Replies */
+            replies: number;
+            /** Rounds */
+            rounds: number;
+            /** Running Since */
+            running_since: number | null;
+            /** Tools */
+            tools: string[];
+            /**
+             * Total Duration Ms
+             * @default 0
+             */
+            total_duration_ms: number;
+            totals: components["schemas"]["TokenCounts"];
+            /** Used */
+            used: number;
+            /**
+             * Used Source
+             * @enum {string}
+             */
+            used_source: "usage" | "estimate";
+            /** Window */
+            window: number;
+            /**
+             * Window Source
+             * @enum {string}
+             */
+            window_source: "catalog" | "default" | "learned";
+        };
         /** ConversationCreate */
         ConversationCreate: {
             /**
@@ -2189,6 +2330,11 @@ export interface components {
             /** Created At */
             created_at: number;
             /**
+             * Duration Ms
+             * @default 0
+             */
+            duration_ms: number;
+            /**
              * Effort
              * @default
              */
@@ -2198,6 +2344,11 @@ export interface components {
              * @default
              */
             error: string;
+            /**
+             * Finished At
+             * @default 0
+             */
+            finished_at: number;
             /** Id */
             id: string;
             /**
@@ -2223,7 +2374,7 @@ export interface components {
              * Role
              * @enum {string}
              */
-            role: "user" | "assistant";
+            role: "user" | "assistant" | "checkpoint";
             /**
              * Status
              * @default complete
@@ -2234,6 +2385,15 @@ export interface components {
             steps: {
                 [key: string]: unknown;
             }[];
+            /** Usage */
+            usage: {
+                [key: string]: unknown;
+            };
+            /**
+             * Waited Ms
+             * @default 0
+             */
+            waited_ms: number;
         };
         /** ModelList */
         ModelList: {
@@ -2473,6 +2633,21 @@ export interface components {
              * @enum {string}
              */
             approval: "ask" | "auto" | "full";
+            /**
+             * Auto Compact
+             * @default true
+             */
+            auto_compact: boolean;
+            /**
+             * Compact Model
+             * @default
+             */
+            compact_model: string;
+            /**
+             * Compact Threshold
+             * @default 0.85
+             */
+            compact_threshold: number;
             /**
              * Max Steps
              * @default 50
@@ -2810,6 +2985,29 @@ export interface components {
             running: boolean;
             /** Started At */
             started_at: number;
+        };
+        /** TokenCounts */
+        TokenCounts: {
+            /**
+             * Cached
+             * @default 0
+             */
+            cached: number;
+            /**
+             * Input
+             * @default 0
+             */
+            input: number;
+            /**
+             * Output
+             * @default 0
+             */
+            output: number;
+            /**
+             * Reasoning
+             * @default 0
+             */
+            reasoning: number;
         };
         /** UnavailableReset */
         UnavailableReset: {
@@ -4314,6 +4512,145 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConversationView"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compact_conversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Compact"];
+            };
+        };
+        responses: {
+            /** @description The reply's events, as Server-Sent Events */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_conversation_context: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContextView"];
                 };
             };
             /** @description Bad Request */

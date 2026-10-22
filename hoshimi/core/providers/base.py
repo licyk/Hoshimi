@@ -54,6 +54,21 @@ class QuotaExceeded(ProviderError):
     code = "quota_exceeded"
 
 
+class ContextOverflow(ProviderError):
+    """The request does not fit in the model's context window.
+
+    About the request alone: every account meets the same wall, so the pool
+    stops at once (``should_retry``), and a caller that can shorten the
+    request (the Playground compacts its history) asks again.
+    """
+
+    code = "context_length_exceeded"
+
+    def __init__(self, status: int, body: str = "", **kwargs: Any) -> None:
+        super().__init__(status, body, **kwargs)
+        self.should_retry = False
+
+
 class AuthFailed(ProviderError):
     """Credentials rejected — the pool should rotate or refresh."""
 

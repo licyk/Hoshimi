@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PROBE_STATES, bucketLabel, change, compact, contextWindow, dayLabel, duration, grouped, millis, percent, probeTone, quotaBadge, rate, ratio, when } from '@/format';
+import { PROBE_STATES, bucketLabel, change, compact, contextWindow, dayLabel, duration, elapsed, grouped, millis, percent, probeTone, quotaBadge, rate, ratio, when } from '@/format';
 
 describe('grouped', () => {
   it('groups digits the way a count is read', () => {
@@ -95,6 +95,10 @@ describe('usage figures', () => {
     expect([percent(0.4567), percent(1), percent(null), ratio(1, 0), ratio(1, 4)]).toEqual(['45.7%', '100%', '—', null, 0.25]);
     expect([change(150, 100), change(5, 0)]).toEqual([0.5, null]);
   });
+  it('shows how long something has run as a clock that ticks', () => {
+    expect([elapsed(0), elapsed(999), elapsed(12_400), elapsed(65_000), elapsed(3_725_000), elapsed(-5)]).toEqual(['0s', '0s', '12s', '1m 05s', '1h 02m 05s', '0s']);
+  });
+
   it('says durations the way a person would', () => {
     expect([duration(850), duration(12_400), duration(95_000), duration(120_000), duration(null)]).toEqual(['850 ms', '12.4 s', '1 min 35 s', '2 min', '—']);
   });

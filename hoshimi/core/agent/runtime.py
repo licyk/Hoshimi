@@ -1,4 +1,5 @@
-"""What the Playground's agent keeps between calls: background commands, approvals asked and given, and messages that steer a reply under way."""
+"""What the Playground's agent keeps between calls: background commands, approvals asked and given, messages that steer a reply under way,
+the conversations working now, and the context windows stations have turned out to have."""
 
 from __future__ import annotations
 
@@ -8,6 +9,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Literal
 
+from hoshimi.core.agent.context_window import LearnedWindows
 from hoshimi.core.agent.terminals import TerminalManager
 
 Decision = Literal["allow", "always", "deny"]
@@ -133,11 +135,43 @@ class Steering:
             return self.queues.pop(conversation_id, None) or []
 
 
+class Busy:
+    """The conversations a reply (or a compaction) is working on now, and since when (Unix seconds)."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.since: dict[str, float] = {}
+        self.count: dict[str, int] = {}
+
+    def start(self, conversation_id: str) -> bool:
+        """Mark it working; False when something already was (it is marked all the same, and must be ended)."""
+        with self.lock:
+            free = conversation_id not in self.count
+            self.count[conversation_id] = self.count.get(conversation_id, 0) + 1
+            self.since.setdefault(conversation_id, time.time())
+            return free
+
+    def end(self, conversation_id: str) -> None:
+        with self.lock:
+            left = self.count.get(conversation_id, 1) - 1
+            if left > 0:
+                self.count[conversation_id] = left
+            else:
+                self.count.pop(conversation_id, None)
+                self.since.pop(conversation_id, None)
+
+    def started(self, conversation_id: str) -> float | None:
+        with self.lock:
+            return self.since.get(conversation_id)
+
+
 class AgentRuntime:
     def __init__(self) -> None:
         self.terminals = TerminalManager()
         self.approvals = Approvals()
         self.steering = Steering()
+        self.busy = Busy()
+        self.windows = LearnedWindows()
 
     def end(self, conversation_id: str) -> None:
         """A conversation is gone: its background commands stop, its approvals are forgotten."""

@@ -94,7 +94,7 @@ def test_a_reply_calls_a_tool_reads_its_result_and_keeps_its_steps(client: Any, 
     cid = _new(client)
     events = _send(client, cid, [["read", {"path": "a.txt"}]])
     kinds = [e["type"] for e in events]
-    assert kinds == ["user", "assistant", "reasoning", "delta", "tool", "tool", "tool", "delta", "done"]
+    assert kinds == ["user", "assistant", "reasoning", "delta", "tool", "usage", "tool", "tool", "delta", "usage", "done"]
     assert [e["step"]["status"] for e in events if e["type"] == "tool"] == ["pending", "running", "done"]
     reply = events[-1]["message"]
     assert reply["status"] == "complete"

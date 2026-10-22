@@ -15,6 +15,10 @@ import { TRANSITIONS } from '@/ui/motion/transitions';
  *
  * With ``steerable``, an answer coming in can be written to: while there is text, the button (and
  * Enter) sends it to the answer under way (``steer``) instead of stopping it; Escape still stops.
+ *
+ * A menu that reads the text as it is typed (slash commands) takes the keys first through
+ * ``keydownGuard`` (true: it dealt with the key), and names itself with ``combobox``, so the text box
+ * is announced as the combobox that controls it.
  */
 const props = withDefaults(defineProps<{
   /** The text's accessible name. */
@@ -31,7 +35,9 @@ const props = withDefaults(defineProps<{
   /** The answer coming in takes messages while it runs. */
   steerable?: boolean;
   steerLabel?: string;
-}>(), { canSend: true, attached: false, steerable: false, steerLabel: '' });
+  keydownGuard?: (e: KeyboardEvent) => boolean;
+  combobox?: { expanded: boolean; controls: string; active?: string } | null;
+}>(), { canSend: true, attached: false, steerable: false, steerLabel: '', keydownGuard: undefined, combobox: null });
 const emit = defineEmits<{ send: []; stop: []; recall: []; steer: [] }>();
 const text = defineModel<string>({ default: '' });
 
@@ -56,6 +62,7 @@ function submit() {
   else if (ready.value) emit('send');
 }
 function onKeydown(e: KeyboardEvent) {
+  if (props.keydownGuard?.(e)) return;
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
     submit();
@@ -74,7 +81,7 @@ function onSurfaceDown(e: PointerEvent) {
   input.value?.focus();
 }
 
-defineExpose({ focus: () => input.value?.focus() });
+defineExpose({ focus: () => input.value?.focus(), surface: () => input.value?.closest<HTMLElement>('.surface') ?? null });
 </script>
 
 <template>
@@ -88,6 +95,11 @@ defineExpose({ focus: () => input.value?.focus() });
         rows="1"
         :placeholder="placeholder"
         :aria-label="label"
+        :role="combobox ? 'combobox' : undefined"
+        :aria-expanded="combobox ? combobox.expanded : undefined"
+        :aria-controls="combobox?.expanded ? combobox.controls : undefined"
+        :aria-activedescendant="combobox?.expanded ? combobox.active : undefined"
+        :aria-autocomplete="combobox ? 'list' : undefined"
         @keydown="onKeydown"
       />
       <div class="bar">

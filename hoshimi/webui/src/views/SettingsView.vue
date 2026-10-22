@@ -78,6 +78,10 @@ const titleModel = computed({
   get: () => s.value?.playground.title_model ?? '',
   set: (value: string | null) => save({ playground: { title_model: value ?? '' } }),
 });
+const compactModel = computed({
+  get: () => s.value?.playground.compact_model ?? '',
+  set: (value: string | null) => save({ playground: { compact_model: value ?? '' } }),
+});
 const visionModel = computed({
   get: () => s.value?.playground.vision_model || 'auto',
   set: (value: string | null) => save({ playground: { vision_model: value || 'auto' } }),
@@ -186,6 +190,25 @@ async function copy(text: string) {
             <div class="field">
               <PickerMenu v-model="visionModel" :label="t('settings.visionModel')" :options="visionModelOptions" :loading="models.isPending.value" :search-label="t('settings.searchModels')" :search-from="8" :no-matches="t('models.none')" />
               <p class="type-body-small muted">{{ t('settings.visionModelHelp') }}</p>
+            </div>
+          </div>
+        </PageSection>
+        <PageSection :title="t('settings.context')" :subtitle="t('settings.contextHint')">
+          <Switch :model-value="s.playground.auto_compact" :label="t('settings.autoCompact')" :supporting-text="t('settings.autoCompactHelp')" @update:model-value="save({ playground: { auto_compact: $event } })" />
+          <div class="row">
+            <NumberField
+              :model-value="Math.round(s.playground.compact_threshold * 100)"
+              :min="50"
+              :max="95"
+              :label="t('settings.compactThreshold')"
+              :supporting-text="t('settings.compactThresholdHelp')"
+              :disabled="!s.playground.auto_compact"
+              v-bind="arrows('settings.compactThreshold')"
+              @change="save({ playground: { compact_threshold: (num($event) ?? 85) / 100 } })"
+            />
+            <div class="field">
+              <PickerMenu v-model="compactModel" :label="t('settings.compactModel')" :options="titleModelOptions" :loading="models.isPending.value" :search-label="t('settings.searchModels')" :search-from="8" :no-matches="t('models.none')" />
+              <p class="type-body-small muted">{{ t('settings.compactModelHelp') }}</p>
             </div>
           </div>
         </PageSection>

@@ -4,12 +4,16 @@ import { useRoute, useRouter } from 'vue-router';
 import { BASE_URL } from '@/api/baseUrl';
 import { conversationsApi, rememberAttachment, useRefreshConversations } from '@/api/conversations';
 import { useModelSpecs, useModels, useSettings } from '@/api/queries/app';
-import { APPROVAL_MODES, TOOL_GROUPS, type ApprovalDecision, type ApprovalMode, type AttachmentView, type ConversationSummary, type MessageView, type ToolGroup, type ToolStep } from '@/api/types';
+import { APPROVAL_MODES, TOOL_GROUPS, type ApprovalDecision, type ApprovalMode, type AttachmentView, type CompactionStep, type ContextView, type ConversationSummary, type MessageView, type ToolGroup, type ToolStep } from '@/api/types';
 import CatalogStatus from '@/components/CatalogStatus.vue';
 import AssistantMessage from '@/components/chat/AssistantMessage.vue';
 import AttachmentPreview from '@/components/chat/AttachmentPreview.vue';
 import { AttachmentError, prepare } from '@/components/chat/attachments';
 import ChatSidebar, { type ConversationAction } from '@/components/chat/ChatSidebar.vue';
+import CompactionMarker from '@/components/chat/CompactionMarker.vue';
+import ContextRing from '@/components/chat/ContextRing.vue';
+import { find, parseDraft, unavailable, type SlashContext, type SlashId, type SlashPage } from '@/components/chat/slash/commands';
+import SlashMenu from '@/components/chat/SlashMenu.vue';
 import UserMessage from '@/components/chat/UserMessage.vue';
 import { useI18n } from '@/i18n';
 import { isLocal, stepsOf, useChatStore } from '@/stores/chat';
@@ -25,8 +29,11 @@ import { useElementWidth } from '@/ui/useElementWidth';
  * that starts what comes next: a new chat, or, on a new chat no one has written in yet, a temporary
  * one. The composer takes text, photos and files (by its + button, by dropping them on the page,
  * or by pasting), the model and its effort, and the tools the model may call (those Settings turned
- * on), with the commands they left running above it. Everything said is kept on the server, which
- * also writes the titles, describes images for models that cannot read them, and runs the tools.
+ * on), with the commands they left running above it. Typing ``/`` opens its commands (the model, the
+ * effort, compacting, the status, a new chat, a fork, the tools and when they ask first); a ring
+ * beside the send button says how full the context window is. Everything said is kept on the
+ * server, which also writes the titles, describes images for models that cannot read them, runs
+ * the tools, and compacts a conversation that nears its model's window.
  */
 const { t } = useI18n();
 const route = useRoute();
@@ -84,6 +91,7 @@ const APPROVAL_ICONS = { ask: icons.Shield, auto: icons.ShieldCheck, full: icons
 // Steering: while a reply with tools runs, what is written goes to it, read at its next round.
 const steerable = computed(() => chat.busy && !!chat.conversation && toolsOn.value.length > 0);
 async function steerNow() {
+  if (slashFirst()) return;
   const text = draft.value.trim();
   if (!text) return;
   draft.value = '';
@@ -246,6 +254,7 @@ function onPaste(e: ClipboardEvent) {
 }
 
 async function send() {
+  if (slashFirst()) return;
   const text = draft.value.trim();
   if ((!text && !attached.value.length) || chat.busy || uploading.value) return;
   if (!chat.model) {
@@ -407,6 +416,118 @@ async function remove() {
   }
 }
 
+// -- slash commands and the status ------------------------------------------------------
+const slash = ref<InstanceType<typeof SlashMenu> | null>(null);
+const slashContext = computed<SlashContext>(() => {
+  const since = chat.path.slice(chat.path.map((m) => m.role).lastIndexOf('checkpoint') + 1);
+  const kept = !!chat.conversation && chat.path.some((m) => !isLocal(m.id));
+  return {
+    busy: chat.busy,
+    replied: kept && since.some((m) => m.role === 'assistant' && m.status !== 'streaming' && !isLocal(m.id)),
+    kept,
+    efforts: effortOptions.value.length > 1,
+    tools: toolsOn.value.length > 0,
+  };
+});
+const slashCurrent = computed(() => ({ model: chat.model, effort: chat.effort, tools: toolsOn.value as string[], permission: approval.value }));
+const ZERO = { input: 0, cached: 0, output: 0, reasoning: 0 };
+/** What ``/status`` shows: the server's numbers for a kept chat; for a new one, the model's window as the catalogue gives it. */
+const statusView = computed<ContextView | null>(() => {
+  if (chat.context && chat.context.model === chat.model) return { ...chat.context, effort: chat.effort, tools: toolsOn.value, approval: approval.value };
+  if (chat.conversation && chat.path.length) return chat.context;
+  const window = spec.value?.context_window || 131_072;
+  const headroom = Math.min(spec.value?.max_output || 32_768, Math.max(4096, Math.floor(window / 10)), Math.floor(window / 2));
+  const threshold = settings.data.value?.playground.compact_threshold ?? 0.85;
+  return {
+    model: chat.model ?? '', provider: spec.value?.provider ?? '', effort: chat.effort, window, window_source: spec.value?.context_window ? 'catalog' : 'default',
+    limit: Math.min(Math.floor(window * threshold), window - headroom), headroom, used: 0, used_source: 'estimate',
+    auto_compact: settings.data.value?.playground.auto_compact ?? true, last: ZERO, totals: ZERO, rounds: 0, replies: 0, compactions: 0, last_compaction: null,
+    last_duration_ms: 0, total_duration_ms: 0, running_since: null, tools: toolsOn.value, approval: approval.value,
+  };
+});
+const statusLabels = computed(() => ({
+  effort: effortText.value ?? '',
+  tools: toolsOn.value.map((g) => t(`playground.toolNames.${g}`)),
+  approval: t(`settings.approvalModes.${approval.value}`),
+}));
+/** The chip a command changed glows once, so the eye finds what changed. */
+const flashed = ref('');
+let flashTimer: ReturnType<typeof setTimeout> | undefined;
+function flash(what: string) {
+  flashed.value = '';
+  clearTimeout(flashTimer);
+  void nextTick(() => {
+    flashed.value = what;
+    flashTimer = setTimeout(() => (flashed.value = ''), 800);
+  });
+}
+function runSlash(id: SlashId, argument: string) {
+  draft.value = '';
+  if (id === 'new') newChat();
+  else if (id === 'fork') void forkChat(argument);
+  else if (id === 'compact') void compactChat(argument);
+}
+function chooseSlash(page: SlashPage, value: string) {
+  if (page === 'tools') {
+    chooseTools(toolsOn.value.includes(value as ToolGroup) ? toolsOn.value.filter((g) => g !== value) : [...toolsOn.value, value]);
+    return flash('tools');
+  }
+  draft.value = '';
+  if (page === 'models') {
+    chat.choose({ model: value, effort: '' });
+    flash('model');
+  } else if (page === 'efforts') {
+    chat.choose({ effort: value });
+    flash('effort');
+  } else if (page === 'permissions') {
+    chat.chooseApproval(value as ApprovalMode);
+    flash('approval');
+  }
+}
+const onSlashPage = (page: SlashPage) => page === 'status' && void chat.refreshContext();
+function openStatus() {
+  draft.value = '/status ';
+  void nextTick(() => composer.value?.focus());
+}
+/**
+ * A draft that names a command, sent with Enter once its menu was closed: it runs (or its list opens
+ * again) rather than going out as a message. Anything else (a path, a word after a slash) is a message.
+ */
+function slashFirst(): boolean {
+  const named = parseDraft(draft.value.trim());
+  const command = named ? find(named.name) : undefined;
+  if (!named || !command) return false;
+  if (command.page) {
+    if (!named.spaced) draft.value = `/${command.id} `;
+    slash.value?.reopen();
+    return true;
+  }
+  const reason = unavailable(command.id, slashContext.value);
+  if (reason) snackbar.show(t(reason));
+  else runSlash(command.id, named.rest);
+  return true;
+}
+async function forkChat(title: string) {
+  const leaf = chat.leaf;
+  if (!chat.conversation || !leaf || isLocal(leaf)) return;
+  try {
+    await chat.branch(leaf);
+    if (title.trim()) await chat.rename(title.trim());
+    snackbar.show(t('playground.slash.forked'));
+  } catch (error) {
+    snackbar.error(error instanceof Error ? error.message : t('common.error'));
+  }
+}
+async function compactChat(instructions: string) {
+  pinned = true;
+  try {
+    if (await chat.compact(instructions)) snackbar.show(t('playground.slash.compacted'));
+  } catch (error) {
+    snackbar.error(t('playground.slash.compactFailed', { reason: error instanceof Error ? error.message : '' }));
+  }
+}
+const checkpointStep = (m: MessageView) => (m.steps?.[0] ?? { type: 'compaction', id: m.id, status: 'running', trigger: 'manual', phase: 'manual', round: 0, summary: m.content, recent: [], tokens_before: 0, tokens_after: 0, model: m.model, ms: 0, error: m.error, at: m.created_at }) as CompactionStep;
+
 // -- coming back, and leaving ---------------------------------------------------------
 // The chat open last comes back when the page first opens, unless it was opened to try one model.
 onMounted(async () => {
@@ -497,9 +618,11 @@ onBeforeUnmount(() => {
               @previous="step(m, -1)"
               @next="step(m, 1)"
             />
+            <CompactionMarker v-else-if="m.role === 'checkpoint'" :step="checkpointStep(m)" :settled="m.status !== 'streaming'" />
             <AssistantMessage
               v-else
               :message="m"
+              :started-at="m.status === 'streaming' ? chat.startedAt : 0"
               v-bind="versionsOf(m)"
               :busy="chat.busy"
               :last="i === chat.path.length - 1"
@@ -538,6 +661,8 @@ onBeforeUnmount(() => {
           :steerable="steerable"
           :can-send="!!chat.model && !uploading"
           :attached="attached.length > 0"
+          :keydown-guard="(e: KeyboardEvent) => slash?.onKey(e) ?? false"
+          :combobox="slash?.combobox ?? null"
           @send="send"
           @steer="steerNow"
           @stop="chat.stop()"
@@ -572,6 +697,7 @@ onBeforeUnmount(() => {
             <input ref="fileInput" class="file-input" type="file" multiple tabindex="-1" aria-hidden="true" @change="onPick" />
             <ComposerMenu
               class="model"
+              :class="{ flash: flashed === 'model' }"
               :align="phone ? 'center' : 'start'"
               :model-value="chat.model"
               :label="t('playground.model')"
@@ -588,6 +714,7 @@ onBeforeUnmount(() => {
               v-if="effortOptions.length > 1"
               :model-value="chat.effort"
               class="effort"
+              :class="{ flash: flashed === 'effort' }"
               :icon="icons.Brain"
               :label="t('playground.effort')"
               :hint="t('playground.effortHelp')"
@@ -598,6 +725,7 @@ onBeforeUnmount(() => {
             />
             <ComposerMenu
               class="tools-menu"
+              :class="{ flash: flashed === 'tools' }"
               multiple
               :values="toolsOn"
               :icon="icons.Wrench"
@@ -611,6 +739,7 @@ onBeforeUnmount(() => {
             <ComposerMenu
               v-if="toolsOn.length"
               class="approval-menu"
+              :class="{ flash: flashed === 'approval' }"
               :model-value="approval"
               :icon="APPROVAL_ICONS[approval]"
               :label="t('settings.approval')"
@@ -621,7 +750,35 @@ onBeforeUnmount(() => {
               @update:model-value="(m) => m && chat.chooseApproval(m as ApprovalMode)"
             />
           </template>
+          <template #actions>
+            <Transition :name="TRANSITIONS.chip">
+              <ContextRing
+                v-if="chat.conversation && statusView && statusView.used > 0"
+                :used="statusView.used"
+                :window="statusView.window"
+                :limit="statusView.limit"
+                :estimate="statusView.used_source === 'estimate'"
+                @click="openStatus"
+              />
+            </Transition>
+          </template>
         </Composer>
+        <SlashMenu
+          ref="slash"
+          v-model:draft="draft"
+          :anchor="() => composer?.surface() ?? null"
+          :context="slashContext"
+          :models="modelOptions"
+          :efforts="effortOptions"
+          :tools="toolOptions"
+          :permissions="approvalOptions"
+          :current="slashCurrent"
+          :status="statusView"
+          :status-labels="statusLabels"
+          @run="runSlash"
+          @choose="chooseSlash"
+          @page="onSlashPage"
+        />
         <p class="hint type-body-small muted">{{ t('playground.hint') }}</p>
       </div>
       <!-- Takes the room under the composer while there is no conversation, so the composer sits in the middle. -->
@@ -707,6 +864,14 @@ onBeforeUnmount(() => {
 .tray { display: flex; flex-wrap: wrap; gap: var(--app-space-2); padding: var(--app-space-3) var(--app-space-4) 0; }
 .file-input { display: none; }
 .attach, .effort, .tools-menu, .approval-menu { flex: none; }
+/* A chip a slash command just changed glows once. */
+.flash :deep(.face) { animation: chip-flash 0.8s var(--md-sys-motion-easing-standard); }
+@keyframes chip-flash {
+  0% { background: transparent; }
+  25% { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); transform: scale(1.04); }
+  100% { background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .flash :deep(.face) { animation: none; } }
 /* A message sent to the reply under way, waiting for its next round: a question's bubble, faded. */
 .queued { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 .queued .bubble {

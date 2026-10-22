@@ -38,6 +38,8 @@ BASE=http://127.0.0.1:10600/api/v1/playground
 | `DELETE /conversations/{id}/terminals/{session_id}` | `204` | Stop one, and everything it started |
 | `POST /conversations/{id}/branch` | `201` conversation | A new conversation up to a message |
 | `POST /conversations/{id}/title` | `200` summary | Have a model name the conversation |
+| `POST /conversations/{id}/compact` | `200` SSE | Compact the conversation now |
+| `GET /conversations/{id}/context` | `200` JSON | How full the context window is, and what the replies took |
 | `POST /attachments` | `201` attachment | Upload an image or a file's text |
 | `GET /attachments/{id}` | `200` bytes | An image as itself, a file as its text |
 | `DELETE /attachments/{id}` | `204` | Take back an attachment not yet sent |
@@ -110,7 +112,7 @@ An update does not change `updated_at`: only a new message moves a conversation 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `id`, `parent_id` | string | Its id, and the message it follows (`null` for the first). Siblings are the versions of one turn |
-| `role` | `user`, `assistant` | A question or a reply |
+| `role` | `user`, `assistant`, `checkpoint` | A question, a reply, or a compaction you asked for (its `content` is the summary, its one step the compaction) |
 | `content` | string | The text. For a reply that used tools, its text steps joined by blank lines |
 | `model`, `effort` | string | What a reply was made with |
 | `status` | `complete`, `streaming`, `stopped`, `error` | How a reply ended (`streaming` while it runs) |
@@ -119,7 +121,10 @@ An update does not change `updated_at`: only a new message moves a conversation 
 | `created_at` | number | Unix seconds |
 | `attachments` | list | What a question carried: `id`, `kind` (`image` or `file`), `name`, `mime`, `size`, `width`, `height` |
 | `reasoning`, `reasoning_ms` | string, integer | What the model reasoned, and for how long, for a model that shows it |
-| `steps` | list | A reply that used tools (or was steered), step by step; empty otherwise |
+| `steps` | list | A reply that used tools (or was steered, or compacted), step by step; empty otherwise |
+| `usage` | object | A reply's tokens as the station counted them: `last` (its last round) and `total` (all rounds), each with `input`, `cached`, `output`, `reasoning`; `rounds` counted; `context`, what the window held as it ended, and its `source` (`usage`, or `estimate` for a station that reports none). Empty when unknown |
+| `duration_ms`, `waited_ms` | integer | How long a reply worked, less the time it waited for approvals; and that wait. `0` for replies kept before this was counted |
+| `finished_at` | number | Unix seconds it ended at |
 
 ### Notices
 
@@ -165,6 +170,8 @@ The response is `text/event-stream`. Each event is one `data:` line holding a JS
 | `delta` | `text` | More of the reply's text |
 | `tool` | `step` | A tool call as it now stands; replace the step with the same `id` |
 | `steer` | `step` | A message sent with `/steer`, now read by the model: a `user` step with the `id` the steer was given |
+| `usage` | `usage`, `window`, `limit` | After each round: what the reply has taken (as in the message's `usage`), the model's window, and where the conversation is compacted |
+| `compaction` | `step` | The conversation being compacted; replace the step with the same `id` |
 | `done` | `message` | Last: the reply as kept, with its `status` and `error` |
 
 `reasoning` and `delta` add to the last step when it is of their kind, and start a new step otherwise. While nothing else comes (a tool runs, or waits for approval), a comment line `: ping` goes out every 2 seconds; skip lines that start with `:`.
@@ -213,6 +220,7 @@ A reply that called a tool or was steered keeps its `steps`, in order. Every ste
 | `reasoning` | `text`, `ms` (how long it reasoned) |
 | `text` | `text` |
 | `user` | `id`, `text`: a message sent with `/steer`, read at the start of this round |
+| `compaction` | `id`, `status` (`running`, `done`, `failed`, `stopped`), `trigger` (`auto`, `overflow`, `manual`), `phase` (`pre-turn`, `mid-turn`, `manual`), `summary`, `recent` (your messages kept verbatim), `tokens_before`, `tokens_after`, `model` (that wrote it), `ms`, `error`, `at`: the conversation compacted before this round |
 | `tool` | `id`, `name`, `arguments` (the JSON string the model wrote), `status`, `output`, `exit_code`, `ms`, `meta`, `approval` |
 
 A tool step's `status`:
@@ -311,6 +319,25 @@ The answer is the attachment: `id`, `kind`, `name`, `mime`, `size`, `width`, `he
 - `GET /attachments/{id}` returns an image with its own type, a file as `text/plain`.
 - `DELETE /attachments/{id}` takes back an attachment before it is sent (`204`); one a message carries is a `400`.
 - An attachment never sent is deleted after a day.
+
+## Context and compaction
+
+`GET /conversations/{id}/context` says how full the conversation on screen is against its model's context window:
+
+| Field | Meaning |
+| --- | --- |
+| `model`, `provider`, `effort` | The conversation's model and effort |
+| `window`, `window_source` | The model's window in tokens: from its listing (`catalog`), assumed (`default`), or what a station said in refusing a longer request (`learned`) |
+| `limit`, `headroom` | Where the conversation is compacted, and the room kept for a reply |
+| `used`, `used_source` | What the next request takes: as the station counted the last reply (`usage`), or estimated (`estimate`) |
+| `last`, `totals` | Tokens of the last round counted, and of every reply on the path: `input`, `cached`, `output`, `reasoning` |
+| `rounds`, `replies`, `compactions`, `last_compaction` | Counts on the path; the last compaction's `tokens_before`, `tokens_after`, `at`, `trigger` |
+| `last_duration_ms`, `total_duration_ms`, `running_since` | How long replies worked; Unix seconds a reply has been running since, or `null` |
+| `auto_compact`, `tools`, `approval` | `playground.auto_compact`, the tools on, the approval mode in effect |
+
+`POST /conversations/{id}/compact` compacts the conversation now, with an optional `instructions` (what the summary should pay attention to). It streams `checkpoint` (the checkpoint message as filed, its step `running`) and `done` (as kept). A `done` with `status` `error` means it failed and the conversation is as it was; closing the connection stops it the same way. It answers `409` while a reply is running and `400` when there is nothing to compact (no reply since the last compaction). Send the next question with the checkpoint's id as `parent_id`.
+
+Replies compact the conversation by themselves (as they begin, between rounds of tool calls, and when the station refuses a round as too long); that shows as `compaction` events and a `compaction` step. From a compaction on, the model is sent a summary of everything before it, as a user message, with an acknowledgement after it; **Copy as API request** shows it.
 
 ## Titles, branches, requests and the session
 

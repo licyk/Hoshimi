@@ -41,7 +41,36 @@ export type ToolStep = {
   approval: string;
   round: number;
 };
-export type Step = ReasoningStep | TextStep | ToolStep | UserStep;
+/**
+ * The conversation compacted (its earlier part summarised, and sent as the summary from then on): on
+ * the user's word (a checkpoint's one step), or by itself before a reply's ``round`` (``pre-turn``,
+ * as it began; ``mid-turn``, between its rounds of tool calls), or after a station refused a round
+ * as too long (``overflow``).
+ */
+export type CompactionStatus = 'running' | 'done' | 'failed' | 'stopped';
+export type CompactionStep = {
+  type: 'compaction';
+  id: string;
+  status: CompactionStatus;
+  trigger: 'manual' | 'auto' | 'overflow';
+  phase: 'manual' | 'pre-turn' | 'mid-turn';
+  round: number;
+  summary: string;
+  /** The user's latest words from the part summarised, kept verbatim beside it. */
+  recent: string[];
+  tokens_before: number;
+  tokens_after: number;
+  /** The model that wrote the summary. */
+  model: string;
+  ms: number;
+  error: string;
+  at: number;
+};
+export type Step = ReasoningStep | TextStep | ToolStep | UserStep | CompactionStep;
+/** A reply's tokens, as the station counted them (``MessageView.usage``). */
+export type TokenCounts = { input: number; cached: number; output: number; reasoning: number };
+export type ReplyUsage = { last?: TokenCounts; total?: TokenCounts; rounds?: number; context?: number; source?: 'usage' | 'estimate' };
+export type ContextView = S['ContextView'];
 export type ApprovalDecision = 'allow' | 'always' | 'deny';
 /** When tools ask first: before commands, edits and anything outside the workspace; only outside it; never. */
 export type ApprovalMode = 'ask' | 'auto' | 'full';

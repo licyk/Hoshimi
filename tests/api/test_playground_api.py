@@ -81,7 +81,7 @@ def services(sight: SightProvider) -> Services:
 def test_a_send_streams_the_reply_and_keeps_both(client: Any) -> None:
     cid = _new(client)
     events = _send(client, cid, "What is this?")
-    assert [e["type"] for e in events] == ["user", "assistant", "delta", "delta", "done"]
+    assert [e["type"] for e in events] == ["user", "assistant", "delta", "delta", "usage", "done"]
     question, reply = events[0]["message"], events[-1]["message"]
     assert (question["role"], question["parent_id"], question["content"]) == ("user", None, "What is this?")
     assert (reply["parent_id"], reply["status"], reply["content"], reply["model"]) == (question["id"], "complete", "echo:fake-1:1", "fake-1")
@@ -310,7 +310,7 @@ def test_a_reply_s_reasoning_streams_first_and_is_kept_with_how_long_it_took(cli
     cid = _new(client, model="thinker")
     events = _send(client, cid, "Think about it")
     kinds = [e["type"] for e in events]
-    assert kinds == ["user", "assistant", "reasoning", "reasoning", "delta", "done"]
+    assert kinds == ["user", "assistant", "reasoning", "reasoning", "delta", "usage", "done"]
     assert "".join(e["text"] for e in events if e["type"] == "reasoning") == "First, consider the question."
     reply = events[-1]["message"]
     assert (reply["content"], reply["reasoning"]) == ("The answer.", "First, consider the question.")

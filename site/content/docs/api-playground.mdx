@@ -38,6 +38,8 @@ BASE=http://127.0.0.1:10600/api/v1/playground
 | `DELETE /conversations/{id}/terminals/{session_id}` | `204` | 停止一个后台命令及其启动的所有进程 |
 | `POST /conversations/{id}/branch` | `201` 对话 | 截至某条消息分支出新对话 |
 | `POST /conversations/{id}/title` | `200` 摘要 | 让模型为对话命名 |
+| `POST /conversations/{id}/compact` | `200` SSE | 立即压缩对话 |
+| `GET /conversations/{id}/context` | `200` JSON | 上下文窗口的占用情况，以及各回复的用量 |
 | `POST /attachments` | `201` 附件 | 上传图片或文件文字 |
 | `GET /attachments/{id}` | `200` 内容 | 图片按原样返回，文件返回其文字 |
 | `DELETE /attachments/{id}` | `204` | 撤回尚未发送的附件 |
@@ -110,7 +112,7 @@ curl -X POST $BASE/conversations \
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
 | `id`、`parent_id` | 字符串 | 消息 ID，以及它所跟随的消息（第一条为 `null`）。兄弟节点就是同一轮的不同版本 |
-| `role` | `user`、`assistant` | 问题或回复 |
+| `role` | `user`、`assistant`、`checkpoint` | 问题、回复，或你要求的一次压缩（其 `content` 为总结，唯一的步骤为该次压缩） |
 | `content` | 字符串 | 文字。使用了工具的回复为其各文本步骤以空行连接的结果 |
 | `model`、`effort` | 字符串 | 生成回复所用的模型和推理强度 |
 | `status` | `complete`、`streaming`、`stopped`、`error` | 回复如何结束（生成期间为 `streaming`） |
@@ -119,7 +121,10 @@ curl -X POST $BASE/conversations \
 | `created_at` | 数字 | Unix 秒 |
 | `attachments` | 列表 | 问题携带的附件：`id`、`kind`（`image` 或 `file`）、`name`、`mime`、`size`、`width`、`height` |
 | `reasoning`、`reasoning_ms` | 字符串、整数 | 模型的推理内容及推理时长（仅限会展示推理的模型） |
-| `steps` | 列表 | 使用了工具（或被补充说明）的回复的逐步记录；否则为空 |
+| `steps` | 列表 | 使用了工具（或被补充说明、被压缩）的回复的逐步记录；否则为空 |
+| `usage` | 对象 | 站点统计的回复 token：`last`（最后一轮）与 `total`（所有轮次），各含 `input`、`cached`、`output`、`reasoning`；`rounds` 为统计到的轮数；`context` 为结束时窗口中的内容量，`source` 为其来源（`usage`，或站点不报告时的 `estimate`）。未知时为空 |
+| `duration_ms`、`waited_ms` | 整数 | 回复的工作时长（不含等待批准的时间），以及等待批准的时间。此功能加入前保存的回复为 `0` |
+| `finished_at` | 数字 | 结束时间（Unix 秒） |
 
 ### 提示
 
@@ -165,6 +170,8 @@ curl -N -X POST $BASE/conversations/$CID/messages \
 | `delta` | `text` | 回复文字的增量 |
 | `tool` | `step` | 某个工具调用的最新状态；用它替换 `id` 相同的步骤 |
 | `steer` | `step` | 通过 `/steer` 发送、现已被模型读取的消息：一个 `user` 步骤，`id` 为发送时返回的 ID |
+| `usage` | `usage`、`window`、`limit` | 每轮之后：回复目前的用量（同消息的 `usage`）、模型窗口大小以及压缩阈值 |
+| `compaction` | `step` | 正在进行的压缩；用相同 `id` 替换该步骤 |
 | `done` | `message` | 最后发送：保存后的回复，含 `status` 和 `error` |
 
 `reasoning` 和 `delta` 在最后一个步骤类型相同时追加到该步骤，否则开始新步骤。没有其他内容时（工具运行中或等待批准），每 2 秒发送一行注释 `: ping`；以 `:` 开头的行直接跳过即可。
@@ -213,6 +220,7 @@ data: {"type": "done", "message": {"id": "5828…", "content": "Let me look.\n\n
 | `reasoning` | `text`、`ms`（推理时长） |
 | `text` | `text` |
 | `user` | `id`、`text`：通过 `/steer` 发送、在本轮开始时读取的消息 |
+| `compaction` | `id`、`status`（`running`、`done`、`failed`、`stopped`）、`trigger`（`auto`、`overflow`、`manual`）、`phase`（`pre-turn`、`mid-turn`、`manual`）、`summary`、`recent`（逐字保留的你的消息）、`tokens_before`、`tokens_after`、`model`（撰写总结的模型）、`ms`、`error`、`at`：在本轮之前压缩了对话 |
 | `tool` | `id`、`name`、`arguments`（模型写出的 JSON 字符串）、`status`、`output`、`exit_code`、`ms`、`meta`、`approval` |
 
 工具步骤的 `status`：
@@ -311,6 +319,25 @@ curl -X POST "$BASE/attachments?name=notes.md" \
 - `GET /attachments/{id}` 按图片自身的类型返回图片，文件以 `text/plain` 返回。
 - `DELETE /attachments/{id}` 在发送前撤回附件（`204`）；已被消息携带的附件返回 `400`。
 - 从未发送的附件会在一天后删除。
+
+## 上下文与压缩
+
+`GET /conversations/{id}/context` 返回屏幕上的对话相对于模型上下文窗口的占用情况：
+
+| 字段 | 含义 |
+| --- | --- |
+| `model`、`provider`、`effort` | 对话的模型与推理强度 |
+| `window`、`window_source` | 模型窗口的 token 数：来自模型列表（`catalog`）、假定值（`default`），或站点拒绝更长请求时给出的数值（`learned`） |
+| `limit`、`headroom` | 压缩阈值，以及为回复预留的空间 |
+| `used`、`used_source` | 下一个请求的占用：按站点对上次回复的统计（`usage`），或估算（`estimate`） |
+| `last`、`totals` | 最后一次统计到的轮次，以及路径上所有回复的 token：`input`、`cached`、`output`、`reasoning` |
+| `rounds`、`replies`、`compactions`、`last_compaction` | 路径上的计数；最近一次压缩的 `tokens_before`、`tokens_after`、`at`、`trigger` |
+| `last_duration_ms`、`total_duration_ms`、`running_since` | 回复的工作时长；有回复运行时为其开始时间（Unix 秒），否则为 `null` |
+| `auto_compact`、`tools`、`approval` | `playground.auto_compact`、开启的工具、生效的批准模式 |
+
+`POST /conversations/{id}/compact` 立即压缩对话，可附带 `instructions`（总结应关注的内容）。它依次推送 `checkpoint`（保存后的检查点消息，步骤状态为 `running`）和 `done`（最终保存的结果）。`done` 的 `status` 为 `error` 表示失败，对话保持原样；断开连接也会同样停止。有回复正在运行时返回 `409`，没有可压缩的内容（上次压缩后没有新回复）时返回 `400`。下一个问题以检查点的 ID 作为 `parent_id` 发送。
+
+回复也会自行压缩对话（回复开始时、两轮工具调用之间，以及站点以过长为由拒绝某一轮时），表现为 `compaction` 事件和 `compaction` 步骤。从压缩点起，模型收到的是此前全部内容的总结（作为一条用户消息，后接一条确认），**复制为 API 请求** 可以看到。
 
 ## 标题、分支、请求与会话
 

@@ -1,6 +1,6 @@
 ---
 title: "Playground"
-description: "Chat with any model in the catalogue from the Web UI: keep, search and archive chats, attach images and files, edit questions, retry and branch replies, and copy a reply as an API request."
+description: "Chat with any model in the catalogue from the Web UI: keep, search and archive chats, attach images and files, edit questions, retry and branch replies, run slash commands, keep long chats going with context compaction, and copy a reply as an API request."
 icon: MessagesSquare
 ---
 
@@ -42,9 +42,27 @@ The chat list sits beside the chat on a wide window and slides in as a drawer on
 | <kbd>Shift</kbd>+<kbd>Enter</kbd> | New line |
 | <kbd>Esc</kbd> | Stop the reply coming in |
 | <kbd>↑</kbd> in an empty box | Edit your last question |
+| <kbd>/</kbd> at the start of the box | Open the commands |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> (<kbd>Cmd</kbd> on macOS) | New chat |
 
 Pressing **Stop** (or <kbd>Esc</kbd>) ends the reply; what came so far is kept and the reply is marked **Stopped**. Leaving the page does the same.
+
+## Commands
+
+Type <kbd>/</kbd> at the start of the box to open the commands over the composer. Keep typing to narrow them (`/co` leaves **/compact** and **/status**, the matched letters in bold). <kbd>↑</kbd> and <kbd>↓</kbd> move, <kbd>Tab</kbd> completes the name, <kbd>Enter</kbd> runs the command and <kbd>Esc</kbd> closes the menu until you change what you typed. A command that chooses from a list opens the list once a space follows its name, and the words after it narrow the list: `/model gpt` then <kbd>Enter</kbd> picks the first match.
+
+| Command | What it does |
+| --- | --- |
+| `/model` | Choose the model for this chat |
+| `/effort` | Choose the reasoning effort, for a model that has levels |
+| `/compact` *what to keep* | Compact the conversation now (see [Context and compaction](#context-and-compaction)); words after the name tell the summary what to pay attention to |
+| `/status` | How much of the context window is used and left, the last request's and the whole conversation's tokens (cached ones among them), compactions, how long replies worked, and the tools |
+| `/new` (or `/clear`) | Start a new chat |
+| `/fork` *title* | Continue this conversation in a new chat, up to the message on screen; words after the name are its title |
+| `/tools` | Turn this chat's tools on or off |
+| `/permissions` (or `/approval`) | Choose when tools ask before they run |
+
+While a reply is running only `/status`, `/permissions` and `/new` run; the others say why they can't. A slash followed by something that is not a command, such as `/etc/hosts`, is sent as a message.
 
 ## Temporary chats
 
@@ -143,6 +161,25 @@ The body is built on the server exactly as the reply was sent: the system prompt
 
 Use **Copy** on a message to copy its text, and **Copy code** on a code block to copy just the code.
 
+## Context and compaction
+
+Every model has a **context window**: how much of a conversation it can read at once. The ring beside the send button shows how much of it is left; press it, or type `/status`, for the details. The window is the one the model's station lists. When a station refuses a request as too long and names its real limit, that limit is used from then on.
+
+When a conversation nears the window, it is **compacted**: a model writes a summary of the conversation so far (the goal, the decisions and why, what is done and still to do, the files involved, the next step), and from then on the model reads that summary, with your latest messages kept word for word, in place of everything before it. The conversation itself stays on screen. A line marks where it was compacted; press it to read the summary.
+
+A conversation is compacted:
+
+- **as a reply begins**, once the conversation has reached 85% of the window (`playground.compact_threshold`), or sooner when what is left could not hold a reply;
+- **between a reply's rounds of tool calls**, so a long agent run keeps going;
+- **when the model refuses a request as too long**: the conversation is compacted and the request sent again, and if that is still too long, once more with long tool outputs cut. This happens even with automatic compaction off;
+- **when you type `/compact`**, optionally followed by what the summary should keep.
+
+A compaction that fails leaves the conversation as it was. Editing a question from before a compaction, or branching from there, goes back to the whole conversation.
+
+## How long a reply works
+
+While a reply runs, a line at its foot says what it is doing (writing, running a tool, compacting the context) and for how long, second by second. The clock stops while a tool call waits for your approval. When the reply ends, **Worked for 1m 23s** (or **Stopped after**, **Failed after**) stays beside its actions; point at it to see when it started and ended.
+
 ## How a reply ended
 
 | What you see | Meaning |
@@ -152,6 +189,8 @@ Use **Copy** on a message to copy its text, and **Copy code** on a code block to
 | "The image … was described by …" | A model that cannot read images got a description |
 | "The image … was left out: no model could read it." | No describing model was available, or **Image model** is **Off** |
 | "… refused the image, so it was sent as a description." | The station refused the image; the reply was retried with descriptions |
+| **Context compacted** above the reply | The conversation was compacted before it (see [Context and compaction](#context-and-compaction)) |
+| "The conversation no longer fits in …'s context window, even compacted." | Even the compacted conversation is too long: start a new chat, or branch from an earlier message |
 
 Notes about tools (a model that cannot call tools, the round limit) are explained in [Playground tools](/docs/guide-agent).
 
@@ -164,13 +203,19 @@ The Playground's own settings are in **Settings › General › Playground** (se
 | **System prompt** | `playground.system_prompt` | empty | Sent first in every Playground chat, from its next message on. Empty sends none |
 | **Title model** | `playground.title_model` | empty (**The chat’s own model**) | The model that names new chats after their first reply |
 | **Image model** | `playground.vision_model` | `auto` (**Automatic**) | Describes images for models that cannot read them: `auto`, `off`, or a model id |
+| **Compact long chats automatically** | `playground.auto_compact` | `true` | Compact a conversation as it nears the window. A request refused as too long is compacted either way |
+| **Compact at** | `playground.compact_threshold` | `0.85` | The share of the window (0.5 to 0.95) at which a conversation is compacted |
+| **Summary model** | `playground.compact_model` | empty (**The chat’s own model**) | The model that writes the summary |
 
 ```json
 {
   "playground": {
     "system_prompt": "Answer briefly.",
     "title_model": "your-small-model",
-    "vision_model": "auto"
+    "vision_model": "auto",
+    "auto_compact": true,
+    "compact_threshold": 0.85,
+    "compact_model": ""
   }
 }
 ```
@@ -181,7 +226,7 @@ The tool settings (`playground.tools`, `workspace`, `approval`, `max_steps`, `se
 
 Chats, their messages and attachments live in `hoshimi.db` in the data folder (see [Data folder and paths](/docs/config-paths)), and are kept until you delete them. The chat open last is remembered there too, which is how the Playground comes back to it from any browser. A reply cut off by a server stop is kept as stopped.
 
-Every model call the Playground makes is recorded in [Usage](/docs/guide-usage) like any other call, under its own origin: `playground` for replies, `playground-title` for titles and `playground-vision` for image descriptions.
+Every model call the Playground makes is recorded in [Usage](/docs/guide-usage) like any other call, under its own origin: `playground` for replies, `playground-title` for titles, `playground-vision` for image descriptions and `playground-compact` for compaction summaries.
 
 <Cards>
 <Card title="Playground tools" href="/docs/guide-agent" description="Let a model read and edit files, run commands and search the web, with approvals." />

@@ -20,9 +20,9 @@ vi.mock('@/api/conversations', async (importOriginal) => ({ ...(await importOrig
 vi.mock('@/ui', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/ui')>()), useSnackbar: () => ({ error: state.error, show: state.show }) }));
 
 // -- a server in memory: conversations as trees, replies streamed by the test -----------------
-interface Msg { id: string; parent_id: string | null; role: 'user' | 'assistant'; content: string; model: string; effort: string; status: string; error: string; notices: { kind: string; name: string; model: string }[]; created_at: number; attachments: unknown[]; reasoning?: string; reasoning_ms?: number; steps?: unknown[] }
+interface Msg { id: string; parent_id: string | null; role: 'user' | 'assistant' | 'checkpoint'; content: string; model: string; effort: string; status: string; error: string; notices: { kind: string; name: string; model: string }[]; created_at: number; attachments: unknown[]; reasoning?: string; reasoning_ms?: number; steps?: unknown[]; duration_ms?: number; waited_ms?: number; finished_at?: number }
 interface Conv { id: string; title: string; title_state: string; model: string; effort: string; archived: boolean; temporary: boolean; branched_from: string; created_at: number; updated_at: number; current_leaf: string; messages: Msg[]; tools_off?: string[]; tools_on?: string[]; approval?: string }
-let server: { conversations: Map<string, Conv>; session: string | null; calls: { method: string; path: string; body: unknown }[]; ids: number; clock: number; terminals?: unknown[]; steerOpen?: boolean };
+let server: { conversations: Map<string, Conv>; session: string | null; calls: { method: string; path: string; body: unknown }[]; ids: number; clock: number; terminals?: unknown[]; steerOpen?: boolean; context?: object };
 /** The reply streams the test has not yet finished: it writes their events and closes them. */
 let streams: { send: (event: object) => void; close: () => void; signal: AbortSignal }[];
 
@@ -110,6 +110,12 @@ async function handle(input: RequestInfo | URL, init?: RequestInit): Promise<Res
   if (sub === 'terminals' && request.method === 'DELETE') {
     server.terminals = [];
     return json(null, 204);
+  }
+  if (sub === 'context') return server.context ? json(server.context) : json({ code: 'not_found', message: 'no context' }, 404);
+  if (sub === 'compact') {
+    const record = { type: 'compaction', id: `cmp${++server.ids}`, status: 'running', trigger: 'manual', phase: 'manual', round: 0, summary: '', recent: [], tokens_before: 0, tokens_after: 0, model: '', ms: 0, error: '', at: 1 };
+    const checkpoint = message(c, c.current_leaf || null, 'checkpoint', '', { status: 'streaming', steps: [record] });
+    return sse(request.signal, [{ type: 'checkpoint', message: checkpoint }]);
   }
   if (sub === 'messages' && action === 'request') return json({ model: 'test/model', messages: [{ role: 'user', content: 'hello' }], stream: true });
   return json({ code: 'not_found', message: path }, 404);
@@ -309,8 +315,9 @@ describe('Playground chat', () => {
     expect(reasoning().find('.toggle').text()).toContain('Thinking…');
     expect(reasoning().find('.toggle').attributes('aria-expanded')).toBe('false');
     expect(reasoning().find('.body').exists()).toBe(false);
-    // The reasoning has its own line: no "Answering…" beside it.
-    expect(wrapper.find('.assistant-message .waiting').exists()).toBe(false);
+    // The reasoning has its own line: the reply's own line says only that it works on, with its clock.
+    expect(wrapper.find('.assistant-message .run-status .label').text()).toBe('Working…');
+    expect(wrapper.find('.assistant-message .run-status .time').text()).toBe('0s');
     await answer('Option two.', { reasoning: 'Weigh the **options**, then pick one.', reasoning_ms: 4200 });
     expect(reasoning().find('.toggle').text()).toContain('Thought for 4.2 s');
     expect(reasoning().find('.body').exists()).toBe(false);
@@ -359,11 +366,11 @@ describe('Playground chat', () => {
     expect(tool().find('.output').exists()).toBe(false);
     await tool().find('.line').trigger('click');
     expect(tool().find('.output').text()).toBe('total 0');
-    expect(wrapper.find('.assistant-message .waiting').text()).toBe('Working…');
+    expect(wrapper.find('.assistant-message .run-status .label').text()).toBe('Working…');
     server.terminals = [{ id: 3, command: 'npm run dev', cwd: '/w', started_at: 1, running: true, exit_code: null }];
     await answer('All good.', { steps: [{ type: 'text', text: 'Let me look.', round: 0 }, done, { type: 'text', text: 'All good.', round: 1 }] });
     expect(wrapper.findAll('.assistant-message .content').map((c) => c.text())).toEqual(['Let me look.', 'All good.']);
-    expect(wrapper.find('.assistant-message .waiting').exists()).toBe(false);
+    expect(wrapper.find('.assistant-message .run-status').exists()).toBe(false);
     // What a tool left running sits over the composer, with a way to stop it.
     expect(wrapper.find('.terminals .command').text()).toBe('npm run dev');
     await wrapper.find('.terminals md-icon-button, .terminals button').trigger('click');
@@ -564,3 +571,152 @@ describe('Playground chat', () => {
     wrapper.unmount();
   });
 });
+
+describe('Playground commands, compaction and run time', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    server = { conversations: new Map(), session: null, calls: [], ids: 0, clock: 0 };
+    streams = [];
+    state.route.mockImplementation(handle);
+    vi.stubGlobal('fetch', state.fetch);
+    localStorage.clear();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    document.body.innerHTML = '';
+  });
+
+  const menu = () => document.querySelector<HTMLElement>('.slash-menu');
+  const rows = () => [...document.querySelectorAll<HTMLElement>('.slash-menu [data-row]')];
+  const names = () => rows().map((r) => r.querySelector('.name, .name-text')?.textContent?.trim());
+  async function type(wrapper: Wrapper, text: string) {
+    await wrapper.find('.composer textarea').setValue(text);
+    await flushPromises();
+  }
+  async function key(wrapper: Wrapper, name: string) {
+    await wrapper.find('.composer textarea').trigger('keydown', { key: name });
+    await flushPromises();
+  }
+
+  it('opens the commands on a slash, narrows them as the name is typed, and runs one with Enter', async () => {
+    const { wrapper } = await openPlayground();
+    await type(wrapper, '/');
+    expect(menu()).not.toBeNull();
+    expect(names()).toEqual(['/model', '/effort', '/compact', '/status', '/new', '/fork', '/tools', '/permissions']);
+    expect(wrapper.find('.composer textarea').attributes('aria-expanded')).toBe('true');
+    // Commands with nothing to work on yet say why.
+    expect(rows()[2].getAttribute('aria-disabled')).toBe('true');
+    await type(wrapper, '/co');
+    expect(names()).toEqual(['/compact', '/status']);
+    expect(rows()[0].querySelector('b')?.textContent).toBe('co');
+    await key(wrapper, 'ArrowDown');
+    expect(rows()[1].getAttribute('aria-selected')).toBe('true');
+    expect(wrapper.find('.composer textarea').attributes('aria-activedescendant')).toBe(rows()[1].id);
+    // Tab completes the name; a command that lists opens its list.
+    await key(wrapper, 'Tab');
+    expect((wrapper.find('.composer textarea').element as HTMLTextAreaElement).value).toBe('/status ');
+    expect(document.querySelector('.slash-menu .status-panel')?.textContent).toContain('test/model');
+    await type(wrapper, '/new');
+    await key(wrapper, 'Enter');
+    expect(menu()).toBeNull();
+    expect((wrapper.find('.composer textarea').element as HTMLTextAreaElement).value).toBe('');
+    // Nothing went out as a message.
+    expect(calls('POST', /^\/conversations/)).toEqual([]);
+    wrapper.unmount();
+  });
+
+  it('chooses a model from /model, narrowed by the words after it', async () => {
+    const { wrapper } = await openPlayground();
+    await type(wrapper, '/model ');
+    expect(names()).toEqual(['test/model', 'other/model']);
+    expect(rows()[0].getAttribute('aria-selected')).toBe('true');
+    await type(wrapper, '/model other');
+    expect(names()).toEqual(['other/model']);
+    await key(wrapper, 'Enter');
+    expect(menu()).toBeNull();
+    expect(wrapper.find('.model').text()).toContain('other/model');
+    wrapper.unmount();
+  });
+
+  it('closes on Escape until the command changes, and a closed command still runs rather than going out', async () => {
+    const { wrapper } = await openPlayground();
+    await type(wrapper, '/fork');
+    await key(wrapper, 'Escape');
+    expect(menu()).toBeNull();
+    await type(wrapper, '/fork');
+    expect(menu()).toBeNull();
+    await key(wrapper, 'Enter');
+    expect(state.show).toHaveBeenCalledWith('Nothing to work with yet: send a message first');
+    expect(calls('POST', /^\/conversations/)).toEqual([]);
+    await type(wrapper, '/for');
+    expect(menu()).not.toBeNull();
+    // A path is a message, not a command.
+    await type(wrapper, '/etc/hosts');
+    expect(menu()).toBeNull();
+    wrapper.unmount();
+  });
+
+  it('compacts with /compact, shows the checkpoint, and opens it to the summary', async () => {
+    const { wrapper } = await openPlayground();
+    await ask(wrapper, 'hello');
+    await answer('Hi there.');
+    await type(wrapper, '/compact keep the names');
+    await key(wrapper, 'Enter');
+    expect(calls('POST', /\/compact$/)[0].body).toEqual({ instructions: 'keep the names' });
+    expect(wrapper.find('.compaction').text()).toContain('Compacting context…');
+    const c = server.conversations.get('c1')!;
+    const checkpoint = c.messages.find((m) => m.role === 'checkpoint')!;
+    const record = { ...(checkpoint.steps![0] as object), status: 'done', summary: '## Goal\nSay hello.', recent: ['hello'], tokens_before: 118_000, tokens_after: 14_500, model: 'test/model', ms: 8200 };
+    Object.assign(checkpoint, { status: 'complete', content: '## Goal\nSay hello.', steps: [record] });
+    streams[streams.length - 1].send({ type: 'done', message: checkpoint });
+    streams[streams.length - 1].close();
+    await flushPromises();
+    const marker = wrapper.find('.compaction');
+    expect(marker.text()).toContain('Context compacted');
+    expect(marker.text()).toContain('118K → 14.5K tokens');
+    expect(state.show).toHaveBeenCalledWith('Context compacted');
+    await marker.find('button.head').trigger('click');
+    expect(marker.find('.summary').text()).toContain('Say hello.');
+    expect(marker.find('.recent').text()).toBe('hello');
+    // The next question follows the checkpoint.
+    await ask(wrapper, 'and then?');
+    expect((calls('POST', /\/messages$/)[1].body as { parent_id: string }).parent_id).toBe(checkpoint.id);
+    wrapper.unmount();
+  });
+
+  it('shows what a reply is doing and for how long, a compaction inside it, and how long it worked', async () => {
+    const { wrapper } = await openPlayground();
+    await ask(wrapper, 'go');
+    const status = () => wrapper.find('.assistant-message .run-status');
+    expect(status().find('.label').text()).toBe('Answering…');
+    expect(status().find('.time').text()).toBe('0s');
+    const step = { type: 'compaction', id: 'cmp1', status: 'running', trigger: 'auto', phase: 'pre-turn', round: 0, summary: '', recent: [], tokens_before: 0, tokens_after: 0, model: '', ms: 0, error: '', at: Date.now() / 1000 };
+    streams[0].send({ type: 'compaction', step });
+    await flushPromises();
+    expect(status().find('.label').text()).toBe('Compacting context…');
+    expect(wrapper.find('.assistant-message .compaction').text()).toContain('automatically, near the context limit');
+    streams[0].send({ type: 'compaction', step: { ...step, status: 'done', summary: 'S', tokens_before: 140_000, tokens_after: 9_000 } });
+    streams[0].send({ type: 'usage', usage: { context: 9_100, source: 'usage' }, window: 131_072, limit: 111_411 });
+    await flushPromises();
+    expect(wrapper.find('.assistant-message .compaction').text()).toContain('140K → 9K tokens');
+    server.context = {
+      model: 'test/model', provider: 'test', effort: '', window: 131_072, window_source: 'catalog', limit: 111_411, headroom: 13_107, used: 9_100, used_source: 'usage',
+      auto_compact: true, last: { input: 9_000, cached: 4_000, output: 100, reasoning: 0 }, totals: { input: 9_000, cached: 4_000, output: 100, reasoning: 0 }, rounds: 1, replies: 1,
+      compactions: 1, last_compaction: null, last_duration_ms: 83_000, total_duration_ms: 83_000, running_since: null, tools: [], approval: 'ask',
+    };
+    await answer('Done.', { steps: [step, { type: 'text', text: 'Done.', round: 0 }], duration_ms: 83_000, finished_at: 1 });
+    expect(status().exists()).toBe(false);
+    expect(wrapper.find('.assistant-message .worked').text()).toBe('Worked for 1m 23s');
+    // How full the context is: a ring beside the send button, opening the status.
+    const ring = wrapper.find('.context-ring');
+    expect(ring.text()).toBe('93%');
+    await ring.trigger('click');
+    await flushPromises();
+    const panel = document.querySelector('.slash-menu .status-panel')!;
+    expect(panel.textContent).toContain('9.1K of 131K tokens used');
+    expect(panel.textContent).toContain('4K cached');
+    expect(panel.textContent).toContain('Last reply 1m 23s');
+    wrapper.unmount();
+  });
+});
+

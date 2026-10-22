@@ -256,6 +256,13 @@ MIGRATIONS: list[str] = [
     ALTER TABLE conversations ADD COLUMN approval TEXT NOT NULL DEFAULT '';
     UPDATE conversations SET approval = 'full' WHERE full_access = 1;
     """,
+    # 9: a reply's token usage (its last round and all of them) and how long it worked; checkpoints (compacted context) as messages.
+    """
+    ALTER TABLE chat_messages ADD COLUMN usage       TEXT    NOT NULL DEFAULT '{}';
+    ALTER TABLE chat_messages ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE chat_messages ADD COLUMN waited_ms   INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE chat_messages ADD COLUMN finished_at REAL    NOT NULL DEFAULT 0;
+    """,
 ]
 
 

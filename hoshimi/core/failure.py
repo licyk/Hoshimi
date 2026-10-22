@@ -331,6 +331,58 @@ def is_policy_block(status: int | None, text: str) -> bool:
     return _code_is(text, POLICY_BLOCK_BUSINESS_CODE) or bool(POLICY_BLOCK_PATTERN.search(text))
 
 
+# -- a request too long for the model ---------------------------------------- #
+
+CONTEXT_OVERFLOW_PATTERN = re.compile(
+    r"context_length_exceeded|context[ _]length|context[ _]window|maximum context|exceed(?:s|ed)? (?:the )?context limit|"
+    r"prompt is too long|input is too long|too many (?:input )?tokens|token[ _]limit[ _]exceeded|input token count|"
+    r"exceeds the maximum number of tokens|request too large|maximum (?:input|prompt) length|"
+    r"上下文长度|上下文窗口|超出最大长度|超过最大长度|超过了最大|超出.{0,6}长度限制|输入过长|token\s*数量?超(?:过|出)",
+    re.IGNORECASE,
+)
+"""Every wording seen for "this request does not fit in the model's context window".
+
+OpenAI's ``context_length_exceeded`` code and "maximum context length",
+Anthropic's "prompt is too long", Gemini's "input token count … exceeds the
+maximum number of tokens", OpenRouter's ``token_limit_exceeded``, and the
+Chinese stations' own. Read before the quota markers, which a phrase like
+"context limit exceeded" would otherwise fall into: an overflow is about the
+request, so another account only meets the same wall, and holding this one
+back for it would be wrong twice.
+"""
+
+_OVERFLOW_LIMIT_PATTERNS = (
+    re.compile(r"maximum context length is\s*(\d[\d,]*)", re.IGNORECASE),
+    re.compile(r"context (?:window|length|limit) (?:of|is)\s*(\d[\d,]*)", re.IGNORECASE),
+    re.compile(r">\s*(\d[\d,]*)\s*maximum", re.IGNORECASE),
+    re.compile(r"maximum (?:number of tokens allowed|allowed tokens|input tokens?)\s*(?:is|\(|:)?\s*(\d[\d,]*)", re.IGNORECASE),
+    re.compile(r"(?:limit|最大)[^\d]{0,12}(\d[\d,]{3,})\s*(?:tokens?|tok)", re.IGNORECASE),
+)
+
+
+def is_context_overflow(status: int | None, text: str) -> bool:
+    """Did the station refuse the request for not fitting in the model's context window?
+
+    ``status`` is None for an error frame on a 200 stream. Only a refusal can
+    say so (400, 413 and 422 are how stations do): a healthy reply that
+    talks about context windows is an answer, not a verdict.
+    """
+    if not text or (status is not None and status not in (400, 413, 422)):
+        return False
+    return bool(CONTEXT_OVERFLOW_PATTERN.search(text))
+
+
+def context_limit_in(text: str) -> int | None:
+    """The window an overflow refusal names ("maximum context length is 131072 tokens"), when it names a plausible one."""
+    for pattern in _OVERFLOW_LIMIT_PATTERNS:
+        match = pattern.search(text or "")
+        if match:
+            value = int(match.group(1).replace(",", ""))
+            if 1024 <= value <= 20_000_000:
+                return value
+    return None
+
+
 # "…将在 2026-09-11 18:08:17 UTC+8 重置" and its international twin
 # "… your usage will reset at 2026-09-17 09:09:36 UTC+8, alternatively, …".
 # Both spell out the offset, and it is captured rather than assumed: the

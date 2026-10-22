@@ -82,6 +82,12 @@ class Settings:
     playground_max_steps: int = 50
     # A SearXNG instance for web_search (playground.search_url); empty searches DuckDuckGo.
     playground_search_url: str = ""
+    # Compact a conversation by itself as it nears its model's context window (playground.auto_compact).
+    playground_auto_compact: bool = True
+    # The share of the window at which it is compacted (playground.compact_threshold), 0.5 to 0.95.
+    playground_compact_threshold: float = 0.85
+    # The model that writes the summary (playground.compact_model); empty: the conversation's own.
+    playground_compact_model: str = ""
 
 
 def validate_settings(settings: Settings) -> str | None:
@@ -113,6 +119,8 @@ def validate_settings(settings: Settings) -> str | None:
         return "playground.max_steps must be between 1 and 500."
     if settings.playground_search_url and not settings.playground_search_url.startswith(("http://", "https://")):
         return "playground.search_url must be an http(s) address."
+    if not 0.5 <= settings.playground_compact_threshold <= 0.95:
+        return "playground.compact_threshold must be between 0.5 and 0.95."
     return None
 
 
@@ -180,6 +188,7 @@ def settings_from_dict(data: dict[str, Any], settings: Settings | None = None) -
             ("system_prompt", "playground_system_prompt", ""),
             ("title_model", "playground_title_model", ""),
             ("vision_model", "playground_vision_model", "auto"),
+            ("compact_model", "playground_compact_model", ""),
         ):
             if key not in playground:
                 continue
@@ -210,6 +219,16 @@ def settings_from_dict(data: dict[str, Any], settings: Settings | None = None) -
             if isinstance(value, bool) or not isinstance(value, int):
                 raise ValueError("playground.max_steps must be a whole number")
             settings.playground_max_steps = value
+        if "auto_compact" in playground:
+            value = playground["auto_compact"]
+            if not isinstance(value, bool):
+                raise ValueError("playground.auto_compact must be true or false")
+            settings.playground_auto_compact = value
+        if "compact_threshold" in playground:
+            value = playground["compact_threshold"]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("playground.compact_threshold must be a number")
+            settings.playground_compact_threshold = float(value)
 
     providers = data.get("providers")
     if isinstance(providers, dict):
@@ -321,6 +340,9 @@ def settings_to_dict(settings: Settings) -> dict[str, Any]:
             ("approval", settings.playground_approval, "ask"),
             ("max_steps", settings.playground_max_steps, 50),
             ("search_url", settings.playground_search_url, ""),
+            ("auto_compact", settings.playground_auto_compact, True),
+            ("compact_threshold", settings.playground_compact_threshold, 0.85),
+            ("compact_model", settings.playground_compact_model, ""),
         )
         if value != default
     }

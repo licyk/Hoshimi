@@ -9,9 +9,9 @@ from typing import Any, ClassVar
 
 import httpx
 
-from hoshimi.core.failure import body_says_model_gone, is_model_gone, is_model_saturation, is_policy_block, is_recoverable, parse_retry_after
+from hoshimi.core.failure import body_says_model_gone, is_context_overflow, is_model_gone, is_model_saturation, is_policy_block, is_recoverable, parse_retry_after
 from hoshimi.core.net.responses import reject_interception
-from hoshimi.core.providers.base import Account, AuthFailed, ModelGone, ModelSaturated, PolicyBlocked, Provider, ProviderError, QuotaExceeded
+from hoshimi.core.providers.base import Account, AuthFailed, ContextOverflow, ModelGone, ModelSaturated, PolicyBlocked, Provider, ProviderError, QuotaExceeded
 from hoshimi.core.quota import observe_response
 from hoshimi.core.sse import iter_sse
 
@@ -97,6 +97,9 @@ def raise_for_status(response: httpx.Response, *, provider: str) -> None:
     if status < 400:
         return
     text = response.read().decode("utf-8", "replace")
+    # Before the id and quota readings: "maximum context length" names the model and "limit exceeded" reads as quota.
+    if is_context_overflow(status, text):
+        raise ContextOverflow(status, f"{provider}: {text}")
     if is_model_gone(status, text):
         raise ModelGone(status, f"{provider}: {text}")
     _classify(provider, status, text, retry_after=parse_retry_after(response.headers.get("retry-after")))
@@ -115,6 +118,8 @@ def _classify_in_band(provider: str, message: str) -> None:
     only ever yielded, the dead-model store never hears about it and the
     caller is handed the same refusal every turn for the rest of the session.
     """
+    if is_context_overflow(None, message):
+        raise ContextOverflow(400, f"{provider}: {message}")
     if body_says_model_gone(message):
         raise ModelGone(404, f"{provider}: {message}")
     if is_model_saturation(None, message):

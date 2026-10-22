@@ -35,8 +35,8 @@ from typing import Any, Literal
 
 from hoshimi.core.db import Database
 
-Role = Literal["user", "assistant"]
-ROLES: tuple[Role, ...] = ("user", "assistant")
+Role = Literal["user", "assistant", "checkpoint"]
+ROLES: tuple[Role, ...] = ("user", "assistant", "checkpoint")
 Status = Literal["complete", "streaming", "stopped", "error"]
 TitleState = Literal["", "provisional", "auto", "user"]
 AttachmentKind = Literal["image", "file"]
@@ -90,7 +90,14 @@ class ChatMessage:
     reasoning_ms: int = 0
     """How long it reasoned: from its first reasoning to its first word (or to the end)."""
     steps: list[dict[str, Any]] = field(default_factory=list)
-    """A reply that used tools, step by step (as the Playground runner keeps them); empty for one that did not."""
+    """A reply that used tools, step by step (as the Playground runner keeps them); empty for one that did not.
+    A checkpoint keeps its compaction here, as its one step."""
+    usage: dict[str, Any] = field(default_factory=dict)
+    """A reply's tokens: ``last`` round's and the ``total`` of them, and the ``context`` it ended with (see the Playground runner)."""
+    duration_ms: int = 0
+    """How long a reply worked, less the time it waited for the user's approval; 0 for one kept before this was counted."""
+    waited_ms: int = 0
+    finished_at: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -244,6 +251,7 @@ class ConversationStore:
     def add_message(
         self, conversation_id: str, parent_id: str | None, role: Role, content: str, *, model: str = "", effort: str = "",
         status: Status = "complete", attachment_ids: list[str] | tuple[str, ...] = (), notices: list[dict[str, Any]] | None = None,
+        steps: list[dict[str, Any]] | None = None,
     ) -> ChatMessage | None:
         """Add a message after ``parent_id`` (None: at the root) and make it the end of the path on screen.
 
@@ -265,8 +273,8 @@ class ConversationStore:
                 if conn.execute("SELECT 1 FROM attachments WHERE id = ?", (attachment_id,)).fetchone() is None:
                     raise ValueError(f"No attachment '{attachment_id}'.")
             conn.execute(
-                "INSERT INTO chat_messages(id, conversation_id, parent_id, role, content, model, effort, status, notices, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (message_id, conversation_id, parent_id, role, content, model, effort, status, json.dumps(notices or []), now),
+                "INSERT INTO chat_messages(id, conversation_id, parent_id, role, content, model, effort, status, notices, steps, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (message_id, conversation_id, parent_id, role, content, model, effort, status, json.dumps(notices or []), json.dumps(steps or [], ensure_ascii=False), now),
             )
             conn.executemany(
                 "INSERT INTO message_attachments(message_id, attachment_id, position) VALUES (?, ?, ?)",
@@ -283,16 +291,35 @@ class ConversationStore:
 
     def finish_message(
         self, message_id: str, *, content: str, status: Status, error: str = "", notices: list[dict[str, Any]] | None = None,
-        reasoning: str = "", reasoning_ms: int = 0, steps: list[dict[str, Any]] | None = None,
+        reasoning: str = "", reasoning_ms: int = 0, steps: list[dict[str, Any]] | None = None, usage: dict[str, Any] | None = None,
+        duration_ms: int = 0, waited_ms: int = 0,
     ) -> None:
-        """Settle a streamed reply: what it said (and reasoned, and did), and how it ended."""
-        changes: dict[str, object] = {"content": content, "status": status, "error": error, "reasoning": reasoning, "reasoning_ms": reasoning_ms}
+        """Settle a streamed reply: what it said (and reasoned, and did), what it took, how long, and how it ended."""
+        changes: dict[str, object] = {
+            "content": content, "status": status, "error": error, "reasoning": reasoning, "reasoning_ms": reasoning_ms, "duration_ms": duration_ms,
+            "waited_ms": waited_ms, "finished_at": time.time(),
+        }
+        if usage is not None:
+            changes["usage"] = json.dumps(usage)
         if notices is not None:
             changes["notices"] = json.dumps(notices)
         if steps is not None:
             changes["steps"] = json.dumps(steps, ensure_ascii=False)
         assignments = ", ".join(f"{column} = ?" for column in changes)
         self._db.execute(f"UPDATE chat_messages SET {assignments} WHERE id = ?", (*changes.values(), message_id))
+
+    def remove_leaf(self, message_id: str) -> bool:
+        """Take back a message nothing follows (a checkpoint whose compaction failed); the path on screen ends at its parent again."""
+        with self._lock, self._db.transaction(immediate=True) as conn:
+            row = conn.execute("SELECT conversation_id, parent_id FROM chat_messages WHERE id = ?", (message_id,)).fetchone()
+            if row is None or conn.execute("SELECT 1 FROM chat_messages WHERE parent_id = ?", (message_id,)).fetchone() is not None:
+                return False
+            attachment_ids = _linked_attachments(conn, [message_id])
+            conn.execute("DELETE FROM message_attachments WHERE message_id = ?", (message_id,))
+            conn.execute("DELETE FROM chat_messages WHERE id = ?", (message_id,))
+            conn.execute("UPDATE conversations SET current_leaf = ? WHERE id = ? AND current_leaf = ?", (row["parent_id"] or "", row["conversation_id"], message_id))
+            _drop_unlinked(conn, attachment_ids)
+        return True
 
     def approval(self, conversation_id: str) -> str:
         """A conversation's own approval mode, empty for Settings' (read alone, as each call is about to run)."""
@@ -332,9 +359,10 @@ class ConversationStore:
                 copy_id = _id()
                 # Kept in their order: each copy a moment after the last.
                 conn.execute(
-                    "INSERT INTO chat_messages(id, conversation_id, parent_id, role, content, model, effort, status, error, notices, reasoning, reasoning_ms, steps, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (copy_id, branch_id, parent, m.role, m.content, m.model, m.effort, m.status, m.error, json.dumps(m.notices), m.reasoning, m.reasoning_ms, json.dumps(m.steps, ensure_ascii=False), m.created_at + i * 1e-6),
+                    "INSERT INTO chat_messages(id, conversation_id, parent_id, role, content, model, effort, status, error, notices, reasoning, reasoning_ms, steps, "
+                    "usage, duration_ms, waited_ms, finished_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (copy_id, branch_id, parent, m.role, m.content, m.model, m.effort, m.status, m.error, json.dumps(m.notices), m.reasoning, m.reasoning_ms,
+                     json.dumps(m.steps, ensure_ascii=False), json.dumps(m.usage), m.duration_ms, m.waited_ms, m.finished_at, m.created_at + i * 1e-6),
                 )
                 conn.executemany(
                     "INSERT INTO message_attachments(message_id, attachment_id, position) VALUES (?, ?, ?)",
@@ -445,6 +473,7 @@ def _message(row: sqlite3.Row, attachments: list[AttachmentInfo]) -> ChatMessage
         id=row["id"], conversation_id=row["conversation_id"], parent_id=row["parent_id"], role=row["role"], content=row["content"],
         model=row["model"], effort=row["effort"], status=row["status"], error=row["error"], notices=notices if isinstance(notices, list) else [],
         created_at=row["created_at"], attachments=attachments, reasoning=row["reasoning"], reasoning_ms=row["reasoning_ms"], steps=_json_list(row["steps"]),
+        usage=_json_dict(row["usage"]), duration_ms=row["duration_ms"], waited_ms=row["waited_ms"], finished_at=row["finished_at"],
     )
 
 
@@ -454,6 +483,14 @@ def _json_list(raw: str | None) -> list[Any]:
     except ValueError:
         return []
     return value if isinstance(value, list) else []
+
+
+def _json_dict(raw: str | None) -> dict[str, Any]:
+    try:
+        value = json.loads(raw or "{}")
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def _conversation(row: sqlite3.Row, messages: list[ChatMessage] | None = None) -> Conversation:

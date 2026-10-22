@@ -3,7 +3,7 @@ import { computed, type Ref } from 'vue';
 import { authedFetch, readSse } from '@/api/chat';
 import { api, unwrap } from '@/api/client';
 import { keys } from '@/api/queries/keys';
-import type { ApprovalDecision, ApprovalMode, AttachmentView, MessageView, Notice, ToolGroup, ToolStep, UserStep } from '@/api/types';
+import type { ApprovalDecision, ApprovalMode, AttachmentView, CompactionStep, MessageView, Notice, ReplyUsage, ToolGroup, ToolStep, UserStep } from '@/api/types';
 
 /**
  * The Playground's kept conversations. A conversation is a tree of messages; sending, editing and
@@ -19,6 +19,11 @@ export type ReplyEvent =
   | { type: 'delta'; text: string }
   | { type: 'tool'; step: ToolStep }
   | { type: 'steer'; step: UserStep }
+  /** What the reply has taken after a round, against the model's window and where it is compacted. */
+  | { type: 'usage'; usage: ReplyUsage; window: number; limit: number }
+  | { type: 'compaction'; step: CompactionStep }
+  /** The user's own compaction, filed while its summary is written. */
+  | { type: 'checkpoint'; message: MessageView }
   | { type: 'done'; message: MessageView };
 
 export interface SendBody {
@@ -59,6 +64,8 @@ export const conversationsApi = {
   terminals: (id: string) => unwrap(api.GET('/api/v1/playground/conversations/{conversation_id}/terminals', path(id))),
   stopTerminal: (id: string, sessionId: number) =>
     unwrap(api.DELETE('/api/v1/playground/conversations/{conversation_id}/terminals/{session_id}', { params: { path: { conversation_id: id, session_id: sessionId } } })),
+  /** How full the conversation on screen is against its model's window, and what its replies took. */
+  context: (id: string) => unwrap(api.GET('/api/v1/playground/conversations/{conversation_id}/context', path(id))),
   session: () => unwrap(api.GET('/api/v1/playground/session')),
   setSession: (id: string | null) => unwrap(api.PUT('/api/v1/playground/session', { body: { conversation_id: id } })),
 
@@ -68,6 +75,10 @@ export const conversationsApi = {
   /** Another reply beside ``messageId`` (or a first one to a question), streamed. */
   retry: (id: string, messageId: string, body: { model?: string; effort?: string }, onEvent: (event: ReplyEvent) => void, signal?: AbortSignal) =>
     stream(`/api/v1/playground/conversations/${encodeURIComponent(id)}/messages/${encodeURIComponent(messageId)}/retry`, body, onEvent, signal),
+
+  /** Compact the conversation on screen now (a checkpoint after it, holding the summary), streamed. */
+  compact: (id: string, instructions: string, onEvent: (event: ReplyEvent) => void, signal?: AbortSignal) =>
+    stream(`/api/v1/playground/conversations/${encodeURIComponent(id)}/compact`, { instructions }, onEvent, signal),
 
   /** An image as itself, or a file as its text (with ``type`` the file's own, for a PDF read in the browser). */
   async upload(data: Blob, name: string, query: { type?: string; width?: number; height?: number } = {}): Promise<AttachmentView> {

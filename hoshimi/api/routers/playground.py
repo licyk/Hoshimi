@@ -79,7 +79,8 @@ class MessageView(Record):
     id: str
     parent_id: str | None
     """The message this one follows; None for the first. Siblings are the versions of one turn."""
-    role: Literal["user", "assistant"]
+    role: Literal["user", "assistant", "checkpoint"]
+    """A ``checkpoint`` is the conversation compacted on the user's word: its ``content`` is the summary, its one step the compaction."""
     content: str
     model: str = ""
     effort: str = ""
@@ -94,6 +95,15 @@ class MessageView(Record):
     """How long it reasoned, in milliseconds."""
     steps: list[dict[str, Any]] = Field(default_factory=list)
     """A reply that used tools, step by step: reasoning, text and tool calls in order (see :mod:`hoshimi.api.playground`); empty otherwise."""
+    usage: dict[str, Any] = Field(default_factory=dict)
+    """A reply's tokens: ``last`` (its last round's) and ``total`` (``input``, ``cached``, ``output``, ``reasoning``), ``rounds`` the station
+    counted, and the ``context`` it ended with, by ``source`` (``usage`` as the station counted, or ``estimate``); empty when unknown."""
+    duration_ms: int = 0
+    """How long a reply worked, less the time it waited for approvals; 0 for one kept before this was counted."""
+    waited_ms: int = 0
+    """How long it waited for the user to approve calls."""
+    finished_at: float = 0
+    """Unix seconds it ended at; 0 while it streams, or for one kept before this was counted."""
 
 
 class ConversationSummary(Record):
@@ -205,6 +215,62 @@ class TerminalList(Record):
     terminals: list[TerminalView]
 
 
+class Compact(Record):
+    instructions: str = ""
+    """What the summary should pay particular attention to."""
+
+
+class TokenCounts(Record):
+    input: int = 0
+    """Prompt tokens, cached ones among them."""
+    cached: int = 0
+    output: int = 0
+    """Completion tokens, reasoning among them."""
+    reasoning: int = 0
+
+
+class CompactionSummary(Record):
+    tokens_before: int = 0
+    tokens_after: int = 0
+    at: float = 0
+    trigger: str = ""
+
+
+class ContextView(Record):
+    """How full the conversation on screen is, against its model's window, and what its replies took."""
+
+    model: str
+    provider: str = ""
+    effort: str = ""
+    window: int
+    """The model's context window, in tokens."""
+    window_source: Literal["catalog", "default", "learned"]
+    """``catalog``: the model's listing; ``default``: none known, the gateway's guess; ``learned``: what a station said in refusing a longer request."""
+    limit: int
+    """Where the conversation is compacted."""
+    headroom: int
+    """The room kept for a reply."""
+    used: int
+    """What the next request takes, near enough."""
+    used_source: Literal["usage", "estimate"]
+    auto_compact: bool
+    last: TokenCounts
+    """The last round a station counted."""
+    totals: TokenCounts
+    """Every round of every reply on the path."""
+    rounds: int
+    replies: int
+    compactions: int
+    """Compactions on the path."""
+    last_compaction: CompactionSummary | None = None
+    last_duration_ms: int = 0
+    total_duration_ms: int = 0
+    running_since: float | None = None
+    """Unix seconds a reply (or a compaction) has been working since; None when none is."""
+    tools: list[str] = Field(default_factory=list)
+    approval: str = ""
+
+
 class Session(Record):
     """The conversation open last, so the Playground can return to it; None for a new one."""
 
@@ -220,6 +286,7 @@ def _message(m: ChatMessage) -> MessageView:
         id=m.id, parent_id=m.parent_id, role=m.role, content=m.content, model=m.model, effort=m.effort, status=m.status, error=m.error,
         notices=[Notice(**{k: v for k, v in n.items() if k in ("kind", "name", "model")}) for n in m.notices if isinstance(n, dict) and n.get("kind")],
         created_at=m.created_at, attachments=[_attachment(a) for a in m.attachments], reasoning=m.reasoning, reasoning_ms=m.reasoning_ms, steps=m.steps,
+        usage=m.usage, duration_ms=m.duration_ms, waited_ms=m.waited_ms, finished_at=m.finished_at,
     )
 
 
@@ -439,6 +506,26 @@ def steer_reply(services: ServicesDep, conversation_id: str, body: SteerSend) ->
     if steer is None:
         raise ConflictError("No reply is running that can take a message now; send it as a new message.")
     return SteerView(id=steer.id)
+
+
+@router.post("/conversations/{conversation_id}/compact", operation_id="compact_conversation", responses=SSE_RESPONSES)
+def compact_conversation(services: ServicesDep, conversation_id: str, body: Compact) -> StreamingResponse:
+    """Compact the conversation on screen now: a model summarises it, and from then on is sent the summary in its place.
+
+    Events: ``checkpoint`` (filed, while the summary is written) and ``done``
+    (kept; with ``status`` ``error`` it was not, and the conversation is as it
+    was). 409 while a reply is running; 400 when there is nothing to compact.
+    """
+    _conversation(services, conversation_id)
+    cancel = threading.Event()
+    return _stream(PlaygroundRunner(services).compact(conversation_id, instructions=body.instructions, cancel=cancel), cancel)
+
+
+@router.get("/conversations/{conversation_id}/context", operation_id="get_conversation_context", responses=ERROR_RESPONSES)
+def get_conversation_context(services: ServicesDep, conversation_id: str) -> ContextView:
+    """How full the conversation on screen is against its model's context window, what it has taken, and how long its replies worked."""
+    _conversation(services, conversation_id)
+    return ContextView(**PlaygroundRunner(services).context_view(conversation_id))
 
 
 @router.get("/conversations/{conversation_id}/terminals", operation_id="list_conversation_terminals", responses=ERROR_RESPONSES)

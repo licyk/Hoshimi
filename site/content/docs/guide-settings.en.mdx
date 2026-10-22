@@ -42,6 +42,14 @@ The **Playground** section, how the Playground talks to models:
 | **Title model** | `playground.title_model` | Names each new chat after its first reply. By default **The chat's own model** |
 | **Image model** | `playground.vision_model` | Describes images for models that cannot read them. **Automatic** (the default): the first available model that reads images; **Off**: images are left out for models that cannot read them; or a particular model that reads images |
 
+The **Context** section, what happens as a Playground chat nears its model's context window:
+
+| Setting | Config key | Default | What it does |
+| --- | --- | --- | --- |
+| **Compact long chats automatically** | `playground.auto_compact` | On | Near the limit, a model summarises the chat so far and the chat goes on from the summary. A request the model refuses as too long is compacted and sent again either way |
+| **Compact at (% of the window)** | `playground.compact_threshold` | 85 | 50 to 95; sooner still when what is left could not hold a reply. Stored as a share (`0.85`) |
+| **Summary model** | `playground.compact_model` | **The chat's own model** | Writes the summary when a chat is compacted |
+
 What these do in the Playground is in [Playground](/docs/guide-playground).
 
 ## Tools

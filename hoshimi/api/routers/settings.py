@@ -97,6 +97,12 @@ class PlaygroundSettingsView(Record):
     max_steps: int = 50
     search_url: str = ""
     """A SearXNG instance for ``web_search``; empty searches DuckDuckGo."""
+    auto_compact: bool = True
+    """Compact a conversation by itself as it nears its model's context window."""
+    compact_threshold: float = 0.85
+    """The share of the window at which a conversation is compacted (0.5 to 0.95)."""
+    compact_model: str = ""
+    """The model that writes the summary; empty: the conversation's own."""
 
 
 class SettingsView(Record):
@@ -144,7 +150,8 @@ def _view(services: Services, request: Request | None = None) -> SettingsView:
             system_prompt=settings.playground_system_prompt, title_model=settings.playground_title_model, vision_model=settings.playground_vision_model,
             tools=list(settings.playground_tools), workspace=settings.playground_workspace, workspace_path=str(PlaygroundRunner(services).workspace()),
             approval=settings.playground_approval if settings.playground_approval in ("auto", "full") else "ask", max_steps=settings.playground_max_steps,
-            search_url=settings.playground_search_url,
+            search_url=settings.playground_search_url, auto_compact=settings.playground_auto_compact,
+            compact_threshold=settings.playground_compact_threshold, compact_model=settings.playground_compact_model,
         ),
         server=ServerView(
             host=settings.host,

@@ -113,6 +113,15 @@ export const duration = (ms: number | null | undefined): string => {
   return seconds ? `${minutes} min ${seconds} s` : `${minutes} min`;
 };
 
+/** How long something has run, as a clock that ticks: `12s`, `1m 05s`, `1h 02m 05s`. */
+export const elapsed = (ms: number): string => {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const [h, m, s] = [Math.floor(total / 3600), Math.floor((total % 3600) / 60), total % 60];
+  const pad = (n: number) => String(n).padStart(2, '0');
+  if (h) return `${h}h ${pad(m)}m ${pad(s)}s`;
+  return m ? `${m}m ${pad(s)}s` : `${s}s`;
+};
+
 /**
  * How long ago (negative ``ms``) or from now (positive), in the reader's language: "3 minutes ago",
  * "in 2 days". The exact moment goes in a tooltip beside it.
