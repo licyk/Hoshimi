@@ -28,8 +28,8 @@ export interface ComposerOption {
  * is kept inside the window. A menu with a search keeps one size whatever the search leaves in it,
  * so it does not shrink and jump as the list empties.
  *
- * With ``multiple``, it picks any number (``v-model:values``): a press checks or unchecks an
- * option, and the menu stays open.
+ * With ``multiple``, it is a list of switches (``v-model:values`` holds the ones on): each row is
+ * a switch that a press turns on or off, and the menu stays open.
  */
 const props = withDefaults(
   defineProps<{
@@ -52,12 +52,17 @@ const props = withDefaults(
     /** Where the menu stands: lined up with its control, or centred over the composer it is in. */
     align?: 'start' | 'center';
     multiple?: boolean;
+    /** The control in the error colours, for a choice with consequences. */
+    danger?: boolean;
   }>(),
   { searchFrom: 0, noMatches: '', align: 'start', multiple: false },
 );
 const model = defineModel<string | null>({ default: null });
 const values = defineModel<string[]>('values', { default: () => [] });
-const selected = (o: ComposerOption) => (props.multiple ? values.value.includes(o.value) : o.value === model.value);
+// The switches as pressed, ahead of the parent's answer: two quick presses must not both start from the same list.
+const switched = ref<string[]>([...values.value]);
+watch(values, (v) => (switched.value = [...v]));
+const selected = (o: ComposerOption) => (props.multiple ? switched.value.includes(o.value) : o.value === model.value);
 
 const open = ref(false);
 const root = ref<HTMLElement | null>(null);
@@ -112,7 +117,7 @@ function place() {
   };
 }
 
-const itemAt = (i: number) => list.value?.querySelectorAll<HTMLButtonElement>('[role="option"]')[i] ?? null;
+const itemAt = (i: number) => list.value?.querySelectorAll<HTMLButtonElement>('[role="option"], [role="switch"]')[i] ?? null;
 
 function highlight(i: number, focus: boolean) {
   active.value = i;
@@ -173,7 +178,8 @@ function toggle() {
 function pick(o: ComposerOption) {
   if (o.disabled) return;
   if (props.multiple) {
-    values.value = selected(o) ? values.value.filter((v) => v !== o.value) : [...values.value, o.value];
+    switched.value = selected(o) ? switched.value.filter((v) => v !== o.value) : [...switched.value, o.value];
+    values.value = switched.value;
     return;
   }
   model.value = o.value;
@@ -183,10 +189,10 @@ function pick(o: ComposerOption) {
 
 <template>
   <div ref="root" class="composer-menu">
-    <ChipButton :icon="icon" :text="display" :label="text || current ? `${label}: ${display}` : label" menu :open="open" :disabled="disabled" :loading="loading" @click="toggle" />
+    <ChipButton :icon="icon" :danger="danger" :text="display" :label="text || current ? `${label}: ${display}` : label" menu :open="open" :disabled="disabled" :loading="loading" @click="toggle" />
     <Teleport to="body">
       <Transition :name="TRANSITIONS.popover">
-        <div v-if="open" ref="menu" class="menu" :class="{ fixed: searchable }" role="dialog" :aria-label="label" :style="{ ...position, zIndex: layer.zIndex.value }" @keydown="onKey">
+        <div v-if="open" ref="menu" class="menu" :class="{ fixed: searchable, switches: multiple }" role="dialog" :aria-label="label" :style="{ ...position, zIndex: layer.zIndex.value }" @keydown="onKey">
           <header class="head">
             <span class="type-title-small">{{ label }}</span>
             <span v-if="hint" class="type-body-small muted">{{ hint }}</span>
@@ -195,15 +201,16 @@ function pick(o: ComposerOption) {
             <AppIcon :icon="Search" :size="18" class="muted" />
             <input ref="search" v-model="query" type="text" role="searchbox" class="type-body-medium" :placeholder="searchLabel" :aria-label="searchLabel" autocomplete="off" spellcheck="false" />
           </label>
-          <div ref="list" class="list app-scroll app-scroll-auto" role="listbox" :aria-label="label" :aria-multiselectable="multiple || undefined">
+          <div ref="list" class="list app-scroll app-scroll-auto" :role="multiple ? 'group' : 'listbox'" :aria-label="label">
             <button
               v-for="(o, i) in shown"
               :key="o.value"
               type="button"
-              role="option"
+              :role="multiple ? 'switch' : 'option'"
               class="item state-layer"
-              :class="{ active: i === active }"
-              :aria-selected="selected(o)"
+              :class="{ active: i === active, toggle: multiple }"
+              :aria-selected="multiple ? undefined : selected(o)"
+              :aria-checked="multiple ? selected(o) : undefined"
               :aria-disabled="o.disabled || undefined"
               :tabindex="searchable ? -1 : 0"
               @click="pick(o)"
@@ -213,7 +220,8 @@ function pick(o: ComposerOption) {
                 <span class="type-body-medium name">{{ o.label }}</span>
                 <span v-if="o.description" class="type-body-small muted meta">{{ o.description }}</span>
               </span>
-              <AppIcon v-if="selected(o)" :icon="Check" :size="18" class="check" />
+              <span v-if="multiple" class="switch" :class="{ on: selected(o) }" aria-hidden="true"><span class="handle" /></span>
+              <AppIcon v-else-if="selected(o)" :icon="Check" :size="18" class="check" />
             </button>
             <p v-if="!shown.length && noMatches" class="type-body-medium muted empty">{{ noMatches }}</p>
           </div>
@@ -252,6 +260,24 @@ function pick(o: ComposerOption) {
 .item[aria-selected='true'] .meta { color: var(--md-sys-color-on-surface-variant); }
 .check { flex: none; }
 .item[aria-disabled='true'] { opacity: 0.38; cursor: default; }
+/* Switches: one width whatever they say, and as tall as the room above the control allows. */
+.menu.switches { width: min(360px, calc(100vw - 16px)); }
+.menu.switches .list { max-height: none; }
+/* A switch row: the name and what it does, and a switch at the end, as in Material's lists. */
+.item.toggle { gap: var(--app-space-3); min-height: 56px; padding: var(--app-space-2) var(--app-space-2) var(--app-space-2) var(--app-space-3); }
+.item.toggle .meta { color: var(--md-sys-color-on-surface-variant); }
+.switch {
+  position: relative; flex: none; width: 44px; height: 26px; border-radius: 13px;
+  border: 2px solid var(--md-sys-color-outline); background: var(--md-sys-color-surface-container-highest);
+  transition: background var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), border-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
+}
+.handle {
+  position: absolute; top: 50%; left: 4px; width: 14px; height: 14px; border-radius: 50%; background: var(--md-sys-color-outline); transform: translateY(-50%);
+  transition: all var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
+}
+.switch.on { border-color: var(--md-sys-color-primary); background: var(--md-sys-color-primary); }
+.switch.on .handle { left: 21px; width: 18px; height: 18px; background: var(--md-sys-color-on-primary); }
+@media (prefers-reduced-motion: reduce) { .switch, .handle { transition: none; } }
 .empty { margin: 0; padding: var(--app-space-2); }
 /* With a search, one size whatever it leaves: the menu as wide as a menu grows (within the window),
    the list as tall as it may be (within the room the placement gives it), "no matches" in its middle. */

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, reactive, ref } from 'vue';
 import { conversationsApi, type ReplyEvent } from '@/api/conversations';
-import type { ApprovalDecision, AttachmentView, ConversationView, MessageView, Step, TerminalView, ToolGroup, ToolStep } from '@/api/types';
+import { TOOL_GROUPS, type ApprovalDecision, type ApprovalMode, type AttachmentView, type ConversationView, type MessageView, type Step, type TerminalView, type ToolGroup, type ToolStep } from '@/api/types';
 
 type Summary = Omit<ConversationView, 'messages'>;
 
@@ -40,10 +40,14 @@ export const useChatStore = defineStore('chat', () => {
   const temporary = ref(false);
   const model = ref<string | null>(null);
   const effort = ref('');
-  /** The tools this conversation (or the next new one) does without. */
+  /**
+   * How this conversation (or the next new one) differs from the tools Settings starts new ones with:
+   * the ones it turned off, and the ones it turned on.
+   */
   const toolsOff = ref<ToolGroup[]>([]);
-  /** Its tools run without asking, whatever the approval mode in Settings. */
-  const fullAccess = ref(false);
+  const toolsOn = ref<ToolGroup[]>([]);
+  /** When its tools ask first; empty: as Settings say. */
+  const approval = ref<ApprovalMode | ''>('');
   /** Messages sent to the reply under way that it has not read yet. */
   const queued = ref<{ id: string; text: string }[]>([]);
   /** The background commands its tools started. */
@@ -94,7 +98,8 @@ export const useChatStore = defineStore('chat', () => {
     if (view.model) model.value = view.model;
     effort.value = view.effort;
     toolsOff.value = (view.tools_off ?? []) as ToolGroup[];
-    fullAccess.value = !!view.full_access;
+    toolsOn.value = (view.tools_on ?? []) as ToolGroup[];
+    approval.value = view.approval ?? '';
     void refreshTerminals();
   }
 
@@ -120,15 +125,17 @@ export const useChatStore = defineStore('chat', () => {
     messages.clear();
     leaf.value = '';
     temporary.value = !!options.temporary;
-    // A new chat asks again: full access is given to one chat at a time.
-    fullAccess.value = false;
+    // A new chat starts as Settings say: its tools, and when they ask first.
+    approval.value = '';
+    toolsOff.value = [];
+    toolsOn.value = [];
     terminals.value = [];
     void conversationsApi.setSession(null).catch(() => undefined);
   }
 
   async function ensure(): Promise<string> {
     if (conversation.value) return conversation.value.id;
-    const view = await conversationsApi.create(model.value ?? '', effort.value, temporary.value, toolsOff.value, fullAccess.value);
+    const view = await conversationsApi.create(model.value ?? '', effort.value, temporary.value, { on: toolsOn.value, off: toolsOff.value }, approval.value);
     load(view);
     if (!view.temporary) {
       void conversationsApi.setSession(view.id).catch(() => undefined);
@@ -359,11 +366,12 @@ export const useChatStore = defineStore('chat', () => {
     if (id) void conversationsApi.update(id, { model: model.value ?? '', effort: effort.value }).catch(() => undefined);
   }
 
-  /** Which tools this conversation does without; kept with it. */
-  function chooseTools(off: ToolGroup[]) {
-    toolsOff.value = off;
+  /** The tools this conversation uses (``on``), kept with it as how they differ from Settings' ``defaults``. */
+  function chooseTools(on: ToolGroup[], defaults: ToolGroup[]) {
+    toolsOn.value = TOOL_GROUPS.filter((g) => on.includes(g) && !defaults.includes(g));
+    toolsOff.value = defaults.filter((g) => !on.includes(g));
     const id = conversation.value?.id;
-    if (id) void conversationsApi.update(id, { tools_off: off }).catch(() => undefined);
+    if (id) void conversationsApi.update(id, { tools_on: toolsOn.value, tools_off: toolsOff.value }).catch(() => undefined);
   }
 
   /**
@@ -391,11 +399,11 @@ export const useChatStore = defineStore('chat', () => {
     return texts;
   }
 
-  /** Let this chat's tools run without asking, or ask again; it holds from the next call on, even mid-reply. */
-  function chooseFullAccess(on: boolean) {
-    fullAccess.value = on;
+  /** When this chat's tools ask first; it holds from the next call on, even mid-reply. */
+  function chooseApproval(mode: ApprovalMode) {
+    approval.value = mode;
     const id = conversation.value?.id;
-    if (id) void conversationsApi.update(id, { full_access: on }).catch(() => undefined);
+    if (id) void conversationsApi.update(id, { approval: mode }).catch(() => undefined);
   }
 
   /** The user's answer to a call that waits; the reply's own events show what came of it. */
@@ -438,7 +446,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   return {
-    conversation, messages, leaf, temporary, model, effort, toolsOff, fullAccess, queued, terminals, busy, stage, listChanged, children, path,
-    siblings, leafUnder, load, open, startNew, submit, edit, retry, stop, switchTo, branch, rename, title, choose, chooseTools, chooseFullAccess, steer, takeUnread, approve, refreshTerminals, stopTerminal, forget,
+    conversation, messages, leaf, temporary, model, effort, toolsOff, toolsOn, approval, queued, terminals, busy, stage, listChanged, children, path,
+    siblings, leafUnder, load, open, startNew, submit, edit, retry, stop, switchTo, branch, rename, title, choose, chooseTools, chooseApproval, steer, takeUnread, approve, refreshTerminals, stopTerminal, forget,
   };
 });

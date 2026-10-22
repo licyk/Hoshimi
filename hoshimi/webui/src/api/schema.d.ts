@@ -1674,15 +1674,16 @@ export interface components {
         /** ConversationCreate */
         ConversationCreate: {
             /**
+             * Approval
+             * @default
+             * @enum {string}
+             */
+            approval: "" | "ask" | "auto" | "full";
+            /**
              * Effort
              * @default
              */
             effort: string;
-            /**
-             * Full Access
-             * @default false
-             */
-            full_access: boolean;
             /**
              * Model
              * @default
@@ -1700,6 +1701,8 @@ export interface components {
             title: string;
             /** Tools Off */
             tools_off?: string[];
+            /** Tools On */
+            tools_on?: string[];
         };
         /** ConversationList */
         ConversationList: {
@@ -1711,23 +1714,31 @@ export interface components {
          * @description What to change; a field left out stays as it is. A title set here is the user's own, never replaced.
          */
         ConversationPatch: {
+            /** Approval */
+            approval?: ("" | "ask" | "auto" | "full") | null;
             /** Archived */
             archived?: boolean | null;
             /** Current Leaf */
             current_leaf?: string | null;
             /** Effort */
             effort?: string | null;
-            /** Full Access */
-            full_access?: boolean | null;
             /** Model */
             model?: string | null;
             /** Title */
             title?: string | null;
             /** Tools Off */
             tools_off?: string[] | null;
+            /** Tools On */
+            tools_on?: string[] | null;
         };
         /** ConversationSummary */
         ConversationSummary: {
+            /**
+             * Approval
+             * @default
+             * @enum {string}
+             */
+            approval: "" | "ask" | "auto" | "full";
             /** Archived */
             archived: boolean;
             /** Branched From */
@@ -1736,11 +1747,6 @@ export interface components {
             created_at: number;
             /** Effort */
             effort: string;
-            /**
-             * Full Access
-             * @default false
-             */
-            full_access: boolean;
             /** Id */
             id: string;
             /** Model */
@@ -1756,11 +1762,19 @@ export interface components {
             title_state: "" | "provisional" | "auto" | "user";
             /** Tools Off */
             tools_off: string[];
+            /** Tools On */
+            tools_on: string[];
             /** Updated At */
             updated_at: number;
         };
         /** ConversationView */
         ConversationView: {
+            /**
+             * Approval
+             * @default
+             * @enum {string}
+             */
+            approval: "" | "ask" | "auto" | "full";
             /** Archived */
             archived: boolean;
             /** Branched From */
@@ -1771,11 +1785,6 @@ export interface components {
             current_leaf: string;
             /** Effort */
             effort: string;
-            /**
-             * Full Access
-             * @default false
-             */
-            full_access: boolean;
             /** Id */
             id: string;
             /** Messages */
@@ -1793,6 +1802,8 @@ export interface components {
             title_state: "" | "provisional" | "auto" | "user";
             /** Tools Off */
             tools_off: string[];
+            /** Tools On */
+            tools_on: string[];
             /** Updated At */
             updated_at: number;
         };

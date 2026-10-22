@@ -69,8 +69,9 @@ class Settings:
     # The model that describes images for one that cannot read them (playground.vision_model):
     # "auto" picks one from the catalogue, "off" never asks, anything else is that model.
     playground_vision_model: str = "auto"
-    # The Playground's built-in tools that are turned on (playground.tools): read, apply_patch, shell,
-    # terminal, web_search, web_fetch. None by default: shell and apply_patch act on this machine.
+    # The Playground's built-in tools new conversations start with (playground.tools): read, apply_patch,
+    # shell, terminal, web_search, web_fetch; each conversation turns them on or off for itself. None by
+    # default: shell and apply_patch act on this machine.
     playground_tools: list[str] = field(default_factory=list)
     # Where the tools work (playground.workspace); empty: <data dir>/workspace.
     playground_workspace: str = ""

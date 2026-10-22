@@ -3,7 +3,7 @@ import { computed, type Ref } from 'vue';
 import { authedFetch, readSse } from '@/api/chat';
 import { api, unwrap } from '@/api/client';
 import { keys } from '@/api/queries/keys';
-import type { ApprovalDecision, AttachmentView, MessageView, Notice, ToolGroup, ToolStep, UserStep } from '@/api/types';
+import type { ApprovalDecision, ApprovalMode, AttachmentView, MessageView, Notice, ToolGroup, ToolStep, UserStep } from '@/api/types';
 
 /**
  * The Playground's kept conversations. A conversation is a tree of messages; sending, editing and
@@ -37,10 +37,10 @@ async function stream(path: string, body: unknown, onEvent: (event: ReplyEvent) 
 const path = (id: string) => ({ params: { path: { conversation_id: id } } });
 
 export const conversationsApi = {
-  create: (model: string, effort: string, temporary = false, toolsOff: ToolGroup[] = [], fullAccess = false) =>
-    unwrap(api.POST('/api/v1/playground/conversations', { body: { model, effort, temporary, title: '', tools_off: toolsOff, full_access: fullAccess } })),
+  create: (model: string, effort: string, temporary = false, tools: { on: ToolGroup[]; off: ToolGroup[] } = { on: [], off: [] }, approval: ApprovalMode | '' = '') =>
+    unwrap(api.POST('/api/v1/playground/conversations', { body: { model, effort, temporary, title: '', tools_on: tools.on, tools_off: tools.off, approval } })),
   get: (id: string) => unwrap(api.GET('/api/v1/playground/conversations/{conversation_id}', path(id))),
-  update: (id: string, patch: { title?: string; model?: string; effort?: string; archived?: boolean; current_leaf?: string; tools_off?: ToolGroup[]; full_access?: boolean }) =>
+  update: (id: string, patch: { title?: string; model?: string; effort?: string; archived?: boolean; current_leaf?: string; tools_off?: ToolGroup[]; tools_on?: ToolGroup[]; approval?: ApprovalMode | '' }) =>
     unwrap(api.PATCH('/api/v1/playground/conversations/{conversation_id}', { ...path(id), body: patch })),
   remove: (id: string) => unwrap(api.DELETE('/api/v1/playground/conversations/{conversation_id}', path(id))),
   branch: (id: string, messageId: string) =>

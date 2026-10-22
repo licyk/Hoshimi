@@ -109,9 +109,11 @@ class Conversation:
     updated_at: float
     messages: list[ChatMessage] = field(default_factory=list)
     tools_off: list[str] = field(default_factory=list)
-    """The tools (by their Settings switch) this conversation does without."""
-    full_access: bool = False
-    """Its tools run without asking, whatever ``playground.approval`` says."""
+    """The tools (by their Settings switch) this conversation does without, though Settings turns them on."""
+    tools_on: list[str] = field(default_factory=list)
+    """The tools this conversation uses, though Settings leaves them off."""
+    approval: str = ""
+    """When its tools ask first (``ask``, ``auto`` or ``full``, as ``playground.approval``); empty: as Settings say."""
 
 
 def title_from(text: str) -> str:
@@ -144,14 +146,16 @@ class ConversationStore:
         return [_conversation(row) for row in rows]
 
     def create(
-        self, *, model: str = "", effort: str = "", title: str = "", temporary: bool = False, tools_off: list[str] | None = None, full_access: bool = False,
+        self, *, model: str = "", effort: str = "", title: str = "", temporary: bool = False, tools_off: list[str] | None = None, approval: str = "",
+        tools_on: list[str] | None = None,
     ) -> Conversation:
         now = time.time()
         conversation_id = _id()
         self._db.execute(
-            "INSERT INTO conversations(id, title, title_state, model, effort, archived, temporary, tools_off, full_access, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)",
-            (conversation_id, title_from(title), "user" if title.strip() else "", model, effort, int(temporary), json.dumps(tools_off or []), int(full_access), now, now),
+            "INSERT INTO conversations(id, title, title_state, model, effort, archived, temporary, tools_off, tools_on, approval, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)",
+            (conversation_id, title_from(title), "user" if title.strip() else "", model, effort, int(temporary), json.dumps(tools_off or []), json.dumps(tools_on or []),
+             approval, now, now),
         )
         conversation = self.get(conversation_id)
         assert conversation is not None
@@ -169,7 +173,7 @@ class ConversationStore:
     def update(
         self, conversation_id: str, *, title: str | None = None, title_state: TitleState | None = None, model: str | None = None,
         effort: str | None = None, archived: bool | None = None, current_leaf: str | None = None, tools_off: list[str] | None = None,
-        full_access: bool | None = None,
+        approval: str | None = None, tools_on: list[str] | None = None,
     ) -> Conversation | None:
         """Change what is given; archiving and moving between versions do not count as use.
 
@@ -191,8 +195,10 @@ class ConversationStore:
             changes["archived"] = int(archived)
         if tools_off is not None:
             changes["tools_off"] = json.dumps(list(dict.fromkeys(tools_off)))
-        if full_access is not None:
-            changes["full_access"] = int(full_access)
+        if tools_on is not None:
+            changes["tools_on"] = json.dumps(list(dict.fromkeys(tools_on)))
+        if approval is not None:
+            changes["approval"] = approval
         if current_leaf is not None:
             if self._db.fetchone("SELECT 1 FROM chat_messages WHERE id = ? AND conversation_id = ?", (current_leaf, conversation_id)) is None:
                 raise ValueError(f"No message '{current_leaf}' in this conversation.")
@@ -288,10 +294,10 @@ class ConversationStore:
         assignments = ", ".join(f"{column} = ?" for column in changes)
         self._db.execute(f"UPDATE chat_messages SET {assignments} WHERE id = ?", (*changes.values(), message_id))
 
-    def full_access(self, conversation_id: str) -> bool:
-        """Whether a conversation's tools run without asking (read alone, as each call is about to run)."""
-        row = self._db.fetchone("SELECT full_access FROM conversations WHERE id = ?", (conversation_id,))
-        return bool(row and row["full_access"])
+    def approval(self, conversation_id: str) -> str:
+        """A conversation's own approval mode, empty for Settings' (read alone, as each call is about to run)."""
+        row = self._db.fetchone("SELECT approval FROM conversations WHERE id = ?", (conversation_id,))
+        return str(row["approval"]) if row else ""
 
     def save_steps(self, message_id: str, steps: list[dict[str, Any]], content: str) -> None:
         """Keep a reply's steps so far, while it goes on: a tool's effects are real before the reply ends."""
@@ -316,10 +322,10 @@ class ConversationStore:
         branch_id = _id()
         with self._lock, self._db.transaction(immediate=True) as conn:
             conn.execute(
-                "INSERT INTO conversations(id, title, title_state, model, effort, archived, temporary, branched_from, branched_at, tools_off, full_access, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO conversations(id, title, title_state, model, effort, archived, temporary, branched_from, branched_at, tools_off, tools_on, approval, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (branch_id, source.title, source.title_state, source.model, source.effort, int(source.temporary), source.id, message_id, json.dumps(source.tools_off),
-                 int(source.full_access), now, now),
+                 json.dumps(source.tools_on), source.approval, now, now),
             )
             parent: str | None = None
             for i, m in enumerate(path):
@@ -455,5 +461,6 @@ def _conversation(row: sqlite3.Row, messages: list[ChatMessage] | None = None) -
         id=row["id"], title=row["title"], title_state=row["title_state"], model=row["model"], effort=row["effort"], archived=bool(row["archived"]),
         temporary=bool(row["temporary"]), current_leaf=row["current_leaf"], branched_from=row["branched_from"], branched_at=row["branched_at"],
         created_at=row["created_at"], updated_at=row["updated_at"], messages=messages or [], tools_off=[str(t) for t in _json_list(row["tools_off"])],
-        full_access=bool(row["full_access"]),
+        tools_on=[str(t) for t in _json_list(row["tools_on"])],
+        approval=row["approval"],
     )

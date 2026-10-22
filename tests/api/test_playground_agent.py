@@ -155,6 +155,18 @@ def test_a_station_that_refuses_tools_is_asked_again_without_them(client: Any, p
     assert ["tools" in body for body in provider.seen] == [True, False]
 
 
+def test_a_conversation_can_turn_on_a_tool_settings_leave_off(client: Any, provider: AgentProvider) -> None:
+    cid = _new(client, tools_on=["web_search"], tools_off=["shell", "terminal"])
+    view = client.get(f"/api/v1/playground/conversations/{cid}").json()
+    assert (view["tools_on"], view["tools_off"]) == (["web_search"], ["shell", "terminal"])
+    _send(client, cid, "hi")
+    assert [t["function"]["name"] for t in provider.seen[-1]["tools"]] == ["read", "apply_patch", "web_search"]
+    client.patch(f"/api/v1/playground/conversations/{cid}", json={"tools_on": [], "tools_off": ["read", "apply_patch", "shell", "terminal"]})
+    _send(client, cid, "again")
+    assert "tools" not in provider.seen[-1]
+    assert client.patch(f"/api/v1/playground/conversations/{cid}", json={"tools_on": ["nope"]}).status_code == 400
+
+
 def test_calls_go_as_text_once_tools_are_off(client: Any, provider: AgentProvider) -> None:
     cid = _new(client)
     reply = _send(client, cid, [["read", {"path": "a.txt"}]])[-1]["message"]
@@ -273,7 +285,7 @@ def test_always_inside_the_workspace_is_not_leave_outside_it(asking: Services, t
 @pytest.mark.skipif(os.name == "nt", reason="POSIX shell")
 def test_full_access_runs_everything_without_asking(asking: Services, tmp_path: Any) -> None:
     asking.settings.playground_tools = ["apply_patch", "shell", "read"]
-    conversation = asking.conversations.create(model="agent", full_access=True)
+    conversation = asking.conversations.create(model="agent", approval="full")
     question = asking.conversations.add_message(conversation.id, None, "user", json.dumps([["shell", {"command": "echo free"}], _patch(str(tmp_path / "x.txt")), ["read", {"path": str(tmp_path / "x.txt")}]]))
     assert question is not None
     events = list(PlaygroundRunner(asking).reply(conversation.id, question.id, model="agent", effort=""))
@@ -285,11 +297,33 @@ def test_full_access_runs_everything_without_asking(asking: Services, tmp_path: 
     assert [s["status"] for s in list(again)[-1]["message"].steps if s["type"] == "tool"] == ["done"]
 
 
-def test_full_access_is_kept_with_the_conversation(client: Any) -> None:
-    cid = client.post("/api/v1/playground/conversations", json={"model": "agent", "full_access": True}).json()["id"]
-    assert client.get(f"/api/v1/playground/conversations/{cid}").json()["full_access"] is True
-    assert client.patch(f"/api/v1/playground/conversations/{cid}", json={"full_access": False}).json()["full_access"] is False
-    assert client.get("/api/v1/playground/conversations").json()["conversations"][0]["full_access"] is False
+def test_a_conversation_keeps_its_own_approval_mode(client: Any, services: Services) -> None:
+    cid = client.post("/api/v1/playground/conversations", json={"model": "agent", "approval": "full"}).json()["id"]
+    assert client.get(f"/api/v1/playground/conversations/{cid}").json()["approval"] == "full"
+    runner = PlaygroundRunner(services)
+    assert runner.approval_mode(cid) == "full"
+    assert client.patch(f"/api/v1/playground/conversations/{cid}", json={"approval": "ask"}).json()["approval"] == "ask"
+    assert runner.approval_mode(cid) == "ask"
+    # Empty follows Settings again.
+    assert client.patch(f"/api/v1/playground/conversations/{cid}", json={"approval": ""}).json()["approval"] == ""
+    assert runner.approval_mode(cid) == services.settings.playground_approval == "auto"
+    assert client.patch(f"/api/v1/playground/conversations/{cid}", json={"approval": "never"}).status_code == 422
+
+
+def test_full_access_from_before_becomes_the_full_mode(tmp_path: Any) -> None:
+    import sqlite3
+
+    from hoshimi.core.conversations import ConversationStore
+    from hoshimi.core.db import MIGRATIONS, Database
+
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    for number, script in enumerate(MIGRATIONS[:7], start=1):
+        conn.executescript(f"BEGIN;\n{script}\nPRAGMA user_version = {number};\nCOMMIT;")
+    conn.execute("INSERT INTO conversations(id, title, model, effort, archived, created_at, updated_at, full_access) VALUES ('c1', 't', 'm', '', 0, 1, 1, 1)")
+    conn.commit()
+    conn.close()
+    assert ConversationStore(Database(path)).approval("c1") == "full"
 
 
 def test_an_answer_with_nothing_waiting_is_not_found(client: Any) -> None:

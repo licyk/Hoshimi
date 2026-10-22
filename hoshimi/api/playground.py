@@ -368,9 +368,14 @@ class PlaygroundRunner:
         return prepared
 
     # -- tools -------------------------------------------------------------- #
+    def groups(self, conversation: Conversation) -> list[str]:
+        """The tools a conversation uses: those Settings turns on for new ones, as the conversation turned them on or off."""
+        defaults = self.services.settings.playground_tools
+        return [g for g in GROUPS if (g in defaults or g in conversation.tools_on) and g not in conversation.tools_off]
+
     def tools(self, conversation: Conversation, model: str) -> list[Tool]:
-        """The tools offered to ``model`` in ``conversation``: on in Settings, not turned off here, and none for a model without tool calls."""
-        groups = [g for g in GROUPS if g in self.services.settings.playground_tools and g not in conversation.tools_off]
+        """The tools offered to ``model`` in ``conversation``; none for a model without tool calls."""
+        groups = self.groups(conversation)
         spec = self.services.registry.spec(model)
         if not groups or (spec is not None and spec.tools is False):
             return []
@@ -381,8 +386,8 @@ class PlaygroundRunner:
         return Path(os.path.expanduser(configured)) if configured else self.services.data_dir / "workspace"
 
     def approval_mode(self, conversation_id: str) -> str:
-        """``full`` for a conversation given full access; ``playground.approval`` (``ask``, ``auto`` or ``full``) otherwise."""
-        return "full" if self.store.full_access(conversation_id) else self.services.settings.playground_approval
+        """A conversation's own approval mode (``ask``, ``auto`` or ``full``), or ``playground.approval`` for one that chose none."""
+        return self.store.approval(conversation_id) or self.services.settings.playground_approval
 
     def context(self, conversation_id: str, cancel: threading.Event) -> ToolContext:
         return ToolContext(
@@ -457,7 +462,7 @@ class PlaygroundRunner:
         try:
             tools = self.tools(conversation, model)
             spec = self.services.registry.spec(model)
-            if not tools and spec is not None and spec.tools is False and any(g not in conversation.tools_off for g in self.services.settings.playground_tools):
+            if not tools and spec is not None and spec.tools is False and self.groups(conversation):
                 yield from notice({"kind": "tools-unsupported", "model": model})
             describe = not self.sees_images(model)
             for attempt in range(3):

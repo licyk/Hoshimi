@@ -78,6 +78,10 @@ describe('scrolling areas', () => {
     expect(own).toMatch(/overflow-y:\s*auto/);
     expect(/\n\.app-scroll\.app-scroll-x\s*\{([^}]*)\}/.exec(tokens)![1]).toMatch(/overflow-x:\s*auto;\s*overflow-y:\s*hidden/);
   });
+  // ``contain`` down as well would keep a vertical swipe that lands on a table or a code block from scrolling the page.
+  it('pass on vertical swipes when they scroll sideways', () => {
+    expect(/\n\.app-scroll\.app-scroll-x\s*\{([^}]*)\}/.exec(tokens)![1]).toMatch(/overscroll-behavior-y:\s*auto/);
+  });
   /*
    * A rule that set margins on whatever an area held overrode the components' own, and each one it
    * met in turn (a page, a menu item, the Playground's column) overflowed by the lane.

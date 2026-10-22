@@ -21,7 +21,7 @@ vi.mock('@/ui', async (importOriginal) => ({ ...(await importOriginal<typeof imp
 
 // -- a server in memory: conversations as trees, replies streamed by the test -----------------
 interface Msg { id: string; parent_id: string | null; role: 'user' | 'assistant'; content: string; model: string; effort: string; status: string; error: string; notices: { kind: string; name: string; model: string }[]; created_at: number; attachments: unknown[]; reasoning?: string; reasoning_ms?: number; steps?: unknown[] }
-interface Conv { id: string; title: string; title_state: string; model: string; effort: string; archived: boolean; temporary: boolean; branched_from: string; created_at: number; updated_at: number; current_leaf: string; messages: Msg[]; tools_off?: string[]; full_access?: boolean }
+interface Conv { id: string; title: string; title_state: string; model: string; effort: string; archived: boolean; temporary: boolean; branched_from: string; created_at: number; updated_at: number; current_leaf: string; messages: Msg[]; tools_off?: string[]; tools_on?: string[]; approval?: string }
 let server: { conversations: Map<string, Conv>; session: string | null; calls: { method: string; path: string; body: unknown }[]; ids: number; clock: number; terminals?: unknown[]; steerOpen?: boolean };
 /** The reply streams the test has not yet finished: it writes their events and closes them. */
 let streams: { send: (event: object) => void; close: () => void; signal: AbortSignal }[];
@@ -66,10 +66,10 @@ async function handle(input: RequestInfo | URL, init?: RequestInit): Promise<Res
     return json({ id: `a${++server.ids}`, kind: 'file', name: url.searchParams.get('name'), mime: url.searchParams.get('type') || 'text/plain', size: text.length, width: null, height: null }, 201);
   }
   if (kind === 'conversations' && !id && request.method === 'POST') {
-    const b = body as { model: string; effort: string; temporary: boolean; tools_off?: string[]; full_access?: boolean };
+    const b = body as { model: string; effort: string; temporary: boolean; tools_off?: string[]; tools_on?: string[]; approval?: string };
     const conv: Conv = {
       id: `c${++server.ids}`, title: '', title_state: '', model: b.model, effort: b.effort, archived: false, temporary: b.temporary, branched_from: '', created_at: 1, updated_at: 1,
-      current_leaf: '', messages: [], tools_off: b.tools_off ?? [], full_access: !!b.full_access,
+      current_leaf: '', messages: [], tools_off: b.tools_off ?? [], tools_on: b.tools_on ?? [], approval: b.approval ?? '',
     };
     server.conversations.set(conv.id, conv);
     return json(conv, 201);
@@ -166,7 +166,7 @@ describe('Playground chat', () => {
     const { wrapper } = await openPlayground();
     expect(wrapper.text()).toContain('What can I help with?');
     await ask(wrapper, 'What is **this**?');
-    expect(calls('POST', /^\/conversations$/)[0].body).toEqual({ model: 'test/model', effort: '', temporary: false, title: '', tools_off: [], full_access: false });
+    expect(calls('POST', /^\/conversations$/)[0].body).toEqual({ model: 'test/model', effort: '', temporary: false, title: '', tools_on: [], tools_off: [], approval: '' });
     expect(server.session).toBe('c1');
     expect(wrapper.find('.assistant-message').text()).toContain('Answering…');
     await answer('It is a **gateway**.');
@@ -414,27 +414,63 @@ describe('Playground chat', () => {
     wrapper.unmount();
   });
 
-  it('gives one chat full access from the composer, and takes it back', async () => {
+  it('lists every tool in the composer, each with a switch for this chat', async () => {
+    state.tools = ['read', 'shell'];
+    const { wrapper } = await openPlayground();
+    expect(wrapper.find('.tools-menu').text()).toContain('2');
+    await wrapper.find('.tools-menu button').trigger('click');
+    await flushPromises();
+    const switches = () => [...document.body.querySelectorAll<HTMLElement>('.menu [role="switch"]')];
+    expect(switches().map((s) => [s.querySelector('.name')!.textContent, s.getAttribute('aria-checked')])).toEqual([
+      ['Read files', 'true'], ['Edit files', 'false'], ['Run commands', 'true'], ['Background commands', 'false'], ['Search the web', 'false'], ['Read web pages', 'false'],
+    ]);
+    // On a new chat, one Settings leaves off is turned on, one it turns on is turned off.
+    switches()[4].click();
+    switches()[2].click();
+    await flushPromises();
+    expect(switches().map((s) => s.getAttribute('aria-checked'))).toEqual(['true', 'false', 'false', 'false', 'true', 'false']);
+    await ask(wrapper, 'look it up');
+    await answer('Found.');
+    expect(calls('POST', /^\/conversations$/)[0].body).toMatchObject({ tools_on: ['web_search'], tools_off: ['shell'] });
+    // In a chat that exists, the change is kept with it.
+    await wrapper.find('.tools-menu button').trigger('click');
+    await flushPromises();
+    switches()[1].click();
+    await flushPromises();
+    expect(calls('PATCH', /^\/conversations\/c\d+$/).map((c) => c.body)).toContainEqual({ tools_on: ['apply_patch', 'web_search'], tools_off: ['shell'] });
+    state.tools = [];
+    wrapper.unmount();
+  });
+
+  it('sets when the chat\'s tools ask first from a menu in the composer', async () => {
     state.tools = ['shell'];
     const { wrapper } = await openPlayground();
-    const shield = () => wrapper.find('.full-access button');
-    expect(shield().attributes('aria-pressed')).toBe('false');
-    await shield().trigger('click');
-    expect(shield().attributes('aria-pressed')).toBe('true');
-    expect(shield().text()).toBe('Full access');
+    const chip = () => wrapper.find('.approval-menu button');
+    // A new chat starts as Settings say.
+    expect(chip().text()).toBe('Ask');
+    await chip().trigger('click');
+    await flushPromises();
+    const options = () => [...document.body.querySelectorAll<HTMLElement>('.menu [role="option"]')];
+    expect(options().map((o) => [o.querySelector('.name')!.textContent, o.getAttribute('aria-selected')])).toEqual([
+      ['Ask first', 'true'], ['Ask outside the workspace', 'false'], ['Full access', 'false'],
+    ]);
+    options()[2].click();
+    await flushPromises();
+    expect(chip().text()).toBe('Full access');
+    expect(chip().classes()).toContain('danger');
     // A new chat is created with it; a chat that exists keeps the change.
     await ask(wrapper, 'go');
     await answer('Went.');
-    expect((calls('POST', /^\/conversations$/)[0].body as { full_access: boolean }).full_access).toBe(true);
-    await shield().trigger('click');
+    expect((calls('POST', /^\/conversations$/)[0].body as { approval: string }).approval).toBe('full');
+    await chip().trigger('click');
     await flushPromises();
-    expect(calls('PATCH', /^\/conversations\/c\d+$/).map((c) => c.body)).toContainEqual({ full_access: false });
-    // The next new chat asks again.
-    await shield().trigger('click');
+    options()[1].click();
+    await flushPromises();
+    expect(calls('PATCH', /^\/conversations\/c\d+$/).map((c) => c.body)).toContainEqual({ approval: 'auto' });
+    expect(chip().text()).toBe('Auto');
+    // The next new chat starts as Settings say again.
     await wrapper.find('.chat-header .corner').trigger('click');
-    expect(shield().attributes('aria-pressed')).toBe('false');
-    // Other chips are not switches.
-    expect(wrapper.find('.composer .model button').attributes('aria-pressed')).toBeUndefined();
+    expect(chip().text()).toBe('Ask');
     state.tools = [];
     wrapper.unmount();
   });

@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { BASE_URL } from '@/api/baseUrl';
 import { conversationsApi, rememberAttachment, useRefreshConversations } from '@/api/conversations';
 import { useModelSpecs, useModels, useSettings } from '@/api/queries/app';
-import { TOOL_GROUPS, type ApprovalDecision, type AttachmentView, type ConversationSummary, type MessageView, type ToolGroup, type ToolStep } from '@/api/types';
+import { APPROVAL_MODES, TOOL_GROUPS, type ApprovalDecision, type ApprovalMode, type AttachmentView, type ConversationSummary, type MessageView, type ToolGroup, type ToolStep } from '@/api/types';
 import CatalogStatus from '@/components/CatalogStatus.vue';
 import AssistantMessage from '@/components/chat/AssistantMessage.vue';
 import AttachmentPreview from '@/components/chat/AttachmentPreview.vue';
@@ -70,22 +70,17 @@ const effortOptions = computed(() => [{ value: '', label: t('playground.effortAu
 const effortText = computed(() => (chat.effort ? effortOptions.value.find((o) => o.value === chat.effort)?.label : t('playground.effortAutoShort')));
 
 // -- tools ---------------------------------------------------------------------
-// The tools Settings turned on, less the ones this chat does without.
+// Every tool, each switched on or off for this chat; a new chat starts with the ones Settings turns on.
 const settings = useSettings();
-const enabledTools = computed(() => TOOL_GROUPS.filter((g) => settings.data.value?.playground.tools.includes(g)));
-const toolOptions = computed(() => enabledTools.value.map((g) => ({ value: g, label: t(`playground.toolNames.${g}`) })));
-const toolsOn = computed(() => enabledTools.value.filter((g) => !chat.toolsOff.includes(g)));
-function chooseTools(on: string[]) {
-  // A tool off in Settings keeps this chat's own choice for when it is turned back on.
-  const offElsewhere = chat.toolsOff.filter((g) => !enabledTools.value.includes(g));
-  chat.chooseTools([...offElsewhere, ...enabledTools.value.filter((g) => !on.includes(g))] as ToolGroup[]);
-}
-// Full access: this chat's tools run without asking. Settings can give it to every chat, and then it stays on here.
-const fullAccessEverywhere = computed(() => settings.data.value?.playground.approval === 'full');
-const fullAccessOn = computed(() => fullAccessEverywhere.value || chat.fullAccess);
-const fullAccessLabel = computed(() =>
-  fullAccessEverywhere.value ? t('playground.fullAccessEverywhere') : chat.fullAccess ? t('playground.fullAccessOn') : t('playground.fullAccessOff'),
-);
+const defaultTools = computed(() => TOOL_GROUPS.filter((g) => settings.data.value?.playground.tools.includes(g)));
+const toolOptions = computed(() => TOOL_GROUPS.map((g) => ({ value: g, label: t(`playground.toolNames.${g}`), description: t(`settings.toolHelp.${g}`) })));
+const toolsOn = computed(() => TOOL_GROUPS.filter((g) => (defaultTools.value.includes(g) || chat.toolsOn.includes(g)) && !chat.toolsOff.includes(g)));
+const chooseTools = (on: string[]) => chat.chooseTools(on as ToolGroup[], defaultTools.value);
+// When this chat's tools ask first: as Settings say until the chat chooses for itself.
+const defaultApproval = computed<ApprovalMode>(() => settings.data.value?.playground.approval ?? 'ask');
+const approval = computed<ApprovalMode>(() => chat.approval || defaultApproval.value);
+const approvalOptions = computed(() => APPROVAL_MODES.map((m) => ({ value: m, label: t(`settings.approvalModes.${m}`), description: t(`settings.approvalModesHelp.${m}`) })));
+const APPROVAL_ICONS = { ask: icons.Shield, auto: icons.ShieldCheck, full: icons.ShieldOff };
 // Steering: while a reply with tools runs, what is written goes to it, read at its next round.
 const steerable = computed(() => chat.busy && !!chat.conversation && toolsOn.value.length > 0);
 async function steerNow() {
@@ -124,6 +119,8 @@ const root = ref<HTMLElement | null>(null);
 const width = useElementWidth(root, 1280);
 /** Room for the sidebar beside the chat; on a narrower page it is a drawer. */
 const wide = computed(() => width.value >= 900);
+/** A phone's width: a long menu stands centred over the composer rather than over its button. */
+const phone = computed(() => width.value < 600);
 const SIDEBAR_KEY = 'hoshimi:playground-sidebar';
 const sidebarOpen = ref(readSidebar());
 function readSidebar() {
@@ -575,7 +572,7 @@ onBeforeUnmount(() => {
             <input ref="fileInput" class="file-input" type="file" multiple tabindex="-1" aria-hidden="true" @change="onPick" />
             <ComposerMenu
               class="model"
-              align="center"
+              :align="phone ? 'center' : 'start'"
               :model-value="chat.model"
               :label="t('playground.model')"
               :options="modelOptions"
@@ -600,7 +597,6 @@ onBeforeUnmount(() => {
               @update:model-value="(e) => chat.choose({ effort: e ?? '' })"
             />
             <ComposerMenu
-              v-if="toolOptions.length"
               class="tools-menu"
               multiple
               :values="toolsOn"
@@ -612,15 +608,17 @@ onBeforeUnmount(() => {
               :disabled="chat.busy"
               @update:values="chooseTools"
             />
-            <ChipButton
-              v-if="toolOptions.length"
-              class="full-access"
-              :icon="fullAccessOn ? icons.ShieldOff : icons.Shield"
-              :text="fullAccessOn ? t('playground.fullAccess') : ''"
-              :label="fullAccessLabel"
-              :pressed="fullAccessOn"
-              :disabled="fullAccessEverywhere"
-              @click="chat.chooseFullAccess(!chat.fullAccess)"
+            <ComposerMenu
+              v-if="toolsOn.length"
+              class="approval-menu"
+              :model-value="approval"
+              :icon="APPROVAL_ICONS[approval]"
+              :label="t('settings.approval')"
+              :hint="t('playground.approvalHint', { mode: t(`settings.approvalModes.${defaultApproval}`) })"
+              :text="t(`playground.approvalShort.${approval}`)"
+              :options="approvalOptions"
+              :danger="approval === 'full'"
+              @update:model-value="(m) => m && chat.chooseApproval(m as ApprovalMode)"
             />
           </template>
         </Composer>
@@ -708,17 +706,17 @@ onBeforeUnmount(() => {
 .dock { display: flex; flex-direction: column; gap: var(--app-space-2); flex: none; width: min(100%, var(--column)); align-self: center; }
 .tray { display: flex; flex-wrap: wrap; gap: var(--app-space-2); padding: var(--app-space-3) var(--app-space-4) 0; }
 .file-input { display: none; }
-.attach, .effort, .tools-menu, .full-access { flex: none; }
+.attach, .effort, .tools-menu, .approval-menu { flex: none; }
 /* A message sent to the reply under way, waiting for its next round: a question's bubble, faded. */
 .queued { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 .queued .bubble {
   max-width: min(85%, 560px); margin: 0; padding: var(--app-space-2) var(--app-space-4); border-radius: 20px;
   background: var(--md-sys-color-surface-container-high); white-space: pre-wrap; overflow-wrap: anywhere; opacity: 0.6;
 }
-/* On a phone the shield says "full access" by its colour alone: the model's name needs the room. */
+/* On a phone the shield says how tools ask by its look alone (red for full access): the model's name needs the room. */
 @media (max-width: 599px) {
-  .full-access :deep(.text) { display: none; }
-  .full-access :deep(.face) { justify-content: center; width: 32px; padding: 0; }
+  .approval-menu :deep(.text), .approval-menu :deep(.chevron) { display: none; }
+  .approval-menu :deep(.face) { justify-content: center; width: 32px; padding: 0; }
 }
 .terminals { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: var(--app-space-2) var(--app-space-3) 0 var(--app-space-4); list-style: none; }
 .terminal { display: flex; align-items: center; gap: var(--app-space-2); min-width: 0; }

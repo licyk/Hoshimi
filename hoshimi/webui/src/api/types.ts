@@ -43,6 +43,9 @@ export type ToolStep = {
 };
 export type Step = ReasoningStep | TextStep | ToolStep | UserStep;
 export type ApprovalDecision = 'allow' | 'always' | 'deny';
+/** When tools ask first: before commands, edits and anything outside the workspace; only outside it; never. */
+export type ApprovalMode = 'ask' | 'auto' | 'full';
+export const APPROVAL_MODES: ApprovalMode[] = ['ask', 'auto', 'full'];
 export type ProviderSummary = S['ProviderSummary'];
 export type ModelList = S['ModelList'];
 export type ModelObject = S['ModelObject'];

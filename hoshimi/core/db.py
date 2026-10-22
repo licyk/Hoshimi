@@ -247,6 +247,15 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE conversations ADD COLUMN full_access INTEGER NOT NULL DEFAULT 0;
     """,
+    # 7: the tools a conversation turned on that Settings leaves off for new ones.
+    """
+    ALTER TABLE conversations ADD COLUMN tools_on TEXT NOT NULL DEFAULT '[]';
+    """,
+    # 8: a conversation's own approval mode (empty: Settings'), in place of full access alone; full_access stays, unread.
+    """
+    ALTER TABLE conversations ADD COLUMN approval TEXT NOT NULL DEFAULT '';
+    UPDATE conversations SET approval = 'full' WHERE full_access = 1;
+    """,
 ]
 
 

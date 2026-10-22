@@ -75,7 +75,7 @@ Messages 详见 [Anthropic Agent 接入](anthropic-api.zh-CN.md)。
 | `/stats/calls` | 保留期内的全部调用记录，新的在前；支持 `limit`、`before` 游标，`model`/`provider`/`account`/`origin`/`ok` 筛选，`since`/`until`（带时区的 ISO 8601，`until` 不含）以及 `q`（在模型、供应商、账户、错误代码/信息、结束原因中不区分大小写地搜索） |
 | `/stats/live` | SSE：先发送进行中调用的快照，再推送 `started`/`progress`/`finished` 事件 |
 | `/playground/*` | 使用工具密钥聊天，不暴露模型 API 密钥；请求没有 system 消息时，先发送 `playground.system_prompt` |
-| `/playground/conversations` | 保存的对话，每个对话是一棵消息树：列出（`?archived=true` 为归档；临时对话不会列出）、创建（`temporary`）；`/{id}` 获取、`PATCH`（标题、模型、推理强度、归档，`current_leaf` 切换版本，`tools_off` 为该对话不使用的工具，`full_access` 让其工具无需询问即可运行）、`DELETE` |
+| `/playground/conversations` | 保存的对话，每个对话是一棵消息树：列出（`?archived=true` 为归档；临时对话不会列出）、创建（`temporary`）；`/{id}` 获取、`PATCH`（标题、模型、推理强度、归档，`current_leaf` 切换版本，`tools_on`、`tools_off` 为该对话相对 `playground.tools` 开启或关闭的工具，`approval` 为该对话自己的审批模式——`ask`、`auto`、`full`，留空则使用 `playground.approval`）、`DELETE` |
 | `/playground/conversations/{id}/messages` | 在 `parent_id` 之后发送问题（编辑即在被编辑消息的父消息之后发送），以 Server-Sent Events 流式返回回复：`user`、`assistant`，然后是 `stage`、`notice`、`reasoning`（模型展示的推理内容）、`delta`，最后 `done`；`/{message_id}/retry` 流式生成另一条回复；`/{message_id}/request` 返回该回复对应的 Chat Completions 请求。启用工具（`playground.tools`）时，回复是一个智能体循环：`tool` 事件携带每次调用的最新状态（`pending`、`waiting` 等待批准、`running`、`done`、`error`、`denied`、`stopped`），保存的回复按顺序记录 `steps`（推理、文本和工具调用）。没有其他内容时，每 2 秒发送一次 `: ping` 注释 |
 | `/playground/conversations/{id}/steer`（`POST`） | 向正在进行的回复（启用了工具）发送 `{"content": "…"}` 而不停止它：回复在下一轮（当前工具调用完成后）读取，并以带返回 `id` 的 `steer` 事件（`user` 步骤）出现。在模型收尾时发送的消息会让回复继续一轮来回应。没有可接收消息的回复时返回 `409` |
 | `/playground/conversations/{id}/approvals/{call_id}`（`POST`） | 答复等待批准的调用：`{"decision": "allow" \| "always" \| "deny"}`（`always` 在服务重启前对此对话中的该工具生效） |
