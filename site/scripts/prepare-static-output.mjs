@@ -23,7 +23,7 @@ await copyFile(join(publicDirectory, "_shell.html"), join(publicDirectory, "404.
 
 // One sitemap for search engines, on the canonical (Netlify) address whichever host builds it:
 // the GitHub Pages copy points its pages there too.
-const siteUrl = (process.env.VITE_SITE_URL || "https://hoshimi.netlify.app").replace(/\/+$/, "");
+const siteUrl = (process.env.VITE_SITE_URL || "https://hoshimi-dev.netlify.app").replace(/\/+$/, "");
 const urls = ["/", ...documentSlugs.map((slug) => (slug === "index" ? "/docs" : `/docs/${slug}`))];
 await writeFile(
   join(publicDirectory, "sitemap.xml"),

@@ -72,7 +72,7 @@ const footer = computed<NavItem[]>(() => [{ to: addressOf('settings'), label: t(
 const NEXT_THEME = { light: 'dark', dark: 'system', system: 'light' } as const;
 const cycleTheme = () => (prefs.prefs.theme = NEXT_THEME[prefs.prefs.theme]);
 // The documentation site, which shows itself in the browser's language.
-const DOCS_URL = 'https://hoshimi.netlify.app/docs';
+const DOCS_URL = 'https://hoshimi-dev.netlify.app/docs';
 const themeIcon = computed(() => ({ light: icons.Sun, dark: icons.Moon, system: icons.SunMoon })[prefs.prefs.theme]);
 const running = computed(() => live.active.length);
 const liveLabel = computed(() => (running.value ? t('live.chip', { n: running.value }) : t('live.idle')));

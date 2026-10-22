@@ -124,7 +124,7 @@ const motions = computed(() => (['system', 'reduced'] as const).map((v) => ({ va
 // About
 const openDocs = () => window.open(`${BASE_URL}/docs`, '_blank', 'noopener');
 /** The documentation site: how to use and configure Hoshimi, beyond this page. */
-const DOCUMENTATION_URL = 'https://hoshimi.netlify.app/docs';
+const DOCUMENTATION_URL = 'https://hoshimi-dev.netlify.app/docs';
 const openDocumentation = () => window.open(DOCUMENTATION_URL, '_blank', 'noopener');
 async function copy(text: string) {
   try {

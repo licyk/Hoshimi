@@ -144,7 +144,7 @@ Uploads use a PyPI API token: set `TWINE_PASSWORD` in the `pypi` environment or 
 
 This site (`site/`) is deployed separately from the distribution:
 
-- **Netlify** (the main site, [hoshimi.netlify.app](https://hoshimi.netlify.app)): builds `site/` on every push to `main`, configured by `netlify.toml` at the repository root; it skips the build when `site/` did not change.
+- **Netlify** (the main site, [hoshimi-dev.netlify.app](https://hoshimi-dev.netlify.app)): builds `site/` on every push to `main`, configured by `netlify.toml` at the repository root; it skips the build when `site/` did not change.
 - **GitHub Pages** (the backup, [licyk.github.io/Hoshimi](https://licyk.github.io/Hoshimi/)): `.github/workflows/site.yml` builds the site with `VITE_BASE_PATH=/Hoshimi/` and publishes it with GitHub's official Pages actions. Pages on the backup carry a canonical link to the Netlify site.
 - CI's shared checks also type-check, test and build the documentation site, so a change that breaks the site's build does not pass CI.
 

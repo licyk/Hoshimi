@@ -4,9 +4,9 @@ import { analyticsScripts, canonicalUrl, commentsTerm, UMAMI } from "@/lib/site-
 
 describe("canonical addresses", () => {
   it("name the Netlify site, whichever host serves the copy", () => {
-    expect(canonicalUrl("/")).toBe("https://hoshimi.netlify.app/");
-    expect(canonicalUrl("/docs/quick-start")).toBe("https://hoshimi.netlify.app/docs/quick-start");
-    expect(canonicalUrl("docs/quick-start/")).toBe("https://hoshimi.netlify.app/docs/quick-start");
+    expect(canonicalUrl("/")).toBe("https://hoshimi-dev.netlify.app/");
+    expect(canonicalUrl("/docs/quick-start")).toBe("https://hoshimi-dev.netlify.app/docs/quick-start");
+    expect(canonicalUrl("docs/quick-start/")).toBe("https://hoshimi-dev.netlify.app/docs/quick-start");
   });
 });
 
@@ -21,7 +21,7 @@ describe("analytics", () => {
   it("load in production builds only, counted on the site's own domains", () => {
     expect(analyticsScripts(false)).toEqual([]);
     expect(analyticsScripts(true)).toEqual([
-      { src: UMAMI.src, defer: true, "data-website-id": UMAMI.websiteId, "data-domains": "hoshimi.netlify.app,licyk.github.io" },
+      { src: UMAMI.src, defer: true, "data-website-id": UMAMI.websiteId, "data-domains": "hoshimi-dev.netlify.app,licyk.github.io" },
     ]);
   });
 });

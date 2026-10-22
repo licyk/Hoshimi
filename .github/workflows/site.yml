@@ -1,5 +1,5 @@
 # Builds the documentation site (site/) and publishes it to GitHub Pages at https://licyk.github.io/Hoshimi/,
-# a copy of https://hoshimi.netlify.app (which Netlify builds itself, see netlify.toml). The pages name the
+# a copy of https://hoshimi-dev.netlify.app (which Netlify builds itself, see netlify.toml). The pages name the
 # Netlify address as canonical. A push that changes nothing the site is built from deploys nothing.
 # Settings › Pages › Source must be "GitHub Actions".
 name: Documentation site
