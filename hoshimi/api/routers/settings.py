@@ -72,6 +72,12 @@ def network_view(raw: dict[str, Any], default: str = "auto") -> NetworkView:
     return NetworkView(mode=raw.get("mode", default), proxy_configured=bool(raw.get("proxy")), system_proxy=bool(raw.get("system_proxy")))
 
 
+class PlaygroundSettingsView(Record):
+    """``playground.*``: ``system_prompt`` goes first in every Playground conversation; empty sends none."""
+
+    system_prompt: str = ""
+
+
 class SettingsView(Record):
     """Settings as returned to clients: only key presence is disclosed.
 
@@ -89,6 +95,7 @@ class SettingsView(Record):
     server: ServerView
     providers: list[ProviderView]
     network: NetworkView = Field(default_factory=NetworkView)
+    playground: PlaygroundSettingsView = Field(default_factory=PlaygroundSettingsView)
     restart_required: bool = False
     listening: ListeningView | None = None
 
@@ -112,6 +119,7 @@ def _view(services: Services, request: Request | None = None) -> SettingsView:
         listening=listening_view(request.app.state) if request is not None else None,
         config_path=str(services.config_path),
         network=network_view(settings.network.as_dict()),
+        playground=PlaygroundSettingsView(system_prompt=settings.playground_system_prompt),
         server=ServerView(
             host=settings.host,
             port=settings.port,

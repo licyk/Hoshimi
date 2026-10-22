@@ -78,7 +78,9 @@ Management uses the tool access key under `/api/v1/*`.
 | `/stats/days` | Every local day with usage (`date`, `calls`, `tokens`, `failed`), oldest first, plus `first` and `today` — for a calendar |
 | `/stats/calls` | Recorded calls over the whole retention, newest first; `limit`, `before` cursor, `model`/`provider`/`account`/`origin`/`ok` filters, `since`/`until` (ISO 8601 with offset; until exclusive) and `q` (case-insensitive text in model, provider, account, error code/message, finish reason) |
 | `/stats/live` | SSE: a snapshot of calls in flight, then `started`/`progress`/`finished` events |
-| `/playground/*` | Tool-authenticated chat without exposing the model API key |
+| `/playground/*` | Tool-authenticated chat without exposing the model API key; `playground.system_prompt` goes first unless the request has a system message |
+| `/playground/conversations` | Kept conversations: list (`?archived=true` for the archive), create; `/{id}` get, `PATCH` (title, model, effort, archived), `DELETE`; `/{id}/messages` append |
+| `/playground/session` | `GET`/`PUT` the conversation open last, which the Playground reopens on start |
 
 The running server's `/docs` and `/openapi.json` are the authoritative field and
 method reference. Both are protected by the tool access key when configured.

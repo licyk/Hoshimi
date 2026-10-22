@@ -344,8 +344,70 @@ export interface paths {
         /**
          * Create Playground Chat Completion
          * @description The Chat Completions route, filed under its own origin so a test from the web UI is not a client's call.
+         *
+         *     The system prompt from Settings (``playground.system_prompt``) goes first,
+         *     unless the request brings a system message of its own. It is added here,
+         *     per request, rather than kept in each conversation: a change in Settings
+         *     applies to every conversation from its next message on.
          */
         post: operations["create_playground_chat_completion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/playground/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Conversations */
+        get: operations["list_conversations"];
+        put?: never;
+        /** Create Conversation */
+        post: operations["create_conversation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/playground/conversations/{conversation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Conversation */
+        get: operations["get_conversation"];
+        put?: never;
+        post?: never;
+        /** Delete Conversation */
+        delete: operations["delete_conversation"];
+        options?: never;
+        head?: never;
+        /** Update Conversation */
+        patch: operations["update_conversation"];
+        trace?: never;
+    };
+    "/api/v1/playground/conversations/{conversation_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Append Message
+         * @description Add a message at the end. The first user message titles an untitled conversation; any message unarchives it.
+         */
+        post: operations["append_conversation_message"];
         delete?: never;
         options?: never;
         head?: never;
@@ -371,6 +433,24 @@ export interface paths {
          */
         get: operations["list_playground_models"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/playground/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Session */
+        get: operations["get_playground_session"];
+        /** Set Session */
+        put: operations["set_playground_session"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1343,6 +1423,79 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** ConversationCreate */
+        ConversationCreate: {
+            /**
+             * Effort
+             * @default
+             */
+            effort: string;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+        };
+        /** ConversationList */
+        ConversationList: {
+            /** Conversations */
+            conversations: components["schemas"]["ConversationSummary"][];
+        };
+        /**
+         * ConversationPatch
+         * @description What to change; a field left out stays as it is.
+         */
+        ConversationPatch: {
+            /** Archived */
+            archived?: boolean | null;
+            /** Effort */
+            effort?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Title */
+            title?: string | null;
+        };
+        /** ConversationSummary */
+        ConversationSummary: {
+            /** Archived */
+            archived: boolean;
+            /** Created At */
+            created_at: number;
+            /** Effort */
+            effort: string;
+            /** Id */
+            id: string;
+            /** Model */
+            model: string;
+            /** Title */
+            title: string;
+            /** Updated At */
+            updated_at: number;
+        };
+        /** ConversationView */
+        ConversationView: {
+            /** Archived */
+            archived: boolean;
+            /** Created At */
+            created_at: number;
+            /** Effort */
+            effort: string;
+            /** Id */
+            id: string;
+            /** Messages */
+            messages: components["schemas"]["MessageView"][];
+            /** Model */
+            model: string;
+            /** Title */
+            title: string;
+            /** Updated At */
+            updated_at: number;
+        };
         /**
          * CooledAccount
          * @description One account held out of rotation, with the refusal that held it.
@@ -1654,6 +1807,21 @@ export interface components {
              */
             waiting_for: string;
         };
+        /** MessageCreate */
+        MessageCreate: {
+            /** Content */
+            content: string;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+        };
         /** MessageResponse */
         MessageResponse: {
             /** Content */
@@ -1690,6 +1858,23 @@ export interface components {
             input_tokens: number;
             /** Output Tokens */
             output_tokens: number;
+        };
+        /** MessageView */
+        MessageView: {
+            /** Content */
+            content: string;
+            /** Created At */
+            created_at: number;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
         };
         /** ModelList */
         ModelList: {
@@ -1895,6 +2080,17 @@ export interface components {
             updated_at: number;
         };
         /**
+         * PlaygroundSettingsView
+         * @description ``playground.*``: ``system_prompt`` goes first in every Playground conversation; empty sends none.
+         */
+        PlaygroundSettingsView: {
+            /**
+             * System Prompt
+             * @default
+             */
+            system_prompt: string;
+        };
+        /**
          * ProbeRequest
          * @description `models` omitted probes every default lane; an empty list does the same.
          */
@@ -2069,6 +2265,22 @@ export interface components {
             strict_port: boolean;
         };
         /**
+         * Session
+         * @description The conversation open last, so the Playground can return to it; None for a new one.
+         */
+        "Session-Input": {
+            /** Conversation Id */
+            conversation_id?: string | null;
+        };
+        /**
+         * Session
+         * @description The conversation open last, so the Playground can return to it; None for a new one.
+         */
+        "Session-Output": {
+            /** Conversation Id */
+            conversation_id: string | null;
+        };
+        /**
          * SettingsView
          * @description Settings as returned to clients: only key presence is disclosed.
          *
@@ -2087,6 +2299,7 @@ export interface components {
             data_dir: string;
             listening: components["schemas"]["ListeningView"] | null;
             network: components["schemas"]["NetworkView"];
+            playground: components["schemas"]["PlaygroundSettingsView"];
             /** Providers */
             providers: components["schemas"]["ProviderView"][];
             /**
@@ -3067,6 +3280,345 @@ export interface operations {
             };
         };
     };
+    list_conversations: {
+        parameters: {
+            query?: {
+                /** @description The archive instead of the recent ones */
+                archived?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_conversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_conversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationView"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_conversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_conversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationSummary"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    append_conversation_message: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MessageCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageView"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_playground_models: {
         parameters: {
             query?: {
@@ -3085,6 +3637,95 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModelList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_playground_session: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session-Output"];
+                };
+            };
+        };
+    };
+    set_playground_session: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Session-Input"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session-Output"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */

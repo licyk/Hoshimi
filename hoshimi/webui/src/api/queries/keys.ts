@@ -13,6 +13,8 @@ export const keys = {
   usageDays: ['stats', 'days'] as const,
   calls: (filters: Record<string, unknown>) => ['stats', 'calls', filters] as const,
   probe: ['probe'] as const,
+  conversations: ['playground', 'conversations'] as const,
+  conversationList: (archived: boolean) => ['playground', 'conversations', archived ? 'archived' : 'recent'] as const,
   channels: ['channels'] as const,
   balances: ['credits', 'balances'] as const,
   refresh: ['refresh', 'status'] as const,

@@ -1,4 +1,4 @@
-"""SQLite storage for what the gateway records: usage, check-in history, probe verdicts.
+"""SQLite storage for what the gateway records: usage, check-in history, probe verdicts, conversations.
 
 One file, ``hoshimi.db`` in the data directory, replaces the JSON stores that
 used to be rewritten whole on every change (``stats.json``, ``checkin.json``,
@@ -156,6 +156,28 @@ MIGRATIONS: list[str] = [
         model          TEXT PRIMARY KEY,
         result         TEXT NOT NULL
     );
+    """,
+    # 2: Playground conversations and their messages (hoshimi.core.conversations).
+    """
+    CREATE TABLE conversations (
+        id             TEXT    PRIMARY KEY,
+        title          TEXT    NOT NULL DEFAULT '',
+        model          TEXT    NOT NULL DEFAULT '',
+        effort         TEXT    NOT NULL DEFAULT '',
+        archived       INTEGER NOT NULL DEFAULT 0,
+        created_at     REAL    NOT NULL,
+        updated_at     REAL    NOT NULL
+    );
+    CREATE INDEX conversations_recent ON conversations(archived, updated_at);
+    CREATE TABLE conversation_messages (
+        conversation_id TEXT    NOT NULL,
+        position        INTEGER NOT NULL,
+        role            TEXT    NOT NULL,
+        content         TEXT    NOT NULL,
+        model           TEXT    NOT NULL DEFAULT '',
+        created_at      REAL    NOT NULL,
+        PRIMARY KEY (conversation_id, position)
+    ) WITHOUT ROWID;
     """,
 ]
 

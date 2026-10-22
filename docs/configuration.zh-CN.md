@@ -59,6 +59,7 @@ hoshimi config path
 | `server.auto_refresh` | 自动凭据续期 |
 | `server.auto_checkin` | 自动每日签到 |
 | `server.check_updates` | 启动后及每天向 PyPI 检查是否有新版本，结果显示在概览页（`false` = 不发出请求） |
+| `playground.system_prompt` | 作为 Playground 每个对话的第一条消息发送（在 设置 → 常规 中设置）；留空则不发送 |
 | `server.stats_keep_days` | 每条调用记录在 `hoshimi.db` 中保留的天数（默认 `90`，至少 `1`）；按日总量和累计计数始终保留 |
 | `security.allow_cidrs` | 允许访问的客户端网段 |
 | `security.allow_origins` | 跨域来源，要求设置工具访问密钥 |
@@ -126,8 +127,9 @@ Cline 使用公开推荐模型接口加载免费目录。
 
 网关持续积累的记录保存在 SQLite 数据库 `<数据目录>/hoshimi.db` 中：用量统计
 （逐条调用记录保留 `server.stats_keep_days` 天，按小时总量保留 120 天，按日总量和
-累计计数永久保留）、每日签到状态及其历史（保留 365 天），以及探测结果。
-写入约每秒批量进行一次，关闭时补写。
+累计计数永久保留）、每日签到状态及其历史（保留 365 天）、探测结果，以及
+Playground 的对话（删除前一直保留，并记住上次打开的对话）。统计约每秒批量写入一次，
+关闭时补写；对话消息在发送时写入。
 
 需要人工或其他程序读取、编辑的内容仍是普通文件：`config.json`、凭据、
 `eac-user.json`、`server.json`（运行中服务的地址、实际端口、URL 与 PID）和

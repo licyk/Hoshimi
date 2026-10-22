@@ -42,6 +42,8 @@ export {
 
 export {
   AlertTriangle,
+  Archive,
+  ArchiveRestore,
   ArrowDownWideNarrow,
   ArrowLeft,
   ArrowRight,
@@ -90,6 +92,7 @@ export {
   ListFilter,
   Loader2,
   Maximize2,
+  MessageSquarePlus,
   Minus,
   Moon,
   MoreVertical,

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from hoshimi.core.config import Settings, load_settings
+from hoshimi.core.conversations import ConversationStore
 from hoshimi.core.credentials import collect_provider_accounts
 from hoshimi.core.credits import CHECKIN_FILE_NAME, CheckinStore, CreditsService
 from hoshimi.core.db import DB_FILE_NAME, Database
@@ -30,8 +31,9 @@ class Services:
     ``hoshimi.db`` connection the stores below share, ``probe`` holds the last
     availability verdict per model, ``stats`` counts what the gateway served
     (and, through ``stats.live``, what it is serving right now),
-    ``refresher`` renews credentials on a timer, and ``updates`` asks PyPI
-    whether a newer release exists.
+    ``refresher`` renews credentials on a timer, ``updates`` asks PyPI
+    whether a newer release exists, and ``conversations`` keeps the
+    Playground's conversations.
 
     Built directly (tests, embedders), every store keeps its rows in memory.
     """
@@ -45,6 +47,7 @@ class Services:
     credits: CreditsService | None = None
     login: LoginManager | None = None
     updates: UpdateChecker | None = None
+    conversations: ConversationStore = field(default_factory=ConversationStore)
 
     def __post_init__(self) -> None:
         MODELSDEV.network = self.settings.network
@@ -196,4 +199,5 @@ def build_services(settings: Settings | None = None) -> Services:
         credits=CreditsService(settings=settings, registry=registry, store=CheckinStore(data_dir / CHECKIN_FILE_NAME, db=db)),
         login=LoginManager(settings=settings, on_persist=rebuild_after_login),
         updates=UpdateChecker(network=settings.network),
+        conversations=ConversationStore(db),
     )

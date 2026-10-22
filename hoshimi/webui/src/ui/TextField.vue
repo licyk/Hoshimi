@@ -7,7 +7,9 @@ withDefaults(
   defineProps<{
     label?: string;
     placeholder?: string;
-    type?: 'text' | 'password' | 'number' | 'url' | 'search';
+    /** ``textarea`` takes several lines (``rows`` of them to start with) and grows by the user's hand. */
+    type?: 'text' | 'password' | 'number' | 'url' | 'search' | 'textarea';
+    rows?: number;
     supportingText?: string;
     errorText?: string;
     disabled?: boolean;
@@ -41,6 +43,7 @@ function onInput(event: Event) {
     :min="min"
     :max="max"
     :autocomplete="autocomplete"
+    :rows="type === 'textarea' ? rows : undefined"
     @input="onInput"
     @change="emit('change', ($event.target as HTMLInputElement).value)"
     @keydown.enter="emit('enter')"

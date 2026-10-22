@@ -132,6 +132,16 @@ async function copy(text: string) {
             <NumberField :model-value="s.server.stats_keep_days" :min="1" :label="t('settings.keepDays')" :supporting-text="t('settings.keepDaysHelp')" v-bind="arrows('settings.keepDays')" @change="save({ server: { stats_keep_days: num($event) } })" />
           </div>
         </PageSection>
+        <PageSection :title="t('settings.playground')" :subtitle="t('settings.playgroundHint')">
+          <TextField
+            :model-value="s.playground.system_prompt"
+            type="textarea"
+            :rows="4"
+            :label="t('settings.systemPrompt')"
+            :supporting-text="t('settings.systemPromptHelp')"
+            @change="save({ playground: { system_prompt: $event } })"
+          />
+        </PageSection>
       </div>
 
       <div v-else-if="tab === 'access'" key="access" class="panel">

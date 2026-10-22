@@ -10,6 +10,7 @@ const settings = ref({
   data_dir: '/data', config_path: '/data/config.json', restart_required: false, network: { mode: 'auto', proxy_configured: false, system_proxy: false }, providers: [],
   server: { host: '127.0.0.1', port: 10600, allow_cidrs: ['10.0.0.0/8'], allow_hosts: [], allow_origins: [], auto_checkin: true, auto_refresh: true, default_model: null, max_account_retries: 3, max_body_bytes: 1000, access_token_configured: false, model_api_key_configured: false, strict_port: false, stats_keep_days: 90 },
   listening: { host: '127.0.0.1', port: 10601, requested_port: 10600, fallback: true },
+  playground: { system_prompt: '' },
 });
 
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ replace: ({ query }: { query: Record<string, string> }) => (route.query = query), push: vi.fn() }) }));
@@ -25,7 +26,8 @@ vi.mock('@/components/NetworkSettings.vue', () => ({ default: { template: '<div 
 vi.mock('@/ui', () => {
   const slot = { template: '<div><slot /></div>' };
   return {
-    icons: {}, TRANSITIONS: {}, AppButton: slot, AppIcon: slot, DataList: slot, NumberField: slot, PickerMenu: slot, SegmentedButton: slot, SelectField: slot, Skeleton: slot, TextField: slot, TokenField: slot,
+    icons: {}, TRANSITIONS: {}, AppButton: slot, AppIcon: slot, DataList: slot, NumberField: slot, PickerMenu: slot, SegmentedButton: slot, SelectField: slot, Skeleton: slot, TokenField: slot,
+    TextField: { props: ['label', 'modelValue'], emits: ['change'], template: '<input class="text-field" :aria-label="label" :value="modelValue" @change="$emit(\'change\', $event.target.value)" />' },
     AxisPanes: slot,
     Collapse: { props: ['show'], template: '<div v-if="show"><slot /></div>' },
     PageSection: { props: ['title'], template: '<section><h2>{{ title }}</h2><slot /></section>' },
@@ -45,10 +47,18 @@ describe('settings', () => {
 
   it('shows one tab at a time and keeps the tab in the address', async () => {
     const w = mount(SettingsView, { global: { plugins: [createPinia()] } });
-    expect(w.findAll('h2').map((h) => h.text())).toEqual(['General', 'Requests', 'Usage history']);
+    expect(w.findAll('h2').map((h) => h.text())).toEqual(['General', 'Requests', 'Usage history', 'Playground']);
     await w.findAll('.tab').find((t) => t.text() === 'Security')!.trigger('click');
     expect(route.query.tab).toBe('security');
     expect(w.findAll('h2').map((h) => h.text())).toEqual(['Security']);
+  });
+
+  it('saves the Playground system prompt with the other general settings', async () => {
+    const w = mount(SettingsView, { global: { plugins: [createPinia()] } });
+    const prompt = w.find('input[aria-label="System prompt"]');
+    await prompt.setValue('Answer briefly.');
+    await prompt.trigger('change');
+    expect(state.update.mock.calls[0][0]).toEqual({ playground: { system_prompt: 'Answer briefly.' } });
   });
 
   it('saves an allow-list as a list the moment it changes', async () => {

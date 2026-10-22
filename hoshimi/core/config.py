@@ -62,6 +62,8 @@ class Settings:
     providers: dict[str, ProviderConfig] = field(default_factory=dict)
     # Optional default model when a request omits "model".
     default_model: str | None = None
+    # Sent first in every Playground conversation (playground.system_prompt); empty sends none.
+    playground_system_prompt: str = ""
 
 
 def validate_settings(settings: Settings) -> str | None:
@@ -142,6 +144,13 @@ def settings_from_dict(data: dict[str, Any], settings: Settings | None = None) -
     settings.allow_origins = _split_list(
         security.get("allow_origin") or security.get("allow_origins")
     )
+
+    playground = data.get("playground")
+    if isinstance(playground, dict) and "system_prompt" in playground:
+        prompt = playground["system_prompt"]
+        if prompt is not None and not isinstance(prompt, str):
+            raise ValueError("playground.system_prompt must be a string")
+        settings.playground_system_prompt = (prompt or "").strip()
 
     providers = data.get("providers")
     if isinstance(providers, dict):
@@ -242,6 +251,8 @@ def settings_to_dict(settings: Settings) -> dict[str, Any]:
         data["server"]["model_api_key"] = settings.model_api_key
     if settings.default_model:
         data["server"]["default_model"] = settings.default_model
+    if settings.playground_system_prompt:
+        data["playground"] = {"system_prompt": settings.playground_system_prompt}
     if settings.providers:
         data["providers"] = {
             pid: {

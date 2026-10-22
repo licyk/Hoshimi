@@ -5,6 +5,20 @@ import { createMemoryHistory, createRouter } from 'vue-router';
 import PlaygroundView from '@/views/PlaygroundView.vue';
 
 const state = vi.hoisted(() => ({ error: vi.fn(), show: vi.fn() }));
+// The kept conversations, in memory: what the page files and what it opens.
+const kept = vi.hoisted(() => {
+  const api = {
+    create: vi.fn(async (model: string, effort: string) => ({ id: 'c1', title: '', model, effort, archived: false, created_at: 0, updated_at: 0, messages: [] })),
+    get: vi.fn(async (_id: string): Promise<unknown> => { throw new Error('missing'); }),
+    update: vi.fn(async () => ({})),
+    remove: vi.fn(async () => undefined),
+    append: vi.fn(async () => ({})),
+    session: vi.fn(async (): Promise<{ conversation_id: string | null }> => ({ conversation_id: null })),
+    setSession: vi.fn(async (id: string | null) => ({ conversation_id: id })),
+  };
+  return { api, refresh: vi.fn() };
+});
+vi.mock('@/api/conversations', () => ({ conversationsApi: kept.api, useRefreshConversations: () => kept.refresh }));
 vi.mock('@/api/queries/app', () => ({
   useModels: () => ({ data: { value: { data: [{ id: 'test/model' }] } }, isPending: { value: false }, isFetching: { value: false } }),
   useModelSpecs: () => ({ data: { value: { data: [] } } }),
@@ -14,7 +28,7 @@ vi.mock('@/ui', async (importOriginal) => ({ ...(await importOriginal<typeof imp
 async function openPlayground() {
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/playground', component: PlaygroundView }] });
   await router.push('/playground');
-  return mount(PlaygroundView, { global: { plugins: [router, createPinia()], stubs: { CatalogStatus: true } } });
+  return mount(PlaygroundView, { global: { plugins: [router, createPinia()], stubs: { CatalogStatus: true, ConversationList: true } } });
 }
 
 describe('Playground live output', () => {
@@ -126,18 +140,78 @@ describe('Playground live output', () => {
     wrapper.unmount();
   });
 
-  it('clears an active reply and cancels its request', async () => {
+  it('starts a new chat: the reply in progress stops, is kept with its conversation, and the session is let go', async () => {
     const wrapper = await openPlayground();
     await wrapper.find('textarea').setValue('hello');
     await wrapper.find('textarea').trigger('keydown', { key: 'Enter' });
     await flushPromises();
     emit('partial');
     await flushPromises();
-    await wrapper.find('button[aria-label="Clear the conversation"]').trigger('click');
+    await wrapper.find('button[aria-label="New chat"]').trigger('click');
     await flushPromises();
     expect(signal.aborted).toBe(true);
     expect(wrapper.findAll('.turn')).toHaveLength(0);
+    expect(kept.api.append.mock.calls).toEqual([['c1', 'user', 'hello'], ['c1', 'assistant', 'partial', 'test/model']]);
+    expect(kept.api.setSession).toHaveBeenLastCalledWith(null);
     expect(state.error).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('keeps a conversation as it happens: created on the first send, each message filed in order', async () => {
+    const wrapper = await openPlayground();
+    for (const [question, answer] of [['first', 'one'], ['second', 'two']]) {
+      await wrapper.find('textarea').setValue(question);
+      await wrapper.find('textarea').trigger('keydown', { key: 'Enter' });
+      await flushPromises();
+      emit(answer);
+      source.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+      await flushPromises();
+    }
+    expect(kept.api.create).toHaveBeenCalledOnce();
+    expect(kept.api.create).toHaveBeenCalledWith('test/model', '');
+    expect(kept.api.setSession).toHaveBeenCalledWith('c1');
+    expect(kept.api.append.mock.calls).toEqual([
+      ['c1', 'user', 'first'], ['c1', 'assistant', 'one', 'test/model'], ['c1', 'user', 'second'], ['c1', 'assistant', 'two', 'test/model'],
+    ]);
+    expect(kept.refresh).toHaveBeenCalled();
+    wrapper.unmount();
+    await flushPromises();
+  });
+
+  it('comes back to the conversation open last, and answers in it', async () => {
+    kept.api.session.mockResolvedValueOnce({ conversation_id: 'old' });
+    kept.api.get.mockResolvedValueOnce({
+      id: 'old', title: 'Earlier', model: 'test/model', effort: '', archived: false, created_at: 0, updated_at: 0,
+      messages: [{ role: 'user', content: 'before', model: '', created_at: 0 }, { role: 'assistant', content: 'a **kept** reply', model: 'test/model', created_at: 0 }],
+    });
+    const wrapper = await openPlayground();
+    await flushPromises();
+    expect(kept.api.get).toHaveBeenCalledWith('old');
+    expect(wrapper.findAll('.turn .bubble').map((b) => b.text())).toEqual(['before', 'a kept reply']);
+    expect(wrapper.find('.assistant strong').text()).toBe('kept');
+    await wrapper.find('textarea').setValue('more');
+    await wrapper.find('textarea').trigger('keydown', { key: 'Enter' });
+    await flushPromises();
+    const fetch = vi.mocked(globalThis.fetch);
+    expect(JSON.parse(fetch.mock.calls[0][1]!.body as string).messages.map((m: { content: string }) => m.content)).toEqual(['before', 'a **kept** reply', 'more']);
+    expect(kept.api.create).not.toHaveBeenCalled();
+    expect(kept.api.append).toHaveBeenCalledWith('old', 'user', 'more');
+    source.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+    wrapper.unmount();
+    await flushPromises();
+  });
+
+  it('starts afresh when opened to try one model', async () => {
+    kept.api.session.mockResolvedValueOnce({ conversation_id: 'old' });
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/playground', component: PlaygroundView }] });
+    await router.push('/playground?model=test/model');
+    const wrapper = mount(PlaygroundView, { global: { plugins: [router, createPinia()], stubs: { CatalogStatus: true, ConversationList: true } } });
+    await flushPromises();
+    expect(kept.api.session).not.toHaveBeenCalled();
+    expect(wrapper.findAll('.turn')).toHaveLength(0);
+    expect(wrapper.find('button[aria-label^="Model"]').text()).toContain('test/model');
+    // Let go of: a reload goes back to the session, not to a fresh start.
+    expect(router.currentRoute.value.query).toEqual({});
     wrapper.unmount();
   });
 
@@ -147,8 +221,8 @@ describe('Playground live output', () => {
     expect(composer.find('textarea').exists()).toBe(true);
     expect(composer.find('button[aria-label^="Model"]').exists()).toBe(true);
     expect(composer.find('button[aria-label="Send"]').attributes('disabled')).toBeDefined();
-    // Nothing to clear yet: Clear arrives with the first message.
-    expect(wrapper.find('button[aria-label="Clear the conversation"]').exists()).toBe(false);
+    // Nothing to leave yet: New chat arrives with the first message.
+    expect(wrapper.find('button[aria-label="New chat"]').exists()).toBe(false);
     await wrapper.find('textarea').setValue('hello');
     expect(composer.find('button[aria-label="Send"]').attributes('disabled')).toBeUndefined();
     await wrapper.find('textarea').trigger('keydown', { key: 'Enter', shiftKey: true });
@@ -157,7 +231,7 @@ describe('Playground live output', () => {
     await composer.find('button[aria-label="Send"]').trigger('click');
     await flushPromises();
     expect(globalThis.fetch).toHaveBeenCalledOnce();
-    expect(wrapper.find('.composer button[aria-label="Clear the conversation"]').exists()).toBe(true);
+    expect(wrapper.find('.composer button[aria-label="New chat"]').exists()).toBe(true);
     wrapper.unmount();
   });
 });
