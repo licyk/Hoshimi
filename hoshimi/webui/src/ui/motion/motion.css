@@ -132,6 +132,53 @@
 .snackbar-enter-from { opacity: 0; transform: translateY(16px); }
 .snackbar-leave-to { opacity: 0; }
 
+/* popover: a menu grows out of the control that opened it. The menu sets --popover-origin (the
+   corner nearest its control) and --popover-shift (towards its control: up when it opens above). */
+.popover-enter-active {
+  transition:
+    opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-decelerate),
+    transform var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate);
+  transform-origin: var(--popover-origin, top left);
+}
+.popover-leave-active {
+  transition:
+    opacity var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-emphasized-accelerate),
+    transform var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-emphasized-accelerate);
+  transform-origin: var(--popover-origin, top left);
+}
+.popover-enter-from { opacity: 0; transform: translateY(var(--popover-shift, -6px)) scale(0.94); }
+.popover-leave-to { opacity: 0; transform: scale(0.97); }
+
+/* chip: a control that comes and goes in a row of controls (TransitionGroup, with keepLeavingInPlace
+   on a container ``position: relative``): it pops in and out, and the others slide to their place. */
+.chip-move { transition: transform var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized); }
+.chip-enter-active {
+  transition:
+    opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-decelerate) var(--md-sys-motion-duration-short2),
+    transform var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate) var(--md-sys-motion-duration-short2);
+}
+.chip-leave-active {
+  position: absolute;
+  transition:
+    opacity var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-emphasized-accelerate),
+    transform var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-emphasized-accelerate);
+}
+.chip-enter-from, .chip-leave-to { opacity: 0; transform: scale(0.8); }
+
+/* icon-swap: one icon turning into another in the same place (send and stop); the two share a grid
+   cell while they cross, the old one turning away as the new one turns in. */
+.icon-swap-enter-active, .icon-swap-leave-active {
+  transition:
+    opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
+    transform var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-emphasized);
+}
+.icon-swap-enter-from { opacity: 0; transform: rotate(-90deg) scale(0.4); }
+.icon-swap-leave-to { opacity: 0; transform: rotate(90deg) scale(0.4); }
+
+/* settle: a block whose share of a flex column changes (the playground's composer, between the middle
+   of an empty conversation and its foot) travels there instead of jumping. */
+.settle { transition: flex-grow var(--md-sys-motion-duration-long2) var(--md-sys-motion-easing-emphasized); }
+
 /* Interaction state layer shared by project-built interactive components */
 .state-layer { position: relative; isolation: isolate; overflow: hidden; }
 .state-layer::before {
@@ -207,7 +254,8 @@
 @media (prefers-reduced-motion: reduce) {
   [class*='-enter-active'],
   [class*='-leave-active'],
-  .list-move {
+  .list-move,
+  .chip-move {
     transition: opacity 100ms linear !important;
     transition-delay: 0ms !important;
   }
@@ -215,14 +263,16 @@
   [class*='-leave-to'] { transform: none !important; }
   .ripple-wave { display: none; }
   .morph, .morph * { transition-property: opacity !important; }
+  .settle { transition: none; }
   * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
 
-:root[data-motion='reduced'] [class*='-enter-active'], :root[data-motion='reduced'] [class*='-leave-active'], :root[data-motion='reduced'] .list-move {
+:root[data-motion='reduced'] [class*='-enter-active'], :root[data-motion='reduced'] [class*='-leave-active'], :root[data-motion='reduced'] .list-move, :root[data-motion='reduced'] .chip-move {
     transition: opacity 100ms linear !important;
     transition-delay: 0ms !important;
   }
   :root[data-motion='reduced'] [class*='-enter-from'], :root[data-motion='reduced'] [class*='-leave-to'] { transform: none !important; }
   :root[data-motion='reduced'] .ripple-wave { display: none; }
   :root[data-motion='reduced'] .morph, :root[data-motion='reduced'] .morph * { transition-property: opacity !important; }
+  :root[data-motion='reduced'] .settle { transition: none; }
   :root[data-motion='reduced'] * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }

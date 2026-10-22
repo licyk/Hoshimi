@@ -114,7 +114,7 @@ describe('components a pane switch moves', () => {
  * The same margin falls on a menu's items: an item with ``width: 100%`` is wider than the menu by
  * the lane, and a horizontal scrollbar appears under it. Menus stretch their items as flex items.
  */
-const MENUS = ['ui/AppMenu.vue', 'ui/ContextMenu.vue'];
+const MENUS = ['ui/AppMenu.vue', 'ui/ContextMenu.vue', 'ui/ComposerMenu.vue'];
 describe('menus', () => {
   it.each(MENUS)('%s stretches its items without a width of their own', (file) => {
     expect(rule(file, '.menu')).toMatch(/flex-direction:\s*column/);

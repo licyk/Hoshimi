@@ -60,6 +60,7 @@ export {
   Copy,
   Dices,
   Download,
+  Eraser,
   Expand,
   ExternalLink,
   Eye,

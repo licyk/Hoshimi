@@ -12,6 +12,9 @@ export const TRANSITIONS = {
   collapse: 'collapse',
   section: 'section',
   snackbar: 'snackbar',
+  popover: 'popover',
+  chip: 'chip',
+  iconSwap: 'icon-swap',
 } as const;
 
 const STAGGER_MS = 20;

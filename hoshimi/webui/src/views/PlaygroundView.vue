@@ -6,7 +6,7 @@ import { streamChat, type ChatMessage } from '@/api/chat';
 import { useModelSpecs, useModels } from '@/api/queries/app';
 import { useI18n } from '@/i18n';
 import CatalogStatus from '@/components/CatalogStatus.vue';
-import { AppButton, EmptyState, FieldRow, IconButton, PickerMenu, SelectField, Skeleton, TRANSITIONS, icons, useSnackbar } from '@/ui';
+import { ChipButton, Composer, ComposerMenu, EmptyState, TRANSITIONS, icons, keepLeavingInPlace, useSnackbar } from '@/ui';
 
 const { t } = useI18n();
 const route = useRoute();
@@ -42,6 +42,8 @@ const effortOptions = computed(() => [
   ...(spec.value?.efforts ?? []).map((o) => ({ value: o.id, label: o.name })),
 ]);
 watch(model, () => (effort.value = ''));
+/** The control shows the level's short name; the menu says what Auto means. */
+const effortText = computed(() => (effort.value ? effortOptions.value.find((o) => o.value === effort.value)?.label : t('playground.effortAutoShort')));
 const setModel = (value: string | null) => {
   model.value = value;
   router.replace({ query: value ? { model: value } : {} });
@@ -55,6 +57,9 @@ const turns = ref<Turn[]>([]);
 const draft = ref('');
 const streaming = ref(false);
 const scroller = ref<HTMLElement | null>(null);
+const composer = ref<InstanceType<typeof Composer> | null>(null);
+/** No conversation yet: the composer waits in the middle of the page, under the greeting. */
+const empty = computed(() => !turns.value.length);
 let controller: AbortController | null = null;
 
 const toMessage = (turn: Turn): ChatMessage => ({ role: turn.role, content: turn.content });
@@ -114,118 +119,124 @@ function clear() {
   controller?.abort();
   turns.value = [];
   draft.value = '';
-}
-function onKeydown(event: KeyboardEvent) {
-  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-    event.preventDefault();
-    void send();
-  }
+  composer.value?.focus();
 }
 </script>
 
 <template>
-  <div class="playground">
-    <FieldRow>
-      <div class="head-controls">
-        <PickerMenu
-          class="model"
-          :model-value="model"
-          :label="t('playground.model')"
-          :options="modelOptions"
-          :disabled="streaming || !modelOptions.length"
-          :loading="models.isFetching.value && !modelOptions.length"
-          :search-label="t('models.search')"
-          :search-from="8"
-          :no-matches="t('models.none')"
-          @update:model-value="setModel"
-        />
-        <SelectField
-          v-if="effortOptions.length > 1"
-          v-model="effort"
-          class="effort"
-          :label="t('playground.effort')"
-          :options="effortOptions"
-          :disabled="streaming"
-          :supporting-text="t('playground.effortHelp')"
-        />
-      </div>
-      <template #end>
-        <IconButton :icon="icons.Trash2" :label="t('playground.clear')" :disabled="!turns.length" @click="clear" />
-      </template>
-    </FieldRow>
-
+  <div class="playground" :class="{ empty }">
     <CatalogStatus />
 
     <div ref="scroller" class="thread app-scroll" role="log" aria-live="polite">
-      <div v-if="models.isFetching.value && !modelOptions.length" class="loading">
-        <Skeleton v-for="i in 3" :key="i" height="64px" shape="medium" />
-      </div>
-      <EmptyState
-        v-else-if="!turns.length"
-        :icon="icons.Sparkles"
-        :title="models.data.value?.data.length ? t('playground.empty') : t('playground.noModels')"
-        :text="models.data.value?.data.length ? t('playground.emptyText') : t('playground.noModelsText')"
-      />
-      <TransitionGroup v-else :name="TRANSITIONS.list" tag="div" class="turns">
-        <div v-for="(turn, i) in turns" :key="i" class="turn" :class="turn.role">
-          <span class="who type-label-medium">{{ turn.role === 'user' ? t('playground.you') : t('playground.assistant') }}</span>
-          <div class="bubble type-body-medium">
-            <template v-if="turn.content">{{ turn.content }}</template>
-            <span v-else class="muted">{{ t('playground.streaming') }}</span>
+      <Transition :name="TRANSITIONS.fadeThrough" mode="out-in">
+        <EmptyState
+          v-if="empty"
+          key="greeting"
+          class="greeting"
+          :icon="icons.Sparkles"
+          :title="models.data.value?.data.length || models.isFetching.value ? t('playground.empty') : t('playground.noModels')"
+          :text="models.data.value?.data.length || models.isFetching.value ? t('playground.emptyText') : t('playground.noModelsText')"
+        />
+        <TransitionGroup v-else key="turns" :name="TRANSITIONS.list" tag="div" class="turns">
+          <div v-for="(turn, i) in turns" :key="i" class="turn" :class="turn.role">
+            <span class="who type-label-medium">{{ turn.role === 'user' ? t('playground.you') : t('playground.assistant') }}</span>
+            <div class="bubble type-body-medium">
+              <template v-if="turn.content">{{ turn.content }}</template>
+              <span v-else class="muted">{{ t('playground.streaming') }}</span>
+            </div>
           </div>
-        </div>
-      </TransitionGroup>
+        </TransitionGroup>
+      </Transition>
     </div>
 
-    <div class="composer">
-      <textarea
+    <div class="dock">
+      <Composer
+        ref="composer"
         v-model="draft"
-        class="input type-body-large"
+        :label="t('playground.message')"
         :placeholder="t('playground.placeholder')"
-        :aria-label="t('playground.message')"
-        rows="2"
-        @keydown="onKeydown"
-      />
-      <div class="actions">
-        <AppButton v-if="streaming" variant="outlined" :icon="icons.Square" @click="stop">{{ t('playground.stop') }}</AppButton>
-        <AppButton v-else variant="filled" :icon="icons.Send" :disabled="!draft.trim() || !model" @click="send">{{ t('playground.send') }}</AppButton>
-      </div>
+        :send-label="t('playground.send')"
+        :stop-label="t('playground.stop')"
+        :busy="streaming"
+        :can-send="!!model"
+        @send="send"
+        @stop="stop"
+      >
+        <template #tools>
+          <TransitionGroup :name="TRANSITIONS.chip" tag="div" class="tools" v-bind="keepLeavingInPlace">
+            <ComposerMenu
+              key="model"
+              class="model"
+              :model-value="model"
+              :label="t('playground.model')"
+              :options="modelOptions"
+              :placeholder="t('playground.model')"
+              :disabled="streaming || !modelOptions.length"
+              :loading="models.isFetching.value && !modelOptions.length"
+              :search-label="t('models.search')"
+              :search-from="8"
+              :no-matches="t('models.none')"
+              @update:model-value="setModel"
+            />
+            <ComposerMenu
+              v-if="effortOptions.length > 1"
+              key="effort"
+              v-model="effort"
+              class="effort"
+              :icon="icons.Brain"
+              :label="t('playground.effort')"
+              :hint="t('playground.effortHelp')"
+              :text="effortText"
+              :options="effortOptions"
+              :disabled="streaming"
+            />
+          </TransitionGroup>
+        </template>
+        <template #actions>
+          <Transition :name="TRANSITIONS.chip" v-bind="keepLeavingInPlace">
+            <ChipButton v-if="!empty" :icon="icons.Eraser" :label="t('playground.clear')" @click="clear" />
+          </Transition>
+        </template>
+      </Composer>
+      <p class="hint type-body-small muted">{{ t('playground.hint') }}</p>
     </div>
+    <!-- Takes the room under the composer while there is no conversation, so the composer sits in the middle. -->
+    <div class="below settle" aria-hidden="true" />
   </div>
 </template>
 
 <style scoped>
-.playground { display: flex; flex-direction: column; gap: var(--app-space-3); height: 100%; padding: var(--app-space-4) var(--app-space-6) var(--app-space-4); }
-.head-controls { display: flex; align-items: flex-start; gap: var(--app-space-2); min-width: 0; flex-wrap: wrap; }
-.model { flex: 1 1 280px; min-width: 0; }
-.effort { flex: 0 1 200px; min-width: 0; }
-.thread { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--app-space-3); padding: var(--app-space-2) 0; }
+.playground {
+  /* The conversation and the composer share one column, centred, with the room around it left empty. */
+  --column: 768px;
+  display: flex; flex-direction: column; height: 100%; padding: var(--app-space-4) var(--app-space-6) var(--app-space-3);
+}
+/* The thread reaches into the page's padding by its scrollbar's lane, so its column lines up with the composer's. */
+.thread {
+  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+  margin-inline-end: calc(-1 * var(--app-scrollbar-size));
+  padding: var(--app-space-2) max(0px, calc((100% - var(--column)) / 2)) var(--app-space-4);
+}
+/* The greeting keeps its own height and sits on the composer, the two centred together as one block. */
+.thread > .greeting { flex: none; margin-top: auto; padding-bottom: var(--app-space-4); }
 .turns { display: flex; flex-direction: column; gap: var(--app-space-3); }
-.loading { display: flex; flex-direction: column; gap: var(--app-space-2); }
-.turn { display: flex; flex-direction: column; gap: var(--app-space-1); max-width: min(760px, 100%); }
+.turn { display: flex; flex-direction: column; gap: var(--app-space-1); max-width: min(640px, 100%); }
 .turn.assistant { align-self: flex-start; }
 .turn.user { align-self: flex-end; align-items: flex-end; }
 .who { min-width: 0; overflow-wrap: anywhere; }
-.bubble { min-width: 0; padding: var(--app-space-2) var(--app-space-3); border-radius: var(--md-sys-shape-corner-medium); white-space: pre-wrap; overflow-wrap: anywhere; }
+.bubble { min-width: 0; padding: var(--app-space-2) var(--app-space-3); border-radius: var(--md-sys-shape-corner-large); white-space: pre-wrap; overflow-wrap: anywhere; }
 .turn.user .bubble { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
 .turn.assistant .bubble { background: var(--md-sys-color-surface-container); color: var(--md-sys-color-on-surface); }
-.composer { display: flex; align-items: flex-end; gap: var(--app-space-3); padding-top: var(--app-space-2); border-top: 1px solid var(--md-sys-color-outline-variant); }
-.input {
-  flex: 1;
-  min-width: 0;
-  min-height: 56px;
-  max-height: 200px;
-  padding: var(--app-space-3);
-  border: 1px solid var(--md-sys-color-outline);
-  border-radius: var(--md-sys-shape-corner-medium);
-  background: var(--md-sys-color-surface-container-low);
-  color: var(--md-sys-color-on-surface);
-  font: inherit;
-  resize: vertical;
-}
-.input:focus { outline: none; border-color: var(--md-sys-color-primary); }
-.actions { display: flex; gap: var(--app-space-2); }
+.dock { display: flex; flex-direction: column; gap: var(--app-space-2); flex: none; width: min(100%, var(--column)); align-self: center; }
+.tools { position: relative; display: flex; align-items: center; gap: 2px; min-width: 0; }
+/* A long model id gives way first: the level is one short word. */
+.model { max-width: 320px; }
+.effort { flex: none; }
+.hint { margin: 0; text-align: center; }
+.below { flex: 0 0 0; }
+.empty .below { flex-grow: 1; }
 @media (max-width: 599px) {
-  .playground { padding: var(--app-space-3); }
+  .playground { padding: var(--app-space-3) var(--app-space-3) var(--app-space-2); }
+  .hint { display: none; }
 }
 </style>

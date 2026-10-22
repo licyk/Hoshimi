@@ -9,16 +9,7 @@ vi.mock('@/api/queries/app', () => ({
   useModels: () => ({ data: { value: { data: [{ id: 'test/model' }] } }, isPending: { value: false }, isFetching: { value: false } }),
   useModelSpecs: () => ({ data: { value: { data: [] } } }),
 }));
-vi.mock('@/ui', () => {
-  const slot = { template: '<div><slot /></div>' };
-  return {
-    icons: {}, SelectField: slot, PickerMenu: slot, TRANSITIONS: { list: 'list' }, Skeleton: slot, EmptyState: slot,
-    FieldRow: { template: '<div><slot /><slot name="end" /></div>' },
-    AppButton: { props: ['disabled'], template: '<button :disabled="disabled" @click="$emit(\'click\')"><slot /></button>' },
-    IconButton: { props: ['label', 'disabled'], template: '<button :aria-label="label" :disabled="disabled" @click="$emit(\'click\')" />' },
-    useSnackbar: () => ({ error: state.error }),
-  };
-});
+vi.mock('@/ui', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/ui')>()), useSnackbar: () => ({ error: state.error }) }));
 
 async function openPlayground() {
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/playground', component: PlaygroundView }] });
@@ -49,13 +40,13 @@ describe('Playground live output', () => {
     emit('第一段');
     await flushPromises();
     expect(wrapper.find('.assistant .bubble').text()).toBe('第一段');
-    expect(wrapper.text()).toContain('Stop');
+    expect(wrapper.find('button[aria-label="Stop"]').exists()).toBe(true);
     emit('，第二段');
     await flushPromises();
     expect(wrapper.find('.assistant .bubble').text()).toBe('第一段，第二段');
     source.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
     await flushPromises();
-    expect(wrapper.text()).toContain('Send');
+    expect(wrapper.find('button[aria-label="Send"]').exists()).toBe(true);
     await wrapper.find('textarea').setValue('continue');
     await wrapper.find('textarea').trigger('keydown', { key: 'Enter' });
     await flushPromises();
@@ -74,12 +65,12 @@ describe('Playground live output', () => {
     await flushPromises();
     emit('partial');
     await flushPromises();
-    await wrapper.findAll('button').find((button) => button.text() === 'Stop')!.trigger('click');
+    await wrapper.find('button[aria-label="Stop"]').trigger('click');
     await flushPromises();
     expect(signal.aborted).toBe(true);
     expect(wrapper.find('.assistant .bubble').text()).toBe('partial');
     expect(state.error).not.toHaveBeenCalled();
-    expect(wrapper.text()).toContain('Send');
+    expect(wrapper.find('button[aria-label="Send"]').exists()).toBe(true);
     wrapper.unmount();
   });
 
@@ -93,7 +84,7 @@ describe('Playground live output', () => {
     await flushPromises();
     expect(wrapper.find('.assistant .bubble').text()).toBe('partial');
     expect(state.error).toHaveBeenCalledWith('Provider disconnected');
-    expect(wrapper.text()).toContain('Send');
+    expect(wrapper.find('button[aria-label="Send"]').exists()).toBe(true);
     wrapper.unmount();
   });
 
@@ -104,11 +95,31 @@ describe('Playground live output', () => {
     await flushPromises();
     emit('partial');
     await flushPromises();
-    await wrapper.find('button[aria-label]').trigger('click');
+    await wrapper.find('button[aria-label="Clear the conversation"]').trigger('click');
     await flushPromises();
     expect(signal.aborted).toBe(true);
     expect(wrapper.findAll('.turn')).toHaveLength(0);
     expect(state.error).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('keeps every control inside the composer, with no row of controls above the thread', async () => {
+    const wrapper = await openPlayground();
+    const composer = wrapper.find('.composer');
+    expect(composer.find('textarea').exists()).toBe(true);
+    expect(composer.find('button[aria-label^="Model"]').exists()).toBe(true);
+    expect(composer.find('button[aria-label="Send"]').attributes('disabled')).toBeDefined();
+    // Nothing to clear yet: Clear arrives with the first message.
+    expect(wrapper.find('button[aria-label="Clear the conversation"]').exists()).toBe(false);
+    await wrapper.find('textarea').setValue('hello');
+    expect(composer.find('button[aria-label="Send"]').attributes('disabled')).toBeUndefined();
+    await wrapper.find('textarea').trigger('keydown', { key: 'Enter', shiftKey: true });
+    await flushPromises();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    await composer.find('button[aria-label="Send"]').trigger('click');
+    await flushPromises();
+    expect(globalThis.fetch).toHaveBeenCalledOnce();
+    expect(wrapper.find('.composer button[aria-label="Clear the conversation"]').exists()).toBe(true);
     wrapper.unmount();
   });
 });
