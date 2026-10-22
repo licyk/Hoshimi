@@ -194,7 +194,7 @@ const tableValue = (m: Row, key: string): unknown => (key === 'state' ? stateVal
 </template>
 
 <style scoped>
-.models { display: flex; flex-direction: column; gap: var(--app-space-4); padding: var(--app-space-4) var(--app-space-6) var(--app-space-8); min-width: 0; }
+.models { display: flex; flex-direction: column; gap: var(--app-space-4); padding: var(--app-space-4) var(--app-space-6) var(--app-space-8); padding-inline-end: calc(var(--app-space-6) - var(--app-scroll-lane)); min-width: 0; }
 .search { flex: 1 1 280px; min-width: 0; }
 .filter { flex: 0 1 220px; }
 .skeletons { display: flex; flex-direction: column; gap: var(--app-space-1); }
@@ -202,6 +202,6 @@ const tableValue = (m: Row, key: string): unknown => (key === 'state' ? stateVal
 .text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .caps { display: inline-flex; align-items: center; gap: var(--app-space-2); color: var(--md-sys-color-on-surface-variant); }
 @container app-content (max-width: 599px) {
-  .models { padding: var(--app-space-3); }
+  .models { padding: var(--app-space-3); padding-inline-end: max(var(--app-space-1), calc(var(--app-space-3) - var(--app-scroll-lane))); }
 }
 </style>

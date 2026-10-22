@@ -79,6 +79,8 @@ watch(shownKey, () => void nextTick(() => detailPane.value?.scrollTo({ top: 0 })
 /* The list pane scrolls under its own sticky search; the detail is the page beside it. Rows stop
    a step short of the scrollbar's lane rather than running into it. */
 .wide .list-pane { display: flex; flex-direction: column; padding-inline-end: var(--app-space-1); }
-.detail-pane { position: relative; overflow-x: clip; }
+/* The detail pane's lane sits in the page's end padding rather than beside it, so the page is as far
+   from the frame on either side. */
+.detail-pane { position: relative; overflow-x: clip; margin-inline-end: calc(-1 * var(--app-scroll-lane)); }
 .detail-page { min-width: 0; }
 </style>

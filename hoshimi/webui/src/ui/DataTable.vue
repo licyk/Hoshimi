@@ -168,7 +168,8 @@ watch(sort, () => scroller.value?.box?.scrollTo({ top: 0 }));
 .data-table { min-width: 0; }
 .frame { transition: opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard); }
 .frame.busy { opacity: 0.6; }
-.row { display: grid; grid-template-columns: var(--cols); gap: var(--app-space-3); align-items: center; padding: 0 var(--app-space-3); }
+/* The scroller's lane comes out of the rows' end padding, all but the step a sort button reaches past its cell. */
+.row { display: grid; grid-template-columns: var(--cols); gap: var(--app-space-3); align-items: center; padding: 0 var(--app-space-3); padding-inline-end: max(var(--app-space-1), calc(var(--app-space-3) - var(--app-scroll-lane))); }
 .head { min-height: 40px; color: var(--md-sys-color-on-surface-variant); border-bottom: 1px solid var(--md-sys-color-outline-variant); }
 .body { height: var(--row-h); border-radius: var(--md-sys-shape-corner-small); }
 .body + .body { box-shadow: inset 0 1px 0 var(--md-sys-color-surface-container-high); }

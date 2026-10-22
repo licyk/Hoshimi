@@ -67,7 +67,8 @@ watch(
 .head { display: flex; align-items: center; justify-content: space-between; gap: var(--app-space-2); padding: var(--app-space-4) var(--app-space-4) 0 var(--app-space-6); }
 /* A model name can be one long unbroken word: break it, and keep the header at two lines. */
 .title { margin: 0; overflow: hidden; text-overflow: ellipsis; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
-.body { padding: var(--app-space-4) var(--app-space-6); flex: 1; }
+/* The body's scrollbar lane comes out of its end padding, so its content lines up with the head's and the actions'. */
+.body { padding: var(--app-space-4) var(--app-space-6); padding-inline-end: calc(var(--app-space-6) - var(--app-scroll-lane)); flex: 1; }
 .actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--app-space-2); padding: 0 var(--app-space-6) var(--app-space-6); }
 @media (max-width: 599px) {
   .layer { padding: 0; align-items: end; }
@@ -76,7 +77,7 @@ watch(
   .dialog { max-height: 92vh; max-height: 92dvh; padding-bottom: env(safe-area-inset-bottom); border-radius: var(--md-sys-shape-corner-extra-large) var(--md-sys-shape-corner-extra-large) 0 0; }
   .title { font-size: var(--md-sys-typescale-title-large-size); line-height: var(--md-sys-typescale-title-large-line-height); }
   .head { padding: var(--app-space-4) var(--app-space-2) 0 var(--app-space-4); }
-  .body { padding: var(--app-space-3) var(--app-space-4); }
+  .body { padding: var(--app-space-3) var(--app-space-4); padding-inline-end: calc(var(--app-space-4) - var(--app-scroll-lane)); }
   .actions { padding: 0 var(--app-space-4) var(--app-space-4); }
 }
 </style>

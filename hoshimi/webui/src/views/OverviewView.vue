@@ -120,7 +120,7 @@ const openDocs = () => window.open(`${BASE_URL}/docs`, '_blank', 'noopener');
 </template>
 
 <style scoped>
-.overview { display: flex; flex-direction: column; gap: var(--app-space-4); padding: var(--app-space-4) var(--app-space-6) var(--app-space-8); min-width: 0; }
+.overview { display: flex; flex-direction: column; gap: var(--app-space-4); padding: var(--app-space-4) var(--app-space-6) var(--app-space-8); padding-inline-end: calc(var(--app-space-6) - var(--app-scroll-lane)); min-width: 0; }
 p { margin: 0; }
 .today { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 320px); gap: var(--app-space-4); align-items: end; }
 .figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: var(--app-space-3); margin: 0; }
@@ -138,7 +138,7 @@ p { margin: 0; }
 .channel-head { display: flex; align-items: center; gap: var(--app-space-2); min-width: 0; }
 .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @container app-content (max-width: 599px) {
-  .overview { padding: var(--app-space-3); }
+  .overview { padding: var(--app-space-3); padding-inline-end: max(var(--app-space-1), calc(var(--app-space-3) - var(--app-scroll-lane))); }
   .today { grid-template-columns: minmax(0, 1fr); }
   .label { display: none; }
 }

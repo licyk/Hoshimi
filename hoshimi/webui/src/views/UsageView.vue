@@ -511,7 +511,7 @@ watch(slice, () => (detailOpen.value = false));
 </template>
 
 <style scoped>
-.usage { display: flex; flex-direction: column; gap: var(--app-space-4); padding: var(--app-space-4) var(--app-space-6) var(--app-space-8); min-width: 0; }
+.usage { display: flex; flex-direction: column; gap: var(--app-space-4); padding: var(--app-space-4) var(--app-space-6) var(--app-space-8); padding-inline-end: calc(var(--app-space-6) - var(--app-scroll-lane)); min-width: 0; }
 .report { display: flex; flex-direction: column; gap: var(--app-space-4); min-width: 0; }
 .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--app-space-3); }
 /* The bar takes no room: it lies along the toolbar's foot while a report is on its way. */
@@ -539,7 +539,7 @@ watch(slice, () => (detailOpen.value = false));
   .tiles { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 }
 @container app-content (max-width: 599px) {
-  .usage { padding: var(--app-space-3); }
+  .usage { padding: var(--app-space-3); padding-inline-end: max(var(--app-space-1), calc(var(--app-space-3) - var(--app-scroll-lane))); }
   .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--app-space-2); }
 }
 </style>

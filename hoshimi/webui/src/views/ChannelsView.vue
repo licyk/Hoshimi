@@ -158,7 +158,7 @@ function act(mutation: { mutate: (v: never, opts: Record<string, unknown>) => vo
 <style scoped>
 /* With room for both panes the page is the window's height and each pane scrolls on its own;
    with one pane the page scrolls as a whole. Decided by the panes' own width, as ListDetail does. */
-.channels { display: flex; flex-direction: column; gap: var(--app-space-3); min-height: 0; padding: var(--app-space-4) var(--app-space-6) var(--app-space-4); }
+.channels { display: flex; flex-direction: column; gap: var(--app-space-3); min-height: 0; padding: var(--app-space-4) var(--app-space-6) var(--app-space-4); padding-inline-end: calc(var(--app-space-6) - var(--app-scroll-lane)); }
 .search { flex: 1 1 240px; max-width: 480px; }
 .checkin { white-space: nowrap; }
 .filters { align-self: flex-start; }
@@ -185,7 +185,7 @@ function act(mutation: { mutate: (v: never, opts: Record<string, unknown>) => vo
 /* A channel shown alone (a narrow pane) is its own page: the list's search and filters wait behind its back button. */
 .channels:has(.layout.detail:not(.wide)) .head { display: none; }
 @container app-content (max-width: 599px) {
-  .channels { padding: var(--app-space-3); }
+  .channels { padding: var(--app-space-3); padding-inline-end: max(var(--app-space-1), calc(var(--app-space-3) - var(--app-scroll-lane))); }
   .checkin { display: none; }
 }
 </style>

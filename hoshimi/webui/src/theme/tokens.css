@@ -89,6 +89,12 @@
 
   /* Scrollbars have a lane of their own (.app-scroll below): content never runs under the thumb. */
   --app-scrollbar-size: 12px;
+  /* The width the lane actually takes at an area's end side (applyScrollbars measures it; a thin
+     Firefox scrollbar is narrower than the size above). An area that scrolls takes it out of its own
+     end padding, so its content sits as far from either side; where that padding is no wider than
+     the lane, it keeps --app-space-1, the step a control reaches past its box (an icon button's
+     touch target, a table's sort button), which would otherwise scroll the area sideways. */
+  --app-scroll-lane: var(--app-scrollbar-size);
   --app-scrollbar-thumb: color-mix(in srgb, var(--md-sys-color-on-surface) 26%, transparent);
   --app-scrollbar-thumb-hover: color-mix(in srgb, var(--md-sys-color-on-surface) 46%, transparent);
 
@@ -169,7 +175,10 @@ html, body {
    - Firefox: thin and in the theme's colours. Where its scrollbars float (applyScrollbars sets
      data-scrollbars="overlay"), the content steps back by the lane's width instead.
    The gutter is kept while nothing overflows, so content does not shift when a scrollbar appears;
-   ``app-scroll-auto`` (menus, pickers) gives the lane up until it is needed. ``--app-scroll-head``
+   ``app-scroll-auto`` (menus, pickers) gives the lane up until it is needed, and where scrollbars
+   float it never steps back: the thumb passes over its items' end padding only while it scrolls.
+   The lane is on the end side alone, so an area pads its end by ``--app-scroll-lane`` less than
+   its start (or reaches into its parent's end padding by it). ``--app-scroll-head``
    starts the vertical track below a sticky header; ``--app-scroll-inset`` keeps the thumb clear of
    rounded corners. */
 .app-scroll { overflow: auto; scrollbar-gutter: stable; overscroll-behavior: contain; }
@@ -191,7 +200,7 @@ html, body {
 @supports not selector(::-webkit-scrollbar) {
   .app-scroll { scrollbar-width: thin; scrollbar-color: var(--app-scrollbar-thumb) transparent; }
 }
-:root[data-scrollbars='overlay'] .app-scroll > :not([class*='-leave-active']) { margin-inline-end: var(--app-scrollbar-size); }
+:root[data-scrollbars='overlay'] .app-scroll:not(.app-scroll-auto) > :not([class*='-leave-active']) { margin-inline-end: var(--app-scroll-lane); }
 @media (forced-colors: active) {
   .app-scroll::-webkit-scrollbar-thumb { background: CanvasText; }
 }

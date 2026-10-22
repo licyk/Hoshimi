@@ -237,7 +237,7 @@ async function copy(text: string) {
 </template>
 
 <style scoped>
-.settings { display: flex; flex-direction: column; gap: var(--app-space-4); padding: var(--app-space-4) var(--app-space-6) var(--app-space-8); min-width: 0; }
+.settings { display: flex; flex-direction: column; gap: var(--app-space-4); padding: var(--app-space-4) var(--app-space-6) var(--app-space-8); padding-inline-end: calc(var(--app-space-6) - var(--app-scroll-lane)); min-width: 0; }
 .skeletons { display: flex; flex-direction: column; gap: var(--app-space-3); }
 .panel { display: flex; flex-direction: column; gap: var(--app-space-4); min-width: 0; }
 .banner {
@@ -256,6 +256,6 @@ p { margin: 0; }
 .buttons { display: flex; flex-wrap: wrap; gap: var(--app-space-2); }
 .start { align-self: flex-start; }
 @container app-content (max-width: 599px) {
-  .settings { padding: var(--app-space-3); }
+  .settings { padding: var(--app-space-3); padding-inline-end: max(var(--app-space-1), calc(var(--app-space-3) - var(--app-scroll-lane))); }
 }
 </style>

@@ -209,12 +209,15 @@ function clear() {
 .playground {
   /* The conversation and the composer share one column, centred, with the room around it left empty. */
   --column: 768px;
-  display: flex; flex-direction: column; height: 100%; padding: var(--app-space-4) var(--app-space-6) var(--app-space-3);
+  --pad-end: calc(var(--app-space-6) - var(--app-scroll-lane));
+  display: flex; flex-direction: column; height: 100%; padding: var(--app-space-4) var(--app-space-6) var(--app-space-3); padding-inline-end: var(--pad-end);
 }
-/* The thread reaches into the page's padding by its scrollbar's lane, so its column lines up with the composer's. */
+/* The thread reaches into the page's padding by its scrollbar's lane, so its column lines up with the
+   composer's. Where that padding is narrower than the lane (compact), it reaches no further than the
+   page's edge: past it, the page would scroll sideways. */
 .thread {
   flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
-  margin-inline-end: calc(-1 * var(--app-scrollbar-size));
+  margin-inline-end: calc(-1 * min(var(--app-scroll-lane), var(--pad-end)));
   padding: var(--app-space-2) max(0px, calc((100% - var(--column)) / 2)) var(--app-space-4);
 }
 /* The greeting keeps its own height and sits on the composer, the two centred together as one block. */
@@ -236,7 +239,7 @@ function clear() {
 .below { flex: 0 0 0; }
 .empty .below { flex-grow: 1; }
 @media (max-width: 599px) {
-  .playground { padding: var(--app-space-3) var(--app-space-3) var(--app-space-2); }
+  .playground { --pad-end: max(0px, calc(var(--app-space-3) - var(--app-scroll-lane))); padding: var(--app-space-3) var(--app-space-3) var(--app-space-2); padding-inline-end: var(--pad-end); }
   .hint { display: none; }
 }
 </style>
