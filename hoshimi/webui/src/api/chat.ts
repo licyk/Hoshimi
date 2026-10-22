@@ -51,55 +51,49 @@ async function openAiError(response: Response): Promise<ApiError> {
  */
 export type ChatOptions = Record<string, unknown>;
 
-/** Deliver SSE deltas as they arrive, including errors sent after the response headers. */
-export async function streamChat(
-  model: string,
-  messages: ChatMessage[],
-  onDelta: (text: string) => void,
-  signal?: AbortSignal,
-  options?: ChatOptions,
-): Promise<void> {
+/**
+ * A POST with the browser's access key, as JSON (or the ``body`` given as is), that throws an
+ * ApiError for any failure, in OpenAI's error shape or the management API's.
+ */
+export async function authedFetch(path: string, init: RequestInit & { json?: unknown } = {}): Promise<Response> {
   const token = useAuthStore().token;
-  const response = await fetch(`${BASE_URL}/api/v1/playground/chat/completions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ ...options, model, messages, stream: true }),
-    signal,
+  const { json, headers, ...rest } = init;
+  const response = await fetch(`${BASE_URL}${path}`, {
+    ...rest,
+    headers: { ...(json !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...headers },
+    body: json !== undefined ? JSON.stringify(json) : rest.body,
   });
   if (!response.ok) {
     await handleToolAuthentication(response, token ? `Bearer ${token}` : null);
     throw await openAiError(response);
   }
-  if (!response.body) throw new ApiError(0, 'network', 'The server sent no stream');
+  return response;
+}
 
+/**
+ * Read a Server-Sent Events response, handing each event's data to ``consume`` as it arrives; stops
+ * when ``consume`` returns true or the stream ends. Split UTF-8 and CRLF frames are put back together.
+ */
+export async function readSse(response: Response, consume: (payload: string) => boolean | void): Promise<void> {
+  if (!response.body) throw new ApiError(0, 'network', 'The server sent no stream');
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-
-  function consume(frame: string): boolean {
-    const payload = frame.split(/\r?\n/).filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trimStart()).join('\n').trim();
-    if (!payload) return false;
-    if (payload === '[DONE]') return true;
-    const chunk = JSON.parse(payload) as ChatChunk;
-    if (chunk.error) {
-      throw new ApiError(response.status, chunk.error.code ?? chunk.error.type ?? 'upstream_error', chunk.error.message ?? 'The upstream stream failed');
-    }
-    const text = chunk.choices?.[0]?.delta?.content;
-    if (text) onDelta(text);
-    return false;
-  }
-
+  const frame = (text: string) => {
+    const payload = text.split(/\r?\n/).filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trimStart()).join('\n').trim();
+    return payload ? consume(payload) === true : false;
+  };
   try {
     for (;;) {
       const { done, value } = await reader.read();
       buffer += decoder.decode(value, { stream: !done });
       const frames = buffer.split(/\r?\n\r?\n/);
       buffer = frames.pop() ?? '';
-      for (const frame of frames) {
-        if (consume(frame)) return;
+      for (const f of frames) {
+        if (frame(f)) return;
       }
       if (done) {
-        if (buffer.trim()) consume(buffer);
+        if (buffer.trim()) frame(buffer);
         return;
       }
     }
@@ -110,4 +104,29 @@ export async function streamChat(
       reader.releaseLock();
     }
   }
+}
+
+/** Deliver SSE deltas as they arrive, including errors sent after the response headers. */
+export async function streamChat(
+  model: string,
+  messages: ChatMessage[],
+  onDelta: (text: string) => void,
+  signal?: AbortSignal,
+  options?: ChatOptions,
+): Promise<void> {
+  const response = await authedFetch('/api/v1/playground/chat/completions', {
+    method: 'POST',
+    headers: { Accept: 'text/event-stream' },
+    json: { ...options, model, messages, stream: true },
+    signal,
+  });
+  await readSse(response, (payload) => {
+    if (payload === '[DONE]') return true;
+    const chunk = JSON.parse(payload) as ChatChunk;
+    if (chunk.error) {
+      throw new ApiError(response.status, chunk.error.code ?? chunk.error.type ?? 'upstream_error', chunk.error.message ?? 'The upstream stream failed');
+    }
+    const text = chunk.choices?.[0]?.delta?.content;
+    if (text) onDelta(text);
+  });
 }

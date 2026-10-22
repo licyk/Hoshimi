@@ -64,6 +64,8 @@ contains demonstration credentials and is not a ready-to-run account bundle.
 | `server.auto_checkin` | daily check-in timer for free credits (`false` = claim by hand) |
 | `server.check_updates` | ask PyPI at startup and once a day whether a newer release exists, shown on the Overview page (`false` = no request) |
 | `playground.system_prompt` | sent first in every Playground conversation (set in Settings → General); empty sends none |
+| `playground.title_model` | the model that names new Playground chats after their first reply; empty uses the chat's own model |
+| `playground.vision_model` | describes images for models that cannot read them: `auto` (default) picks the first available model that reads images, `off` leaves images out, or a model id |
 | `server.stats_keep_days` | days each recorded call is kept in `hoshimi.db` (default `90`, at least `1`); daily totals and lifetime counters are kept regardless |
 | `security.allow_cidrs` | client IP allowlist; required to bind non-loopback |
 | `security.allow_origins` | CORS origins; requires `server.access_token` |
@@ -148,8 +150,9 @@ Records the gateway accumulates live in one SQLite database,
 `<data directory>/hoshimi.db`: usage statistics (one row per call for
 `server.stats_keep_days` days, hourly totals for 120 days, daily totals and
 lifetime counters forever), the daily check-in state and its history (365 days),
-probe verdicts, and the Playground's conversations (kept until deleted, with the
-one open last). Statistics are written in batches about once a second and on
+probe verdicts, and the Playground's conversations with their attachments (kept
+until deleted, with the one open last; temporary chats are deleted when left and
+on the next start). Statistics are written in batches about once a second and on
 shutdown; a conversation's messages as they are sent.
 
 Files people or other programs read and edit stay plain files: `config.json`,

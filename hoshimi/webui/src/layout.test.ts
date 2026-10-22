@@ -21,7 +21,7 @@ const ROWS: [file: string, selector: string][] = [
   ['views/ChannelsView.vue', '.row-text'],
   ['views/OverviewView.vue', '.path'],
   ['views/ModelsView.vue', '.name-cell'],
-  ['views/PlaygroundView.vue', '.bubble'],
+  ['components/chat/UserMessage.vue', '.bubble'],
   ['views/UsageView.vue', '.name-cell'],
   ['components/ChannelDetail.vue', '.account-text'],
   ['components/LiveCallCard.vue', '.titles'],

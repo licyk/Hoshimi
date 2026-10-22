@@ -1,24 +1,93 @@
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
 import { computed, type Ref } from 'vue';
+import { authedFetch, readSse } from '@/api/chat';
 import { api, unwrap } from '@/api/client';
 import { keys } from '@/api/queries/keys';
+import type { AttachmentView, MessageView, Notice } from '@/api/types';
 
 /**
- * The Playground's kept conversations. The page calls these as a conversation happens (create on
- * the first send, append each message, remember which one is open); the history list is a query
- * the calls invalidate, so it follows without being refetched on its own.
+ * The Playground's kept conversations. A conversation is a tree of messages; sending, editing and
+ * retrying add messages and stream the reply back as events (``ReplyEvent``), while the server puts
+ * together what the model is sent. The history list is a query these calls invalidate.
  */
+export type ReplyEvent =
+  | { type: 'user'; message: MessageView }
+  | { type: 'assistant'; message: MessageView }
+  | { type: 'stage'; stage: 'describing'; model: string }
+  | { type: 'notice'; notice: Notice }
+  | { type: 'thinking' }
+  | { type: 'delta'; text: string }
+  | { type: 'done'; message: MessageView };
+
+export interface SendBody {
+  parent_id: string | null;
+  content: string;
+  attachment_ids: string[];
+  model: string;
+  effort: string;
+}
+
+async function stream(path: string, body: unknown, onEvent: (event: ReplyEvent) => void, signal?: AbortSignal): Promise<void> {
+  const response = await authedFetch(path, { method: 'POST', headers: { Accept: 'text/event-stream' }, json: body, signal });
+  await readSse(response, (payload) => onEvent(JSON.parse(payload) as ReplyEvent));
+}
+
+const path = (id: string) => ({ params: { path: { conversation_id: id } } });
+
 export const conversationsApi = {
-  create: (model: string, effort: string) => unwrap(api.POST('/api/v1/playground/conversations', { body: { model, effort, title: '' } })),
-  get: (id: string) => unwrap(api.GET('/api/v1/playground/conversations/{conversation_id}', { params: { path: { conversation_id: id } } })),
-  update: (id: string, patch: { title?: string; model?: string; effort?: string; archived?: boolean }) =>
-    unwrap(api.PATCH('/api/v1/playground/conversations/{conversation_id}', { params: { path: { conversation_id: id } }, body: patch })),
-  remove: (id: string) => unwrap(api.DELETE('/api/v1/playground/conversations/{conversation_id}', { params: { path: { conversation_id: id } } })),
-  append: (id: string, role: 'user' | 'assistant', content: string, model = '') =>
-    unwrap(api.POST('/api/v1/playground/conversations/{conversation_id}/messages', { params: { path: { conversation_id: id } }, body: { role, content, model } })),
+  create: (model: string, effort: string, temporary = false) =>
+    unwrap(api.POST('/api/v1/playground/conversations', { body: { model, effort, temporary, title: '' } })),
+  get: (id: string) => unwrap(api.GET('/api/v1/playground/conversations/{conversation_id}', path(id))),
+  update: (id: string, patch: { title?: string; model?: string; effort?: string; archived?: boolean; current_leaf?: string }) =>
+    unwrap(api.PATCH('/api/v1/playground/conversations/{conversation_id}', { ...path(id), body: patch })),
+  remove: (id: string) => unwrap(api.DELETE('/api/v1/playground/conversations/{conversation_id}', path(id))),
+  branch: (id: string, messageId: string) =>
+    unwrap(api.POST('/api/v1/playground/conversations/{conversation_id}/branch', { ...path(id), body: { message_id: messageId } })),
+  title: (id: string) => unwrap(api.POST('/api/v1/playground/conversations/{conversation_id}/title', path(id))),
+  /** The Chat Completions request behind a reply, as the gateway sent it. */
+  request: (id: string, messageId: string) =>
+    unwrap(api.GET('/api/v1/playground/conversations/{conversation_id}/messages/{message_id}/request', { params: { path: { conversation_id: id, message_id: messageId } } })),
   session: () => unwrap(api.GET('/api/v1/playground/session')),
   setSession: (id: string | null) => unwrap(api.PUT('/api/v1/playground/session', { body: { conversation_id: id } })),
+
+  /** Add a question after ``parent_id`` and stream the reply. */
+  send: (id: string, body: SendBody, onEvent: (event: ReplyEvent) => void, signal?: AbortSignal) =>
+    stream(`/api/v1/playground/conversations/${encodeURIComponent(id)}/messages`, body, onEvent, signal),
+  /** Another reply beside ``messageId`` (or a first one to a question), streamed. */
+  retry: (id: string, messageId: string, body: { model?: string; effort?: string }, onEvent: (event: ReplyEvent) => void, signal?: AbortSignal) =>
+    stream(`/api/v1/playground/conversations/${encodeURIComponent(id)}/messages/${encodeURIComponent(messageId)}/retry`, body, onEvent, signal),
+
+  /** An image as itself, or a file as its text (with ``type`` the file's own, for a PDF read in the browser). */
+  async upload(data: Blob, name: string, query: { type?: string; width?: number; height?: number } = {}): Promise<AttachmentView> {
+    const params = new URLSearchParams({ name });
+    for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== '') params.set(key, String(value));
+    const response = await authedFetch(`/api/v1/playground/attachments?${params}`, { method: 'POST', headers: { 'Content-Type': data.type || 'text/plain' }, body: data });
+    return (await response.json()) as AttachmentView;
+  },
+  removeAttachment: (id: string) => unwrap(api.DELETE('/api/v1/playground/attachments/{attachment_id}', { params: { path: { attachment_id: id } } })),
 };
+
+const blobs = new Map<string, Promise<string>>();
+/**
+ * An attachment as an object URL, fetched once with the access key (an ``<img>`` cannot send it).
+ * Kept for the page's life: a conversation shows the same images again as it is reopened.
+ */
+export function attachmentUrl(id: string): Promise<string> {
+  let url = blobs.get(id);
+  if (!url) {
+    url = authedFetch(`/api/v1/playground/attachments/${encodeURIComponent(id)}`, { method: 'GET' })
+      .then((response) => response.blob())
+      .then((blob) => URL.createObjectURL(blob));
+    url.catch(() => blobs.delete(id));
+    blobs.set(id, url);
+  }
+  return url;
+}
+
+/** An attachment just uploaded from this page: its local preview stands in, so it is not fetched back. */
+export function rememberAttachment(id: string, url: string) {
+  blobs.set(id, Promise.resolve(url));
+}
 
 /** Recent or archived conversations, the most recently used first. */
 export const useConversations = (archived: Ref<boolean>) =>
@@ -32,3 +101,4 @@ export function useRefreshConversations() {
   const qc = useQueryClient();
   return () => qc.invalidateQueries({ queryKey: keys.conversations });
 }
+

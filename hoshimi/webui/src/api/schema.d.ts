@@ -332,6 +332,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/playground/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Attachment
+         * @description The request body is the file: an image (PNG, JPEG, WebP or GIF) as itself, any other file as its UTF-8 text.
+         */
+        post: operations["upload_attachment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/playground/attachments/{attachment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Attachment
+         * @description An image as itself, a file as its text.
+         */
+        get: operations["get_attachment"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Attachment
+         * @description Take back an attachment before it is sent; one a message carries stays.
+         */
+        delete: operations["delete_attachment"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/playground/chat/completions": {
         parameters: {
             query?: never;
@@ -346,9 +390,7 @@ export interface paths {
          * @description The Chat Completions route, filed under its own origin so a test from the web UI is not a client's call.
          *
          *     The system prompt from Settings (``playground.system_prompt``) goes first,
-         *     unless the request brings a system message of its own. It is added here,
-         *     per request, rather than kept in each conversation: a change in Settings
-         *     applies to every conversation from its next message on.
+         *     unless the request brings a system message of its own.
          */
         post: operations["create_playground_chat_completion"];
         delete?: never;
@@ -364,7 +406,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Conversations */
+        /**
+         * List Conversations
+         * @description The kept conversations, the most recently used first; temporary ones are never listed.
+         */
         get: operations["list_conversations"];
         put?: never;
         /** Create Conversation */
@@ -394,6 +439,26 @@ export interface paths {
         patch: operations["update_conversation"];
         trace?: never;
     };
+    "/api/v1/playground/conversations/{conversation_id}/branch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Branch Conversation
+         * @description A new conversation holding this one's path up to ``message_id``.
+         */
+        post: operations["branch_conversation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/playground/conversations/{conversation_id}/messages": {
         parameters: {
             query?: never;
@@ -404,10 +469,74 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Append Message
-         * @description Add a message at the end. The first user message titles an untitled conversation; any message unarchives it.
+         * Send Message
+         * @description Add a question after ``parent_id`` and stream the reply.
+         *
+         *     Events, in order: ``user`` (the question as kept), ``assistant`` (the
+         *     reply as filed), then any of ``stage``, ``notice``, ``thinking`` and
+         *     ``delta``, and last ``done`` (the reply as kept, with how it ended).
          */
-        post: operations["append_conversation_message"];
+        post: operations["send_conversation_message"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/playground/conversations/{conversation_id}/messages/{message_id}/request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Message Request
+         * @description The Chat Completions request behind a reply, as the gateway sent it (for "Copy as API request").
+         */
+        get: operations["get_conversation_message_request"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/playground/conversations/{conversation_id}/messages/{message_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry Message
+         * @description Another reply beside ``message_id`` (a reply), or a first one to it (a question left unanswered); events as for a send.
+         */
+        post: operations["retry_conversation_message"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/playground/conversations/{conversation_id}/title": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Title Conversation
+         * @description Have a model name the conversation after its first exchange; a user's own title is kept. Waits for the model.
+         */
+        post: operations["title_conversation"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1003,6 +1132,26 @@ export interface components {
             /** Version */
             version: string;
         };
+        /** AttachmentView */
+        AttachmentView: {
+            /** Height */
+            height: number | null;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "image" | "file";
+            /** Mime */
+            mime: string;
+            /** Name */
+            name: string;
+            /** Size */
+            size: number;
+            /** Width */
+            width: number | null;
+        };
         /** BalanceReport */
         BalanceReport: {
             checkin: components["schemas"]["CheckinState"];
@@ -1031,6 +1180,11 @@ export interface components {
              * @default credits
              */
             unit: string;
+        };
+        /** Branch */
+        Branch: {
+            /** Message Id */
+            message_id: string;
         };
         /** CallPage */
         CallPage: {
@@ -1436,6 +1590,11 @@ export interface components {
              */
             model: string;
             /**
+             * Temporary
+             * @default false
+             */
+            temporary: boolean;
+            /**
              * Title
              * @default
              */
@@ -1448,11 +1607,13 @@ export interface components {
         };
         /**
          * ConversationPatch
-         * @description What to change; a field left out stays as it is.
+         * @description What to change; a field left out stays as it is. A title set here is the user's own, never replaced.
          */
         ConversationPatch: {
             /** Archived */
             archived?: boolean | null;
+            /** Current Leaf */
+            current_leaf?: string | null;
             /** Effort */
             effort?: string | null;
             /** Model */
@@ -1464,6 +1625,8 @@ export interface components {
         ConversationSummary: {
             /** Archived */
             archived: boolean;
+            /** Branched From */
+            branched_from: string;
             /** Created At */
             created_at: number;
             /** Effort */
@@ -1472,8 +1635,15 @@ export interface components {
             id: string;
             /** Model */
             model: string;
+            /** Temporary */
+            temporary: boolean;
             /** Title */
             title: string;
+            /**
+             * Title State
+             * @enum {string}
+             */
+            title_state: "" | "provisional" | "auto" | "user";
             /** Updated At */
             updated_at: number;
         };
@@ -1481,8 +1651,12 @@ export interface components {
         ConversationView: {
             /** Archived */
             archived: boolean;
+            /** Branched From */
+            branched_from: string;
             /** Created At */
             created_at: number;
+            /** Current Leaf */
+            current_leaf: string;
             /** Effort */
             effort: string;
             /** Id */
@@ -1491,8 +1665,15 @@ export interface components {
             messages: components["schemas"]["MessageView"][];
             /** Model */
             model: string;
+            /** Temporary */
+            temporary: boolean;
             /** Title */
             title: string;
+            /**
+             * Title State
+             * @enum {string}
+             */
+            title_state: "" | "provisional" | "auto" | "user";
             /** Updated At */
             updated_at: number;
         };
@@ -1807,21 +1988,6 @@ export interface components {
              */
             waiting_for: string;
         };
-        /** MessageCreate */
-        MessageCreate: {
-            /** Content */
-            content: string;
-            /**
-             * Model
-             * @default
-             */
-            model: string;
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "user" | "assistant";
-        };
         /** MessageResponse */
         MessageResponse: {
             /** Content */
@@ -1842,6 +2008,31 @@ export interface components {
             type: string;
             usage: components["schemas"]["MessageUsage"];
         };
+        /**
+         * MessageSend
+         * @description A question after ``parent_id`` (None: the first). An edit is a question after the edited one's parent.
+         */
+        MessageSend: {
+            /** Attachment Ids */
+            attachment_ids?: string[];
+            /**
+             * Content
+             * @default
+             */
+            content: string;
+            /**
+             * Effort
+             * @default
+             */
+            effort: string;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /** Parent Id */
+            parent_id?: string | null;
+        };
         /** MessageUsage */
         MessageUsage: {
             /**
@@ -1861,20 +2052,44 @@ export interface components {
         };
         /** MessageView */
         MessageView: {
+            /** Attachments */
+            attachments: components["schemas"]["AttachmentView"][];
             /** Content */
             content: string;
             /** Created At */
             created_at: number;
             /**
+             * Effort
+             * @default
+             */
+            effort: string;
+            /**
+             * Error
+             * @default
+             */
+            error: string;
+            /** Id */
+            id: string;
+            /**
              * Model
              * @default
              */
             model: string;
+            /** Notices */
+            notices: components["schemas"]["Notice"][];
+            /** Parent Id */
+            parent_id: string | null;
             /**
              * Role
              * @enum {string}
              */
             role: "user" | "assistant";
+            /**
+             * Status
+             * @default complete
+             * @enum {string}
+             */
+            status: "complete" | "streaming" | "stopped" | "error";
         };
         /** ModelList */
         ModelList: {
@@ -2014,6 +2229,24 @@ export interface components {
             system_proxy: boolean;
         };
         /**
+         * Notice
+         * @description Something about how a reply was made: ``image-described`` (by ``model``), ``image-omitted``, or ``image-refused`` (by ``model``).
+         */
+        Notice: {
+            /** Kind */
+            kind: string;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+        };
+        /**
          * PassiveCounters
          * @description What the station's answers say about the connection: counts, never bodies.
          */
@@ -2081,7 +2314,12 @@ export interface components {
         };
         /**
          * PlaygroundSettingsView
-         * @description ``playground.*``: ``system_prompt`` goes first in every Playground conversation; empty sends none.
+         * @description ``playground.*``.
+         *
+         *     ``system_prompt`` goes first in every Playground conversation (empty sends
+         *     none); ``title_model`` names conversations (empty: the conversation's own
+         *     model); ``vision_model`` describes images for a model that cannot read
+         *     them (``auto`` picks one, ``off`` never asks).
          */
         PlaygroundSettingsView: {
             /**
@@ -2089,6 +2327,16 @@ export interface components {
              * @default
              */
             system_prompt: string;
+            /**
+             * Title Model
+             * @default
+             */
+            title_model: string;
+            /**
+             * Vision Model
+             * @default auto
+             */
+            vision_model: string;
         };
         /**
          * ProbeRequest
@@ -2218,6 +2466,19 @@ export interface components {
             force: boolean;
             /** Provider */
             provider?: string | null;
+        };
+        /**
+         * Retry
+         * @description Another reply to the same question; ``model`` and ``effort`` default to the ones it was answered with.
+         */
+        Retry: {
+            /** Effort */
+            effort?: string | null;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
         };
         /**
          * ServerView
@@ -3245,6 +3506,210 @@ export interface operations {
             };
         };
     };
+    upload_attachment: {
+        parameters: {
+            query: {
+                /** @description The file's name */
+                name: string;
+                /** @description The file's own type, when the body is its extracted text (a PDF) */
+                type?: string;
+                width?: number | null;
+                height?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachmentView"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_attachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_attachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_playground_chat_completion: {
         parameters: {
             query?: never;
@@ -3548,7 +4013,7 @@ export interface operations {
             };
         };
     };
-    append_conversation_message: {
+    branch_conversation: {
         parameters: {
             query?: never;
             header?: never;
@@ -3559,7 +4024,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["MessageCreate"];
+                "application/json": components["schemas"]["Branch"];
             };
         };
         responses: {
@@ -3569,7 +4034,289 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MessageView"];
+                    "application/json": components["schemas"]["ConversationView"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    send_conversation_message: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MessageSend"];
+            };
+        };
+        responses: {
+            /** @description The reply's events, as Server-Sent Events */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_conversation_message_request: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_conversation_message: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Retry"];
+            };
+        };
+        responses: {
+            /** @description The reply's events, as Server-Sent Events */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    title_conversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationSummary"];
                 };
             };
             /** @description Bad Request */

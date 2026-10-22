@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { BASE_URL } from '@/api/baseUrl';
-import { useMeta, useModels, useSettings, useUpdateSettings, useVersion } from '@/api/queries/app';
+import { useMeta, useModelSpecs, useModels, useSettings, useUpdateSettings, useVersion } from '@/api/queries/app';
 import { useChannels } from '@/api/queries/channels';
 import NetworkSettings from '@/components/NetworkSettings.vue';
 import { useI18n } from '@/i18n';
@@ -24,6 +24,7 @@ const update = useUpdateSettings();
 const version = useVersion();
 const meta = useMeta();
 const models = useModels();
+const specs = useModelSpecs();
 const channels = useChannels();
 const snackbar = useSnackbar();
 const prefs = usePreferencesStore();
@@ -60,6 +61,25 @@ const modelOptions = computed(() => [
 const defaultModel = computed({
   get: () => s.value?.server.default_model ?? NO_MODEL,
   set: (value: string | null) => save({ server: { default_model: value || null } }),
+});
+// Playground: the models that title chats and describe images; a vision model is offered only if it reads images.
+const catalogOptions = computed(() => modelOptions.value.filter((o) => o.value !== NO_MODEL));
+const titleModelOptions = computed(() => [{ value: '', label: t('settings.titleModelSame') }, ...catalogOptions.value]);
+const visionModelOptions = computed(() => {
+  const seeing = new Set((specs.data.value?.data ?? []).filter((m) => m.vision).map((m) => m.id));
+  return [
+    { value: 'auto', label: t('settings.visionAuto'), description: t('settings.visionAutoHelp') },
+    { value: 'off', label: t('settings.visionOff'), description: t('settings.visionOffHelp') },
+    ...catalogOptions.value.filter((o) => seeing.has(o.value)),
+  ];
+});
+const titleModel = computed({
+  get: () => s.value?.playground.title_model ?? '',
+  set: (value: string | null) => save({ playground: { title_model: value ?? '' } }),
+});
+const visionModel = computed({
+  get: () => s.value?.playground.vision_model || 'auto',
+  set: (value: string | null) => save({ playground: { vision_model: value || 'auto' } }),
 });
 const locale = computed({ get: () => prefs.prefs.locale, set: (v: string | null) => (prefs.prefs.locale = (v ?? 'auto') as typeof prefs.prefs.locale) });
 
@@ -141,6 +161,16 @@ async function copy(text: string) {
             :supporting-text="t('settings.systemPromptHelp')"
             @change="save({ playground: { system_prompt: $event } })"
           />
+          <div class="row">
+            <div class="field">
+              <PickerMenu v-model="titleModel" :label="t('settings.titleModel')" :options="titleModelOptions" :loading="models.isPending.value" :search-label="t('settings.searchModels')" :search-from="8" :no-matches="t('models.none')" />
+              <p class="type-body-small muted">{{ t('settings.titleModelHelp') }}</p>
+            </div>
+            <div class="field">
+              <PickerMenu v-model="visionModel" :label="t('settings.visionModel')" :options="visionModelOptions" :loading="models.isPending.value" :search-label="t('settings.searchModels')" :search-from="8" :no-matches="t('models.none')" />
+              <p class="type-body-small muted">{{ t('settings.visionModelHelp') }}</p>
+            </div>
+          </div>
         </PageSection>
       </div>
 
@@ -263,6 +293,8 @@ p { margin: 0; }
 .listening.fallback { color: var(--md-sys-color-tertiary); }
 .row { display: flex; flex-wrap: wrap; gap: var(--app-space-3); align-items: flex-start; }
 .row > * { flex: 1 1 260px; min-width: 0; }
+.field { display: flex; flex-direction: column; gap: var(--app-space-1); }
+.field p { margin: 0; }
 .field-row { display: flex; align-items: center; justify-content: space-between; gap: var(--app-space-4); min-height: 56px; flex-wrap: wrap; }
 .field-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 200px; }
 .color { width: 56px; height: 40px; padding: 0; border: 1px solid var(--md-sys-color-outline); border-radius: var(--md-sys-shape-corner-small); background: transparent; cursor: pointer; }

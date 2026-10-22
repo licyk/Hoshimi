@@ -1,375 +1,584 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ApiError } from '@/api/client';
-import { streamChat, type ChatMessage } from '@/api/chat';
-import { conversationsApi, useRefreshConversations } from '@/api/conversations';
+import { BASE_URL } from '@/api/baseUrl';
+import { conversationsApi, rememberAttachment, useRefreshConversations } from '@/api/conversations';
 import { useModelSpecs, useModels } from '@/api/queries/app';
-import { useI18n } from '@/i18n';
+import type { AttachmentView, ConversationSummary, MessageView } from '@/api/types';
 import CatalogStatus from '@/components/CatalogStatus.vue';
-import ConversationList from '@/components/ConversationList.vue';
-import { ChipButton, Composer, ComposerMenu, EmptyState, SideSheet, TRANSITIONS, icons, keepLeavingInPlace, useSnackbar } from '@/ui';
+import AssistantMessage from '@/components/chat/AssistantMessage.vue';
+import AttachmentPreview from '@/components/chat/AttachmentPreview.vue';
+import { AttachmentError, prepare } from '@/components/chat/attachments';
+import ChatSidebar, { type ConversationAction } from '@/components/chat/ChatSidebar.vue';
+import UserMessage from '@/components/chat/UserMessage.vue';
+import { useI18n } from '@/i18n';
+import { isLocal, useChatStore } from '@/stores/chat';
+import { AppButton, AppDialog, AppIcon, AppMenu, ChipButton, Composer, ComposerMenu, ConfirmDialog, EmptyState, IconButton, SideSheet, TextField, icons, useSnackbar } from '@/ui';
 import { useElementWidth } from '@/ui/useElementWidth';
-// Not through '@/ui': markdown-it and highlight.js would then load with every page, not with this one.
-import Markdown from '@/ui/Markdown.vue';
 
+/**
+ * The Playground as a chat app: the chats in a sidebar (a drawer on a narrow page), and the open
+ * one in a column with no names beside its messages — the questions in bubbles at the end of the
+ * line, the replies across it. The model is picked at the top, a chat can be made temporary there,
+ * and its menu renames, archives and deletes it. The composer takes text, photos and files (by its
+ * + button, by dropping them on the page, or by pasting), and the effort. Everything said is kept on
+ * the server, which also writes the titles and describes images for models that cannot read them.
+ */
 const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
 const models = useModels();
-const snackbar = useSnackbar();
-
-interface Turn {
-  role: 'user' | 'assistant';
-  content: string;
-}
-const turns = ref<Turn[]>([]);
-
 const specs = useModelSpecs();
-const model = ref<string | null>(null);
-// The models page opens the Playground to try one model: ?model=<id>, here or already kept alive.
-// It is an instruction, not a state: another model than the one in use starts a new conversation
-// rather than switch this one's, and the address lets it go, so a reload returns to the session.
+const snackbar = useSnackbar();
+const chat = useChatStore();
+const refreshList = useRefreshConversations();
+watch(() => chat.listChanged, () => void refreshList());
+
+// -- the model and its effort ------------------------------------------------
+// A catalogue runs to hundreds of ids: the picker searches them, and names a model beside its id.
+const modelOptions = computed(() =>
+  (models.data.value?.data ?? []).map((m) => ({ value: m.id, label: m.id, description: [m.display_name !== m.id ? m.display_name : '', m.owned_by].filter(Boolean).join(' · '), keywords: [m.owned_by, m.display_name ?? ''] })),
+);
+watch(
+  () => models.data.value?.data,
+  (data) => {
+    if (!chat.model && data?.length) chat.model = data[0].id;
+  },
+  { immediate: true },
+);
+// The models page opens the Playground to try one model: ?model=<id>, here or already kept alive. It
+// starts a new chat with that model, and the address lets it go, so a reload returns to the session.
 const openedForModel = typeof route.query.model === 'string' && !!route.query.model;
 watch(
   () => route.query.model,
   (value) => {
     if (typeof value !== 'string' || !value) return;
-    if (value !== model.value) {
-      if (turns.value.length) newChat();
-      model.value = value;
+    if (value !== chat.model || chat.path.length) {
+      if (chat.path.length) chat.startNew();
+      chat.choose({ model: value, effort: '' });
     }
     void router.replace({ query: {} });
   },
   { immediate: true },
 );
-watch(
-  () => models.data.value?.data,
-  (data) => {
-    if (!model.value && data?.length) model.value = data[0].id;
-  },
-  { immediate: true },
-);
-// A catalogue runs to hundreds of ids: the picker searches them, and names a model beside its id.
-const modelOptions = computed(() => (models.data.value?.data ?? []).map((m) => ({ value: m.id, label: m.id, description: [m.display_name !== m.id ? m.display_name : '', m.owned_by].filter(Boolean).join(' · '), keywords: [m.owned_by, m.display_name ?? ''] })));
-/** The model in front of the picker: its effort menu is that model's, not the lane's. */
-const spec = computed(() => specs.data.value?.data.find((m) => m.id === model.value));
-/** `''` sends no level at all — the gateway then leaves the body exactly as it was. */
-const effort = ref('');
-const effortOptions = computed(() => [
-  { value: '', label: t('playground.effortAuto') },
-  ...(spec.value?.efforts ?? []).map((o) => ({ value: o.id, label: o.name })),
-]);
-watch(model, () => (effort.value = ''));
-/** The control shows the level's short name; the menu says what Auto means. */
-const effortText = computed(() => (effort.value ? effortOptions.value.find((o) => o.value === effort.value)?.label : t('playground.effortAutoShort')));
-const setModel = (value: string | null) => (model.value = value);
+const spec = computed(() => specs.data.value?.data.find((m) => m.id === chat.model));
+const effortOptions = computed(() => [{ value: '', label: t('playground.effortAuto') }, ...(spec.value?.efforts ?? []).map((o) => ({ value: o.id, label: o.name }))]);
+const effortText = computed(() => (chat.effort ? effortOptions.value.find((o) => o.value === chat.effort)?.label : t('playground.effortAutoShort')));
 
-const draft = ref('');
-const streaming = ref(false);
-const scroller = ref<HTMLElement | null>(null);
-const composer = ref<InstanceType<typeof Composer> | null>(null);
-/** No conversation yet: the composer waits in the middle of the page, under the greeting. */
-const empty = computed(() => !turns.value.length);
-let controller: AbortController | null = null;
-
-const toMessage = (turn: Turn): ChatMessage => ({ role: turn.role, content: turn.content });
-
-async function scrollDown() {
-  await nextTick();
-  scroller.value?.scrollTo({ top: scroller.value.scrollHeight });
-}
-
-// -- the kept conversation ----------------------------------------------------
-/** The conversation on screen, as the server keeps it; null until the first message is sent. */
-const conversationId = ref<string | null>(null);
-const refreshList = useRefreshConversations();
-/**
- * Writes to the server wait for each other, so a reply is never filed before the question it
- * answers. A failed one is said once and does not stop the conversation, which goes on unkept.
- */
-let saving: Promise<unknown> = Promise.resolve();
-function save(work: () => Promise<unknown>) {
-  saving = saving.then(work).catch(() => snackbar.error(t('playground.saveFailed')));
-  return saving;
-}
-/** The id to file this send under, creating the conversation on its first message. */
-async function conversationForSend(): Promise<string | null> {
-  if (conversationId.value) return conversationId.value;
+// -- the layout ----------------------------------------------------------------
+const root = ref<HTMLElement | null>(null);
+const width = useElementWidth(root, 1280);
+/** Room for the sidebar beside the chat; on a narrower page it is a drawer. */
+const wide = computed(() => width.value >= 900);
+const SIDEBAR_KEY = 'hoshimi:playground-sidebar';
+const sidebarOpen = ref(readSidebar());
+function readSidebar() {
   try {
-    const created = await conversationsApi.create(model.value ?? '', effort.value);
-    conversationId.value = created.id;
-    void save(() => conversationsApi.setSession(created.id));
-    return created.id;
+    return localStorage.getItem(SIDEBAR_KEY) !== 'closed';
   } catch {
-    snackbar.error(t('playground.saveFailed'));
-    return null;
+    return true;
   }
 }
-// The model and level are the conversation's own: picking others is kept with it. Not while a
-// conversation is being opened, whose own values are being put in place.
-let opening = false;
-watch([model, effort], ([m, e]) => {
-  const id = conversationId.value;
-  if (!opening && id) void save(() => conversationsApi.update(id, { model: m ?? '', effort: e }));
+watch(sidebarOpen, (open) => {
+  try {
+    localStorage.setItem(SIDEBAR_KEY, open ? 'open' : 'closed');
+  } catch {
+    /* private mode */
+  }
 });
+const drawerOpen = ref(false);
+const showSidebar = () => (wide.value ? (sidebarOpen.value = true) : (drawerOpen.value = true));
+
+// -- the thread ------------------------------------------------------------------
+const scroller = ref<HTMLElement | null>(null);
+const composer = ref<InstanceType<typeof Composer> | null>(null);
+const empty = computed(() => !chat.path.length);
+/** Follow the reply down while the reader is at the bottom; leave them where they scrolled to otherwise. */
+let pinned = true;
+const onScroll = () => {
+  const el = scroller.value;
+  if (el) pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+};
+async function toBottom(force = false) {
+  await nextTick();
+  if (force || pinned) scroller.value?.scrollTo({ top: scroller.value.scrollHeight });
+}
+watch(() => [chat.path.length, chat.path[chat.path.length - 1]?.content.length], () => void toBottom());
+watch(() => chat.conversation?.id, () => void toBottom(true));
+
+const versionsOf = (m: MessageView) => {
+  const list = chat.siblings(m);
+  return { index: Math.max(0, list.findIndex((s) => s.id === m.id)), total: list.length };
+};
+function step(m: MessageView, direction: 1 | -1) {
+  const list = chat.siblings(m);
+  const target = list[list.findIndex((s) => s.id === m.id) + direction];
+  if (target) chat.switchTo(target.id);
+}
+
+// -- the composer and what is attached ----------------------------------------
+const draft = ref('');
+interface Pending {
+  key: number;
+  kind: 'image' | 'file';
+  name: string;
+  bytes: number;
+  url?: string;
+  view?: AttachmentView;
+}
+let pendingKeys = 0;
+const pending = ref<Pending[]>([]);
+const uploading = computed(() => pending.value.some((p) => !p.view));
+const attached = computed(() => pending.value.filter((p) => p.view).map((p) => p.view!));
+const fileInput = ref<HTMLInputElement | null>(null);
+const dragging = ref(false);
+/** An image goes to a model that cannot read it as another model's description of it: say so before it goes. */
+const visionHint = computed(() => spec.value && !spec.value.vision && pending.value.some((p) => p.kind === 'image'));
+
+const reasons = { unsupported: 'playground.attachUnsupported', 'too-large': 'playground.attachTooLarge', 'no-text': 'playground.attachNoText', unreadable: 'playground.attachUnreadable' } as const;
+async function add(files: Iterable<File>) {
+  for (const file of files) {
+    const entry: Pending = { key: ++pendingKeys, kind: file.type.startsWith('image/') ? 'image' : 'file', name: file.name, bytes: file.size };
+    pending.value = [...pending.value, entry];
+    try {
+      const prepared = await prepare(file);
+      const url = prepared.kind === 'image' ? URL.createObjectURL(prepared.blob) : undefined;
+      update(entry.key, { kind: prepared.kind, name: prepared.name, bytes: prepared.blob.size, url });
+      const view = await conversationsApi.upload(prepared.blob, prepared.name, { type: prepared.type, width: prepared.width, height: prepared.height });
+      if (url) rememberAttachment(view.id, url);
+      if (!pending.value.some((p) => p.key === entry.key)) {
+        void conversationsApi.removeAttachment(view.id).catch(() => undefined);
+        continue;
+      }
+      update(entry.key, { view, bytes: view.size });
+    } catch (error) {
+      drop(entry.key);
+      snackbar.error(error instanceof AttachmentError ? t(reasons[error.reason], { name: file.name }) : t('playground.uploadFailed', { name: file.name }));
+    }
+  }
+}
+const update = (key: number, patch: Partial<Pending>) => (pending.value = pending.value.map((p) => (p.key === key ? { ...p, ...patch } : p)));
+function drop(key: number) {
+  const entry = pending.value.find((p) => p.key === key);
+  pending.value = pending.value.filter((p) => p.key !== key);
+  if (entry?.view) void conversationsApi.removeAttachment(entry.view.id).catch(() => undefined);
+}
+function onPick(e: Event) {
+  const input = e.target as HTMLInputElement;
+  if (input.files) void add([...input.files]);
+  input.value = '';
+}
+function onDrop(e: DragEvent) {
+  dragging.value = false;
+  if (e.dataTransfer?.files.length) void add([...e.dataTransfer.files]);
+}
+function onPaste(e: ClipboardEvent) {
+  const files = [...(e.clipboardData?.files ?? [])];
+  if (!files.length) return;
+  e.preventDefault();
+  void add(files);
+}
 
 async function send() {
   const text = draft.value.trim();
-  if (!text || streaming.value) return;
-  if (!model.value) {
+  if ((!text && !attached.value.length) || chat.busy || uploading.value) return;
+  if (!chat.model) {
     snackbar.error(t('playground.noModel'));
     return;
   }
+  const keep = { draft: draft.value, pending: pending.value };
+  const attachments = attached.value;
   draft.value = '';
-  turns.value.push({ role: 'user', content: text });
-  // The history the model answers: everything sent so far, without the placeholder reply.
-  const history: ChatMessage[] = turns.value.map(toMessage);
-  const reply = reactive<Turn>({ role: 'assistant', content: '' });
-  turns.value.push(reply);
-  streaming.value = true;
-  controller = new AbortController();
-  const sentWith = model.value;
-  void scrollDown();
-  // Kept under the conversation this send began in, even if another is opened before it ends.
-  const id = await conversationForSend();
-  if (id) void save(() => conversationsApi.append(id, 'user', text));
+  pending.value = [];
+  pinned = true;
   try {
-    await streamChat(
-      sentWith,
-      history,
-      (delta) => {
-        reply.content += delta;
-        void scrollDown();
-      },
-      controller.signal,
-      effort.value ? { reasoning_effort: effort.value } : {},
-    );
+    await chat.submit(text, attachments);
   } catch (error) {
-    if ((error as Error).name !== 'AbortError') {
-      snackbar.error(error instanceof ApiError ? error.message : t('playground.failed'));
-    }
-  } finally {
-    // Keep partial output on cancellation or failure, but never replay an empty placeholder.
-    if (!reply.content) {
-      const at = turns.value.indexOf(reply);
-      if (at >= 0) turns.value.splice(at, 1);
-    } else if (id) {
-      void save(() => conversationsApi.append(id, 'assistant', reply.content, sentWith));
-    }
-    void saving.then(() => refreshList());
-    streaming.value = false;
-    controller = null;
+    draft.value = keep.draft;
+    pending.value = keep.pending;
+    snackbar.error(error instanceof Error && error.message ? error.message : t('playground.sendFailed'));
   }
 }
 
-function stop() {
-  controller?.abort();
+// -- editing, retrying, copying, branching -----------------------------------------
+const editingId = ref<string | null>(null);
+/** The up arrow in an empty composer: the last question, to edit. */
+function recall() {
+  const last = [...chat.path].reverse().find((m) => m.role === 'user' && !isLocal(m.id));
+  if (last && !chat.busy) editingId.value = last.id;
 }
-onBeforeUnmount(stop);
-
-const historyOpen = ref(false);
-/** A fresh conversation with the model and level in use; the one on screen stays in the history. */
-function newChat() {
-  stop();
-  conversationId.value = null;
-  turns.value = [];
-  draft.value = '';
-  historyOpen.value = false;
-  void save(() => conversationsApi.setSession(null));
-  void nextTick(() => composer.value?.focus());
-}
-
-/** Puts a kept conversation on screen, with the model and level it was last used with. */
-async function open(id: string, { remember = true } = {}) {
-  historyOpen.value = false;
-  if (id === conversationId.value) return;
-  stop();
-  let conversation;
+async function submitEdit(m: MessageView, content: string, attachments: AttachmentView[]) {
+  editingId.value = null;
+  pinned = true;
   try {
-    conversation = await conversationsApi.get(id);
+    await chat.edit(m.id, content, attachments);
+  } catch (error) {
+    snackbar.error(error instanceof Error && error.message ? error.message : t('playground.sendFailed'));
+  }
+}
+async function retry(m: MessageView, model?: string) {
+  pinned = true;
+  try {
+    await chat.retry(m.id, model);
+  } catch (error) {
+    snackbar.error(error instanceof Error && error.message ? error.message : t('playground.failed'));
+  }
+}
+async function branch(m: MessageView) {
+  try {
+    await chat.branch(m.id);
+    snackbar.show(t('playground.branchOpened'));
   } catch (error) {
     snackbar.error(error instanceof Error ? error.message : t('common.error'));
-    return;
   }
-  opening = true;
-  conversationId.value = conversation.id;
-  turns.value = conversation.messages.map((m) => ({ role: m.role, content: m.content }));
-  draft.value = '';
-  if (conversation.model) model.value = conversation.model;
-  // After the model's own watcher, which resets the level to Auto.
-  await nextTick();
-  effort.value = conversation.effort;
-  await nextTick();
-  opening = false;
-  if (remember) void save(() => conversationsApi.setSession(conversation.id));
-  void scrollDown();
+}
+async function copy(text: string, done = t('common.copied')) {
+  try {
+    await navigator.clipboard.writeText(text);
+    snackbar.show(done);
+  } catch {
+    snackbar.error(t('common.error'));
+  }
+}
+/** The reply's request as a curl command against this gateway's public API, with the key left to the reader. */
+async function copyRequest(m: MessageView) {
+  const id = chat.conversation?.id;
+  if (!id) return;
+  try {
+    const body = await conversationsApi.request(id, m.id);
+    const url = new URL(`${BASE_URL}/v1/chat/completions`, window.location.href).href;
+    const command = `curl ${url} \\\n  -H "Authorization: Bearer $HOSHIMI_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d @- <<'JSON'\n${JSON.stringify(body, null, 2)}\nJSON`;
+    await copy(command, t('playground.requestCopied'));
+  } catch (error) {
+    snackbar.error(error instanceof Error ? error.message : t('common.error'));
+  }
 }
 
-const onDeleted = (id: string) => id === conversationId.value && newChat();
+// -- chats: new, temporary, open, rename, archive, delete ------------------------------
+function newChat(options: { temporary?: boolean } = {}) {
+  chat.startNew(options);
+  editingId.value = null;
+  drawerOpen.value = false;
+  void nextTick(() => composer.value?.focus());
+}
+const toggleTemporary = () => newChat({ temporary: !chat.temporary });
+async function select(id: string) {
+  drawerOpen.value = false;
+  editingId.value = null;
+  try {
+    await chat.open(id);
+  } catch (error) {
+    snackbar.error(error instanceof Error ? error.message : t('common.error'));
+  }
+}
+const chatMenu = computed(() => [
+  { id: 'rename', label: t('playground.rename'), icon: icons.Pencil },
+  { id: 'archive', label: t('playground.archive'), icon: icons.Archive },
+  { id: 'delete', label: t('playground.delete'), icon: icons.Trash2, danger: true },
+]);
+const renaming = ref<ConversationSummary | null>(null);
+const renameText = ref('');
+const renameOpen = computed({ get: () => renaming.value !== null, set: (open) => !open && (renaming.value = null) });
+const doomed = ref<ConversationSummary | null>(null);
+const deleteOpen = computed({ get: () => doomed.value !== null, set: (open) => !open && (doomed.value = null) });
+const deleting = ref(false);
+const titleOf = (c: ConversationSummary) => c.title || t('playground.untitled');
 
-// The conversation open last comes back when the page first opens, unless the page was opened to
-// try one model (?model=), which starts afresh.
+async function act(action: ConversationAction, c: ConversationSummary) {
+  if (action === 'rename') {
+    renaming.value = c;
+    renameText.value = c.title;
+    return;
+  }
+  if (action === 'delete') {
+    doomed.value = c;
+    return;
+  }
+  try {
+    await conversationsApi.update(c.id, { archived: action === 'archive' });
+    snackbar.show(action === 'archive' ? t('playground.archivedOne') : t('playground.restoredOne'));
+    if (action === 'archive' && c.id === chat.conversation?.id) newChat();
+  } catch (error) {
+    snackbar.error(error instanceof Error ? error.message : t('common.error'));
+  }
+  void refreshList();
+}
+async function saveRename() {
+  const c = renaming.value;
+  const title = renameText.value.trim();
+  if (!c || !title) return;
+  try {
+    if (c.id === chat.conversation?.id) await chat.rename(title);
+    else await conversationsApi.update(c.id, { title });
+    renaming.value = null;
+  } catch (error) {
+    snackbar.error(error instanceof Error ? error.message : t('common.error'));
+  }
+  void refreshList();
+}
+async function remove() {
+  const c = doomed.value;
+  if (!c) return;
+  deleting.value = true;
+  try {
+    await conversationsApi.remove(c.id);
+    if (c.id === chat.conversation?.id) {
+      chat.forget(c.id);
+      newChat();
+    }
+    snackbar.show(t('playground.deletedOne'));
+  } catch (error) {
+    snackbar.error(error instanceof Error ? error.message : t('common.error'));
+  } finally {
+    deleting.value = false;
+    doomed.value = null;
+    void refreshList();
+  }
+}
+
+// -- coming back, and leaving ---------------------------------------------------------
+// The chat open last comes back when the page first opens, unless it was opened to try one model.
 onMounted(async () => {
-  if (openedForModel) return;
+  if (openedForModel || chat.conversation) return;
   try {
     const { conversation_id } = await conversationsApi.session();
-    if (conversation_id && !turns.value.length && !conversationId.value) await open(conversation_id, { remember: false });
+    if (conversation_id && !chat.conversation && !chat.path.length) await chat.open(conversation_id);
   } catch {
     /* nothing to come back to */
   }
 });
-
-// The history sits beside the conversation where there is room, and in a side sheet where there is not.
-const root = ref<HTMLElement | null>(null);
-const width = useElementWidth(root, 1280);
-const wide = computed(() => width.value >= 960);
+function onKey(e: KeyboardEvent) {
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'o') {
+    e.preventDefault();
+    newChat();
+  }
+}
+onMounted(() => window.addEventListener('keydown', onKey));
+onActivated(() => window.addEventListener('keydown', onKey));
+onDeactivated(() => window.removeEventListener('keydown', onKey));
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKey);
+  chat.stop();
+});
 </script>
 
 <template>
   <div ref="root" class="playground" :class="{ empty, wide }">
-    <aside v-if="wide" class="history-pane" :aria-label="t('playground.history')">
-      <ConversationList :current="conversationId" @select="open" @new="newChat" @deleted="onDeleted" />
+    <aside v-if="wide && sidebarOpen" class="sidebar">
+      <ChatSidebar :current="chat.conversation?.id ?? null" @select="select" @new="newChat()" @act="act">
+        <template #actions><IconButton :icon="icons.PanelLeft" :label="t('playground.closeSidebar')" @click="sidebarOpen = false" /></template>
+      </ChatSidebar>
     </aside>
-    <div class="chat">
+
+    <div class="main" @dragenter.prevent="dragging = true" @dragover.prevent @dragleave.self="dragging = false" @drop.prevent="onDrop">
+      <header class="chat-header">
+        <IconButton v-if="!wide || !sidebarOpen" :icon="icons.PanelLeft" :label="t('playground.openSidebar')" @click="showSidebar" />
+        <IconButton v-if="!wide || !sidebarOpen" :icon="icons.SquarePen" :label="t('playground.newChat')" @click="newChat()" />
+        <ComposerMenu
+          class="model"
+          :model-value="chat.model"
+          :label="t('playground.model')"
+          :options="modelOptions"
+          :placeholder="t('playground.model')"
+          :disabled="chat.busy || !modelOptions.length"
+          :loading="models.isFetching.value && !modelOptions.length"
+          :search-label="t('models.search')"
+          :search-from="8"
+          :no-matches="t('models.none')"
+          @update:model-value="(m) => chat.choose({ model: m, effort: '' })"
+        />
+        <span class="spacer" />
+        <button type="button" class="temporary state-layer type-label-large" :class="{ on: chat.temporary }" :aria-pressed="chat.temporary" :title="t('playground.temporaryChat')" @click="toggleTemporary">
+          <AppIcon :icon="icons.MessageCircleDashed" :size="20" />
+          <span class="label">{{ t('playground.temporaryChat') }}</span>
+        </button>
+        <AppMenu v-if="chat.conversation && !chat.conversation.temporary" :items="chatMenu" @select="(a) => act(a as ConversationAction, chat.conversation!)">
+          <template #default="{ toggle }"><IconButton :icon="icons.MoreHorizontal" :label="t('playground.chatMenu')" @click="toggle" /></template>
+        </AppMenu>
+      </header>
       <CatalogStatus />
 
-      <div ref="scroller" class="thread app-scroll" role="log" aria-live="polite">
-        <Transition :name="TRANSITIONS.fadeThrough" mode="out-in">
+      <div ref="scroller" class="thread app-scroll" role="log" @scroll.passive="onScroll">
+        <div class="column">
+          <p v-if="chat.temporary" class="temporary-note type-body-medium" role="note">
+            <AppIcon :icon="icons.MessageCircleDashed" :size="18" />{{ t('playground.temporaryText') }}
+          </p>
           <EmptyState
             v-if="empty"
-            key="greeting"
             class="greeting"
             :icon="icons.Sparkles"
             :title="models.data.value?.data.length || models.isFetching.value ? t('playground.empty') : t('playground.noModels')"
-            :text="models.data.value?.data.length || models.isFetching.value ? t('playground.emptyText') : t('playground.noModelsText')"
+            :text="models.data.value?.data.length || models.isFetching.value ? '' : t('playground.noModelsText')"
           />
-          <TransitionGroup v-else key="turns" :name="TRANSITIONS.list" tag="div" class="turns">
-            <div v-for="(turn, i) in turns" :key="i" class="turn" :class="turn.role">
-              <span class="who type-label-medium">{{ turn.role === 'user' ? t('playground.you') : t('playground.assistant') }}</span>
-              <!-- A reply is Markdown, rendered as it streams; what the user typed stays the text they typed. -->
-              <div class="bubble type-body-medium" :class="{ rich: turn.role === 'assistant' && turn.content }">
-                <Markdown
-                  v-if="turn.role === 'assistant' && turn.content"
-                  :source="turn.content"
-                  :copy-label="t('playground.copyCode')"
-                  :copied-label="t('playground.codeCopied')"
-                  @copied="snackbar.show(t('common.copied'))"
-                  @copy-failed="snackbar.error(t('common.error'))"
-                />
-                <template v-else-if="turn.content">{{ turn.content }}</template>
-                <span v-else class="muted">{{ t('playground.streaming') }}</span>
-              </div>
-            </div>
-          </TransitionGroup>
-        </Transition>
+          <template v-for="(m, i) in chat.path" :key="m.id">
+            <UserMessage
+              v-if="m.role === 'user'"
+              :message="m"
+              v-bind="versionsOf(m)"
+              :editing="editingId === m.id"
+              :busy="chat.busy"
+              :local="isLocal(m.id)"
+              @copy="copy(m.content)"
+              @edit-start="editingId = m.id"
+              @edit-cancel="editingId = null"
+              @edit-submit="(content, attachments) => submitEdit(m, content, attachments)"
+              @previous="step(m, -1)"
+              @next="step(m, 1)"
+            />
+            <AssistantMessage
+              v-else
+              :message="m"
+              v-bind="versionsOf(m)"
+              :busy="chat.busy"
+              :last="i === chat.path.length - 1"
+              :stage="chat.stage"
+              :local="isLocal(m.id)"
+              :temporary="chat.temporary"
+              :models="modelOptions"
+              @copy="copy(m.content)"
+              @copied="snackbar.show(t('common.copied'))"
+              @copy-failed="snackbar.error(t('common.error'))"
+              @retry="(model) => retry(m, model)"
+              @branch="branch(m)"
+              @copy-request="copyRequest(m)"
+              @previous="step(m, -1)"
+              @next="step(m, 1)"
+            />
+          </template>
+        </div>
       </div>
 
-      <div class="dock">
+      <div class="dock" @paste="onPaste">
+        <p v-if="visionHint" class="vision-hint type-body-small muted"><AppIcon :icon="icons.ImageOff" :size="18" />{{ t('playground.visionHint') }}</p>
         <Composer
           ref="composer"
           v-model="draft"
           :label="t('playground.message')"
-          :placeholder="t('playground.placeholder')"
+          :placeholder="chat.temporary ? t('playground.placeholderTemporary') : t('playground.placeholder')"
           :send-label="t('playground.send')"
           :stop-label="t('playground.stop')"
-          :busy="streaming"
-          :can-send="!!model"
+          :busy="chat.busy"
+          :can-send="!!chat.model && !uploading"
+          :attached="attached.length > 0"
           @send="send"
-          @stop="stop"
+          @stop="chat.stop()"
+          @recall="recall"
         >
-          <template #tools>
-            <TransitionGroup :name="TRANSITIONS.chip" tag="div" class="tools" v-bind="keepLeavingInPlace">
-              <ComposerMenu
-                key="model"
-                class="model"
-                :model-value="model"
-                :label="t('playground.model')"
-                :options="modelOptions"
-                :placeholder="t('playground.model')"
-                :disabled="streaming || !modelOptions.length"
-                :loading="models.isFetching.value && !modelOptions.length"
-                :search-label="t('models.search')"
-                :search-from="8"
-                :no-matches="t('models.none')"
-                @update:model-value="setModel"
+          <template #above>
+            <div v-if="pending.length" class="tray">
+              <AttachmentPreview
+                v-for="p in pending"
+                :key="p.key"
+                :kind="p.kind"
+                :name="p.name"
+                :bytes="p.bytes"
+                :url="p.url"
+                :mime="p.view?.mime"
+                :uploading="!p.view"
+                removable
+                @remove="drop(p.key)"
               />
-              <ComposerMenu
-                v-if="effortOptions.length > 1"
-                key="effort"
-                v-model="effort"
-                class="effort"
-                :icon="icons.Brain"
-                :label="t('playground.effort')"
-                :hint="t('playground.effortHelp')"
-                :text="effortText"
-                :options="effortOptions"
-                :disabled="streaming"
-              />
-            </TransitionGroup>
+            </div>
           </template>
-          <template #actions>
-            <ChipButton v-if="!wide" :icon="icons.History" :label="t('playground.history')" @click="historyOpen = true" />
-            <Transition :name="TRANSITIONS.chip" v-bind="keepLeavingInPlace">
-              <ChipButton v-if="!empty" :icon="icons.MessageSquarePlus" :label="t('playground.newChat')" @click="newChat" />
-            </Transition>
+          <template #tools>
+            <ChipButton :icon="icons.Plus" :label="t('playground.attach')" @click="fileInput?.click()" />
+            <input ref="fileInput" class="file-input" type="file" multiple tabindex="-1" aria-hidden="true" @change="onPick" />
+            <ComposerMenu
+              v-if="effortOptions.length > 1"
+              :model-value="chat.effort"
+              class="effort"
+              :icon="icons.Brain"
+              :label="t('playground.effort')"
+              :hint="t('playground.effortHelp')"
+              :text="effortText"
+              :options="effortOptions"
+              :disabled="chat.busy"
+              @update:model-value="(e) => chat.choose({ effort: e ?? '' })"
+            />
           </template>
         </Composer>
         <p class="hint type-body-small muted">{{ t('playground.hint') }}</p>
       </div>
       <!-- Takes the room under the composer while there is no conversation, so the composer sits in the middle. -->
       <div class="below settle" aria-hidden="true" />
+      <div v-if="dragging" class="drop type-title-medium" aria-hidden="true"><AppIcon :icon="icons.Paperclip" :size="24" />{{ t('playground.dropHere') }}</div>
     </div>
-    <SideSheet v-if="!wide" v-model:open="historyOpen" :title="t('playground.history')" :close-label="t('common.close')">
-      <ConversationList :current="conversationId" @select="open" @new="newChat" @deleted="onDeleted" />
+
+    <SideSheet v-if="!wide" v-model:open="drawerOpen" :title="t('playground.chats')" :close-label="t('common.close')">
+      <ChatSidebar :current="chat.conversation?.id ?? null" @select="select" @new="newChat()" @act="act" />
     </SideSheet>
+    <AppDialog v-model:open="renameOpen" :title="t('playground.renameTitle')" width="small">
+      <TextField v-model="renameText" :label="t('playground.titleLabel')" @enter="saveRename" />
+      <template #actions>
+        <AppButton variant="text" @click="renaming = null">{{ t('common.cancel') }}</AppButton>
+        <AppButton variant="filled" :disabled="!renameText.trim()" @click="saveRename">{{ t('playground.save') }}</AppButton>
+      </template>
+    </AppDialog>
+    <ConfirmDialog
+      v-model:open="deleteOpen"
+      :title="t('playground.deleteTitle')"
+      :message="doomed ? t('playground.deleteText', { title: titleOf(doomed) }) : ''"
+      :confirm-label="t('playground.delete')"
+      :cancel-label="t('common.cancel')"
+      :loading="deleting"
+      danger
+      @confirm="remove"
+    />
   </div>
 </template>
 
 <style scoped>
 .playground {
-  /* The conversation and the composer share one column, centred, with the room around it left empty. */
   /* The page fills the frame (meta.fill), so the shell keeps no lane beside it: both sides pad alike. */
   --column: 768px;
   --pad: var(--app-space-6);
-  display: flex; gap: var(--app-space-4); height: 100%; padding: var(--app-space-4) var(--pad) var(--app-space-3);
+  display: flex; gap: var(--app-space-4); height: 100%; padding: var(--app-space-3) var(--pad) var(--app-space-3);
 }
-/* Where there is room, the kept conversations stand beside the one on screen and scroll on their own. */
-.history-pane {
+/* Where there is room, the chats stand beside the open one and scroll on their own. */
+.sidebar {
   display: flex; flex-direction: column; flex: none; width: clamp(240px, 22%, 300px); min-height: 0;
-  padding-inline-end: var(--app-space-4); border-inline-end: 1px solid var(--md-sys-color-outline-variant);
+  padding-inline-end: var(--app-space-3); border-inline-end: 1px solid var(--md-sys-color-outline-variant);
 }
-.history-pane > .conversation-list { flex: 1; }
-.chat { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.main { position: relative; display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.chat-header { display: flex; align-items: center; gap: var(--app-space-1); flex: none; min-width: 0; padding-bottom: var(--app-space-2); }
+.model { min-width: 0; max-width: 360px; }
+.spacer { flex: 1; }
+.temporary {
+  display: inline-flex; align-items: center; gap: var(--app-space-2); height: 36px; padding: 0 var(--app-space-3); border: 0;
+  border-radius: var(--md-sys-shape-corner-full); background: transparent; color: var(--md-sys-color-on-surface-variant); cursor: pointer;
+}
+.temporary.on { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
 /* The thread reaches into the page's padding by its scrollbar's lane, so its column lines up with the
    composer's (never past the page's edge, where the page would scroll sideways). */
 .thread {
   flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
   margin-inline-end: calc(-1 * min(var(--app-scroll-lane), var(--pad)));
-  padding: var(--app-space-2) max(0px, calc((100% - var(--column)) / 2)) var(--app-space-4);
 }
-/* The greeting keeps its own height and sits on the composer, the two centred together as one block. */
-.thread > .greeting { flex: none; margin-top: auto; padding-bottom: var(--app-space-4); }
-.turns { display: flex; flex-direction: column; gap: var(--app-space-3); }
-.turn { display: flex; flex-direction: column; gap: var(--app-space-1); max-width: min(640px, 100%); }
-.turn.assistant { align-self: flex-start; }
-.turn.user { align-self: flex-end; align-items: flex-end; }
-.who { min-width: 0; overflow-wrap: anywhere; }
-.bubble { min-width: 0; padding: var(--app-space-2) var(--app-space-3); border-radius: var(--md-sys-shape-corner-large); white-space: pre-wrap; overflow-wrap: anywhere; }
-/* Markdown lays out its own blocks; the source's line breaks are not the bubble's to keep. */
-.bubble.rich { white-space: normal; }
-.turn.user .bubble { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
-.turn.assistant .bubble { background: var(--md-sys-color-surface-container); color: var(--md-sys-color-on-surface); }
+.column { display: flex; flex-direction: column; gap: var(--app-space-4); width: min(100%, var(--column)); margin: 0 auto; padding: var(--app-space-2) 0 var(--app-space-6); }
+/* The greeting sits on the composer, the two centred together as one block. */
+.empty .column { flex: 1; justify-content: flex-end; padding-bottom: var(--app-space-4); }
+.greeting { flex: none; }
+.temporary-note {
+  display: flex; align-items: center; gap: var(--app-space-2); margin: 0; padding: var(--app-space-2) var(--app-space-3);
+  border-radius: var(--md-sys-shape-corner-medium); background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container);
+}
 .dock { display: flex; flex-direction: column; gap: var(--app-space-2); flex: none; width: min(100%, var(--column)); align-self: center; }
-.tools { position: relative; display: flex; align-items: center; gap: 2px; min-width: 0; }
-/* A long model id gives way first: the level is one short word. */
-.model { max-width: 320px; }
+.tray { display: flex; flex-wrap: wrap; gap: var(--app-space-2); padding: var(--app-space-3) var(--app-space-4) 0; }
+.file-input { display: none; }
 .effort { flex: none; }
+.vision-hint { display: flex; align-items: center; gap: var(--app-space-1); margin: 0; padding: 0 var(--app-space-2); }
 .hint { margin: 0; text-align: center; }
 .below { flex: 0 0 0; }
 .empty .below { flex-grow: 1; }
+.drop {
+  position: absolute; inset: 0; z-index: var(--app-z-dropdown); display: flex; align-items: center; justify-content: center; gap: var(--app-space-2);
+  border: 2px dashed var(--md-sys-color-primary); border-radius: var(--md-sys-shape-corner-large);
+  background: color-mix(in srgb, var(--md-sys-color-primary-container) 70%, transparent); color: var(--md-sys-color-on-primary-container); pointer-events: none;
+}
 @media (max-width: 599px) {
-  .playground { --pad: var(--app-space-3); padding: var(--app-space-3) var(--pad) var(--app-space-2); }
+  .playground { --pad: var(--app-space-3); padding: var(--app-space-2) var(--pad); }
   .hint { display: none; }
+  .temporary .label { display: none; }
+  .temporary { width: 36px; padding: 0; justify-content: center; }
 }
 </style>

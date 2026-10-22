@@ -75,7 +75,10 @@ Messages 详见 [Anthropic Agent 接入](anthropic-api.zh-CN.md)。
 | `/stats/calls` | 保留期内的全部调用记录，新的在前；支持 `limit`、`before` 游标，`model`/`provider`/`account`/`origin`/`ok` 筛选，`since`/`until`（带时区的 ISO 8601，`until` 不含）以及 `q`（在模型、供应商、账户、错误代码/信息、结束原因中不区分大小写地搜索） |
 | `/stats/live` | SSE：先发送进行中调用的快照，再推送 `started`/`progress`/`finished` 事件 |
 | `/playground/*` | 使用工具密钥聊天，不暴露模型 API 密钥；请求没有 system 消息时，先发送 `playground.system_prompt` |
-| `/playground/conversations` | 保存的对话：列出（`?archived=true` 为归档）、创建；`/{id}` 获取、`PATCH`（标题、模型、推理强度、归档）、`DELETE`；`/{id}/messages` 追加消息 |
+| `/playground/conversations` | 保存的对话，每个对话是一棵消息树：列出（`?archived=true` 为归档；临时对话不会列出）、创建（`temporary`）；`/{id}` 获取、`PATCH`（标题、模型、推理强度、归档，`current_leaf` 切换版本）、`DELETE` |
+| `/playground/conversations/{id}/messages` | 在 `parent_id` 之后发送问题（编辑即在被编辑消息的父消息之后发送），以 Server-Sent Events 流式返回回复：`user`、`assistant`，然后是 `stage`、`notice`、`thinking`、`delta`，最后 `done`；`/{message_id}/retry` 流式生成另一条回复；`/{message_id}/request` 返回该回复对应的 Chat Completions 请求 |
+| `/playground/conversations/{id}/branch`、`/{id}/title` | 截至某条消息分支出新对话；由模型为对话命名（手动设置的标题会保留） |
+| `/playground/attachments` | 上传图片（PNG、JPEG、WebP、GIF）或以 UTF-8 文本上传文件（`?name=`，`?type=` 为文件原类型）；`GET`/`DELETE /{id}` |
 | `/playground/session` | `GET`/`PUT` 上次打开的对话，Playground 启动时会重新打开它 |
 
 运行服务的 `/docs` 与 `/openapi.json` 提供完整字段和方法定义，启用鉴权时需要工具密钥。

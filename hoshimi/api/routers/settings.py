@@ -73,9 +73,17 @@ def network_view(raw: dict[str, Any], default: str = "auto") -> NetworkView:
 
 
 class PlaygroundSettingsView(Record):
-    """``playground.*``: ``system_prompt`` goes first in every Playground conversation; empty sends none."""
+    """``playground.*``.
+
+    ``system_prompt`` goes first in every Playground conversation (empty sends
+    none); ``title_model`` names conversations (empty: the conversation's own
+    model); ``vision_model`` describes images for a model that cannot read
+    them (``auto`` picks one, ``off`` never asks).
+    """
 
     system_prompt: str = ""
+    title_model: str = ""
+    vision_model: str = "auto"
 
 
 class SettingsView(Record):
@@ -119,7 +127,9 @@ def _view(services: Services, request: Request | None = None) -> SettingsView:
         listening=listening_view(request.app.state) if request is not None else None,
         config_path=str(services.config_path),
         network=network_view(settings.network.as_dict()),
-        playground=PlaygroundSettingsView(system_prompt=settings.playground_system_prompt),
+        playground=PlaygroundSettingsView(
+            system_prompt=settings.playground_system_prompt, title_model=settings.playground_title_model, vision_model=settings.playground_vision_model
+        ),
         server=ServerView(
             host=settings.host,
             port=settings.port,

@@ -64,6 +64,11 @@ class Settings:
     default_model: str | None = None
     # Sent first in every Playground conversation (playground.system_prompt); empty sends none.
     playground_system_prompt: str = ""
+    # The model that names Playground conversations (playground.title_model); empty: the conversation's own.
+    playground_title_model: str = ""
+    # The model that describes images for one that cannot read them (playground.vision_model):
+    # "auto" picks one from the catalogue, "off" never asks, anything else is that model.
+    playground_vision_model: str = "auto"
 
 
 def validate_settings(settings: Settings) -> str | None:
@@ -146,11 +151,18 @@ def settings_from_dict(data: dict[str, Any], settings: Settings | None = None) -
     )
 
     playground = data.get("playground")
-    if isinstance(playground, dict) and "system_prompt" in playground:
-        prompt = playground["system_prompt"]
-        if prompt is not None and not isinstance(prompt, str):
-            raise ValueError("playground.system_prompt must be a string")
-        settings.playground_system_prompt = (prompt or "").strip()
+    if isinstance(playground, dict):
+        for key, attribute, default in (
+            ("system_prompt", "playground_system_prompt", ""),
+            ("title_model", "playground_title_model", ""),
+            ("vision_model", "playground_vision_model", "auto"),
+        ):
+            if key not in playground:
+                continue
+            value = playground[key]
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"playground.{key} must be a string")
+            setattr(settings, attribute, (value or "").strip() or default)
 
     providers = data.get("providers")
     if isinstance(providers, dict):
@@ -251,8 +263,17 @@ def settings_to_dict(settings: Settings) -> dict[str, Any]:
         data["server"]["model_api_key"] = settings.model_api_key
     if settings.default_model:
         data["server"]["default_model"] = settings.default_model
-    if settings.playground_system_prompt:
-        data["playground"] = {"system_prompt": settings.playground_system_prompt}
+    playground = {
+        key: value
+        for key, value, default in (
+            ("system_prompt", settings.playground_system_prompt, ""),
+            ("title_model", settings.playground_title_model, ""),
+            ("vision_model", settings.playground_vision_model, "auto"),
+        )
+        if value != default
+    }
+    if playground:
+        data["playground"] = playground
     if settings.providers:
         data["providers"] = {
             pid: {

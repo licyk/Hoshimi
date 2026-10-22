@@ -9,7 +9,9 @@ import { TRANSITIONS } from '@/ui/motion/transitions';
  * text, a row of tools under it (``tools`` at the start, ``actions`` before the send button) and a
  * round send button that becomes Stop while an answer comes in. The text grows with what is typed
  * up to a few lines, then scrolls. Enter sends and Shift+Enter starts a new line; Enter while an
- * input method composes is the method's own.
+ * input method composes is the method's own. Escape stops an answer coming in, and the up arrow in
+ * an empty box asks for the last message back (``recall``), to edit it. What is attached goes in
+ * ``above`` (over the text); ``attached`` lets a message go with no text of its own.
  */
 const props = withDefaults(defineProps<{
   /** The text's accessible name. */
@@ -21,12 +23,14 @@ const props = withDefaults(defineProps<{
   busy?: boolean;
   /** Whether a message can go out now, apart from having text (a model is chosen). */
   canSend?: boolean;
-}>(), { canSend: true });
-const emit = defineEmits<{ send: []; stop: [] }>();
+  /** Something is attached: the message can go without text. */
+  attached?: boolean;
+}>(), { canSend: true, attached: false });
+const emit = defineEmits<{ send: []; stop: []; recall: [] }>();
 const text = defineModel<string>({ default: '' });
 
 const input = ref<HTMLTextAreaElement | null>(null);
-const ready = computed(() => !props.busy && props.canSend && !!text.value.trim());
+const ready = computed(() => !props.busy && props.canSend && (!!text.value.trim() || props.attached));
 
 /** Fit the box to the text; its max-height takes over from there and it scrolls. */
 function fit() {
@@ -45,6 +49,12 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
     submit();
+  } else if (e.key === 'Escape' && props.busy) {
+    e.preventDefault();
+    emit('stop');
+  } else if (e.key === 'ArrowUp' && !text.value && !e.isComposing) {
+    e.preventDefault();
+    emit('recall');
   }
 }
 /** A press on the surface around the text (not on a control) puts the caret in it. */
@@ -60,6 +70,7 @@ defineExpose({ focus: () => input.value?.focus() });
 <template>
   <div class="composer">
     <div class="surface" @pointerdown="onSurfaceDown">
+      <slot name="above" />
       <textarea
         ref="input"
         v-model="text"

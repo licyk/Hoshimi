@@ -179,6 +179,60 @@ MIGRATIONS: list[str] = [
         PRIMARY KEY (conversation_id, position)
     ) WITHOUT ROWID;
     """,
+    # 3: Playground conversations become trees (edits and retries are sibling messages), with
+    # attachments, temporary conversations, generated titles and branches. Each message of a
+    # version-2 conversation follows the one before it, so the list converts to a single path.
+    """
+    ALTER TABLE conversations ADD COLUMN current_leaf  TEXT    NOT NULL DEFAULT '';
+    ALTER TABLE conversations ADD COLUMN temporary     INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE conversations ADD COLUMN title_state   TEXT    NOT NULL DEFAULT '';
+    ALTER TABLE conversations ADD COLUMN branched_from TEXT    NOT NULL DEFAULT '';
+    ALTER TABLE conversations ADD COLUMN branched_at   TEXT    NOT NULL DEFAULT '';
+    CREATE TABLE chat_messages (
+        id              TEXT    PRIMARY KEY,
+        conversation_id TEXT    NOT NULL,
+        parent_id       TEXT,
+        role            TEXT    NOT NULL,
+        content         TEXT    NOT NULL,
+        model           TEXT    NOT NULL DEFAULT '',
+        effort          TEXT    NOT NULL DEFAULT '',
+        status          TEXT    NOT NULL DEFAULT 'complete',
+        error           TEXT    NOT NULL DEFAULT '',
+        notices         TEXT    NOT NULL DEFAULT '[]',
+        created_at      REAL    NOT NULL
+    );
+    CREATE INDEX chat_messages_conversation ON chat_messages(conversation_id, created_at);
+    CREATE INDEX chat_messages_parent ON chat_messages(parent_id);
+    INSERT INTO chat_messages(id, conversation_id, parent_id, role, content, model, created_at)
+        SELECT conversation_id || '-' || position, conversation_id,
+               CASE WHEN position = 0 THEN NULL ELSE conversation_id || '-' || (position - 1) END,
+               role, content, model, created_at
+        FROM conversation_messages;
+    UPDATE conversations SET
+        current_leaf = COALESCE((SELECT conversation_id || '-' || MAX(position) FROM conversation_messages m WHERE m.conversation_id = conversations.id), ''),
+        title_state = CASE WHEN title = '' THEN '' ELSE 'auto' END;
+    DROP TABLE conversation_messages;
+    CREATE TABLE attachments (
+        id             TEXT    PRIMARY KEY,
+        kind           TEXT    NOT NULL,
+        name           TEXT    NOT NULL,
+        mime           TEXT    NOT NULL,
+        size           INTEGER NOT NULL,
+        data           BLOB    NOT NULL,
+        text           TEXT    NOT NULL DEFAULT '',
+        description    TEXT    NOT NULL DEFAULT '',
+        width          INTEGER,
+        height         INTEGER,
+        created_at     REAL    NOT NULL
+    );
+    CREATE TABLE message_attachments (
+        message_id     TEXT    NOT NULL,
+        attachment_id  TEXT    NOT NULL,
+        position       INTEGER NOT NULL,
+        PRIMARY KEY (message_id, position)
+    ) WITHOUT ROWID;
+    CREATE INDEX message_attachments_attachment ON message_attachments(attachment_id);
+    """,
 ]
 
 

@@ -63,6 +63,8 @@ def create_app(
             services.refresher.start()
         if services.credits is not None and services.settings.auto_checkin:
             services.credits.start()
+        # Temporary Playground conversations end with the process that held them.
+        services.conversations.tidy()
         # Asks PyPI on its own thread; startup never waits on the answer.
         if services.updates is not None and services.settings.check_updates:
             services.updates.start()
