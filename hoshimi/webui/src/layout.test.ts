@@ -162,3 +162,14 @@ describe('bottom navigation', () => {
     expect(rule('ui/NavigationBar.vue', '.indicator')).not.toMatch(/(^|[\s;])width:\s*64px/);
   });
 });
+
+/**
+ * A chart is drawn at its own width (its viewBox the size it shows, one unit a pixel), never
+ * stretched to fit with ``preserveAspectRatio="none"``: a stretched drawing turns a round point
+ * into an oval and scales its labels with the window.
+ */
+describe('charts', () => {
+  it.each(VUE_FILES.filter((f) => /<svg[^>]*viewBox/.test(readFileSync(join(SRC, f), 'utf8'))))('%s draws at its own size', (file) => {
+    expect(readFileSync(join(SRC, file), 'utf8')).not.toMatch(/preserveAspectRatio="none"/);
+  });
+});

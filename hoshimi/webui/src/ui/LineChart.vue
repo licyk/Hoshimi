@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { useElementWidth } from '@/ui/useElementWidth';
 
 export interface Series {
   label: string;
@@ -14,6 +15,8 @@ export interface Series {
  * x, with a tooltip listing every series there; arrow keys move it when the chart has focus.
  * ``xLabels`` names the x positions (an hour, a day) for the axis and the tooltip; ``format``
  * prints the y values. A point whose value is not finite (NaN, no measurement) breaks its line.
+ * It is drawn at its own width and ``height``, one unit a pixel each way, so a marker stays round
+ * and the axis labels keep their size whatever the chart's width.
  */
 const props = withDefaults(defineProps<{ series: Series[]; xLabel?: string; yLabel?: string; height?: number; emptyText?: string; xLabels?: string[]; format?: (n: number) => string }>(), {
   xLabel: '',
@@ -23,8 +26,10 @@ const props = withDefaults(defineProps<{ series: Series[]; xLabel?: string; yLab
   xLabels: undefined,
   format: undefined,
 });
-const W = 640;
 const PAD = { l: 48, r: 12, t: 12, b: 28 };
+const svg = ref<SVGSVGElement | null>(null);
+const width = useElementWidth(svg, 640);
+const W = computed(() => Math.max(width.value, PAD.l + PAD.r + 1));
 const slotOf = (s: Series, i: number) => s.slot ?? i + 1;
 const fmt = (v: number) => (props.format ? props.format(v) : Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 1 ? v.toFixed(1) : v.toFixed(3));
 
@@ -47,7 +52,7 @@ const bounds = computed(() => {
   return { x0, x1, y0, y1 };
 });
 
-const sx = (x: number) => (bounds.value ? PAD.l + ((x - bounds.value.x0) / (bounds.value.x1 - bounds.value.x0)) * (W - PAD.l - PAD.r) : 0);
+const sx = (x: number) => (bounds.value ? PAD.l + ((x - bounds.value.x0) / (bounds.value.x1 - bounds.value.x0)) * (W.value - PAD.l - PAD.r) : 0);
 const sy = (y: number) => (bounds.value ? PAD.t + (1 - (y - bounds.value.y0) / (bounds.value.y1 - bounds.value.y0)) * (props.height - PAD.t - PAD.b) : 0);
 
 /** At most 400 points per line: a long run is thinned by stride, keeping the last point. */
@@ -81,11 +86,10 @@ const ticks = computed(() => {
 // The crosshair: the x positions every series shares, the nearest one to the pointer.
 const xs = computed(() => [...new Set(props.series.flatMap((s) => s.points.map(([x]) => x)))].sort((a, b) => a - b));
 const active = ref<number | null>(null);
-const svg = ref<SVGSVGElement | null>(null);
 function onMove(e: PointerEvent) {
   const box = svg.value?.getBoundingClientRect();
   if (!box || !xs.value.length || !bounds.value) return;
-  const vx = ((e.clientX - box.left) / box.width) * W;
+  const vx = ((e.clientX - box.left) / box.width) * W.value;
   let best = 0;
   for (let i = 1; i < xs.value.length; i++) if (Math.abs(sx(xs.value[i]) - vx) < Math.abs(sx(xs.value[best]) - vx)) best = i;
   active.value = best;
@@ -102,7 +106,7 @@ function onKey(e: KeyboardEvent) {
 const tip = computed(() => {
   if (active.value === null) return null;
   const x = xs.value[active.value];
-  const left = (sx(x) / W) * 100;
+  const left = (sx(x) / W.value) * 100;
   return {
     x,
     pos: sx(x),
@@ -122,11 +126,10 @@ const tip = computed(() => {
       <svg
         ref="svg"
         :viewBox="`0 0 ${W} ${height}`"
-        preserveAspectRatio="none"
+        :height="height"
         role="img"
         :aria-label="series.map((s) => s.label).join(', ')"
         tabindex="0"
-        :style="{ aspectRatio: `${W} / ${height}` }"
         @pointermove="onMove"
         @pointerleave="active = null"
         @keydown="onKey"
@@ -169,7 +172,7 @@ const tip = computed(() => {
 <style scoped>
 .chart { margin: 0; display: flex; flex-direction: column; gap: var(--app-space-2); min-width: 0; }
 .plot { position: relative; min-width: 0; }
-svg { display: block; width: 100%; height: auto; overflow: visible; }
+svg { display: block; width: 100%; overflow: visible; }
 svg:focus-visible { outline-offset: 4px; border-radius: var(--md-sys-shape-corner-small); }
 .grid line { stroke: var(--md-sys-color-surface-container-highest); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .labels text { fill: var(--md-sys-color-on-surface-variant); font-size: 11px; }
