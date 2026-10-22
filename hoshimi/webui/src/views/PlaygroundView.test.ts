@@ -602,12 +602,12 @@ describe('Playground commands, compaction and run time', () => {
     const { wrapper } = await openPlayground();
     await type(wrapper, '/');
     expect(menu()).not.toBeNull();
-    expect(names()).toEqual(['/model', '/effort', '/compact', '/status', '/new', '/fork', '/tools', '/permissions']);
+    expect(names()).toEqual(['/model', '/effort', '/compact', '/status', '/new', '/fork', '/tools', '/permissions', '/ps', '/stop']);
     expect(wrapper.find('.composer textarea').attributes('aria-expanded')).toBe('true');
     // Commands with nothing to work on yet say why.
     expect(rows()[2].getAttribute('aria-disabled')).toBe('true');
     await type(wrapper, '/co');
-    expect(names()).toEqual(['/compact', '/status']);
+    expect(names()).toEqual(['/compact', '/status', '/ps', '/stop']);
     expect(rows()[0].querySelector('b')?.textContent).toBe('co');
     await key(wrapper, 'ArrowDown');
     expect(rows()[1].getAttribute('aria-selected')).toBe('true');
@@ -636,6 +636,102 @@ describe('Playground commands, compaction and run time', () => {
     expect(menu()).toBeNull();
     expect(wrapper.find('.model').text()).toContain('other/model');
     wrapper.unmount();
+  });
+
+  it('lists and filters background commands during a reply, then stops them without sending a message', async () => {
+    const { wrapper } = await openPlayground();
+    await ask(wrapper, 'run a server');
+    server.terminals = [
+      { id: 3, command: 'npm run dev', cwd: '/work/app', started_at: Date.now() / 1000, running: true, exit_code: null },
+      { id: 4, command: 'npm test', cwd: '/work/tests', started_at: 1, running: false, exit_code: 1 },
+    ];
+    await type(wrapper, '/ps');
+    expect(rows()[0].getAttribute('aria-disabled')).toBeNull();
+    await key(wrapper, 'Enter');
+    expect(menu()?.textContent).toContain('npm run dev');
+    expect(menu()?.textContent).toContain('Exited · code 1');
+    await type(wrapper, '/ps /work/tests');
+    expect(menu()?.textContent).not.toContain('npm run dev');
+    expect(menu()?.textContent).toContain('npm test');
+    // Enter opens /stop, which always shows every running command, regardless of the filter.
+    await key(wrapper, 'Enter');
+    expect((wrapper.find('.composer textarea').element as HTMLTextAreaElement).value).toBe('/stop ');
+    expect(menu()?.textContent).toContain('npm run dev');
+    expect(menu()?.textContent).not.toContain('npm test');
+    expect(calls('DELETE', /\/terminals$/)).toHaveLength(0);
+    await key(wrapper, 'Enter');
+    expect(calls('DELETE', /\/terminals$/)).toHaveLength(1);
+    expect(menu()?.textContent).toContain('Background commands stopped.');
+    expect(menu()?.textContent).not.toContain('npm run dev');
+    expect(streams[0].signal.aborted).toBe(false);
+    expect(calls('POST', /\/messages$/)).toHaveLength(1);
+    await key(wrapper, 'Enter');
+    expect(calls('DELETE', /\/terminals$/)).toHaveLength(1);
+    await key(wrapper, 'Escape');
+    expect(menu()).toBeNull();
+    wrapper.unmount();
+  });
+
+  it('shows an empty command pane for a new chat without creating a conversation', async () => {
+    const { wrapper } = await openPlayground();
+    await type(wrapper, '/stop ');
+    expect(menu()?.textContent).toContain('No background commands.');
+    await key(wrapper, 'Enter');
+    expect(calls('DELETE', /\/terminals/)).toHaveLength(0);
+    expect(calls('GET', /\/terminals/)).toHaveLength(0);
+    expect(calls('POST', /^\/conversations/)).toHaveLength(0);
+    wrapper.unmount();
+  });
+
+  it('keeps commands visible on a failed stop and allows refreshing and retrying', async () => {
+    const { wrapper } = await openPlayground();
+    await ask(wrapper, 'run');
+    await answer('running');
+    server.terminals = [{ id: 3, command: 'npm run dev', cwd: '/work', started_at: 1, running: true, exit_code: null }];
+    await type(wrapper, '/stop ');
+    state.route.mockImplementationOnce(() => json({ message: 'Could not stop commands' }, 500));
+    await key(wrapper, 'Enter');
+    expect(menu()?.querySelector('[role="alert"]')?.textContent).toBe('Could not stop commands');
+    expect(menu()?.textContent).toContain('npm run dev');
+    expect(menu()?.textContent).not.toContain('Background commands stopped.');
+    menu()?.querySelector<HTMLElement>('[aria-label="Refresh"]')?.click();
+    await flushPromises();
+    await key(wrapper, 'Enter');
+    expect(menu()?.textContent).toContain('Background commands stopped.');
+    wrapper.unmount();
+  });
+
+  it('refreshes an open list and discards a late response after switching to a new chat', async () => {
+    const { wrapper } = await openPlayground();
+    await ask(wrapper, 'run');
+    await answer('running');
+    const terminal = { id: 3, command: 'npm run dev', cwd: '/work', started_at: 1, running: true, exit_code: null };
+    server.terminals = [terminal];
+    await type(wrapper, '/ps ');
+    vi.useFakeTimers();
+    try {
+      // Manual refresh schedules the next poll on this clock.
+      menu()?.querySelector<HTMLElement>('[aria-label="Refresh"]')?.click();
+      await flushPromises();
+      server.terminals = [{ ...terminal, running: false, exit_code: 0 }];
+      await vi.advanceTimersByTimeAsync(2000);
+      await flushPromises();
+      expect(menu()?.textContent).toContain('Exited · code 0');
+      let finish!: (response: Response) => void;
+      state.route.mockImplementationOnce(() => new Promise<Response>((resolve) => { finish = resolve; }));
+      menu()?.querySelector<HTMLElement>('[aria-label="Refresh"]')?.click();
+      await flushPromises();
+      await wrapper.find('.chat-header .corner').trigger('click');
+      await flushPromises();
+      await type(wrapper, '/ps ');
+      finish(json({ terminals: [terminal] }));
+      await flushPromises();
+      expect(menu()?.textContent).toContain('No background commands.');
+      expect(menu()?.textContent).not.toContain('npm run dev');
+    } finally {
+      wrapper.unmount();
+      vi.useRealTimers();
+    }
   });
 
   it('closes on Escape until the command changes, and a closed command still runs rather than going out', async () => {

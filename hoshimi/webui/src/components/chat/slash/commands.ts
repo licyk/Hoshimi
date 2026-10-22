@@ -8,8 +8,8 @@ import { icons } from '@/ui';
  * after its name filter (``/model gpt``): the composer's text is the menu's only input, so the focus
  * never leaves it.
  */
-export type SlashId = 'model' | 'effort' | 'compact' | 'status' | 'new' | 'fork' | 'tools' | 'permissions';
-export type SlashPage = 'models' | 'efforts' | 'tools' | 'permissions' | 'status';
+export type SlashId = 'model' | 'effort' | 'compact' | 'status' | 'new' | 'fork' | 'tools' | 'permissions' | 'ps' | 'stop';
+export type SlashPage = 'models' | 'efforts' | 'tools' | 'permissions' | 'status' | 'terminals' | 'stop';
 
 export interface SlashCommand {
   id: SlashId;
@@ -30,6 +30,8 @@ export const COMMANDS: SlashCommand[] = [
   { id: 'fork', aliases: ['branch'], icon: icons.GitBranch, argument: true },
   { id: 'tools', aliases: [], icon: icons.Wrench, page: 'tools' },
   { id: 'permissions', aliases: ['approval', 'approvals'], icon: icons.Shield, page: 'permissions' },
+  { id: 'ps', aliases: [], icon: icons.Terminal, page: 'terminals' },
+  { id: 'stop', aliases: [], icon: icons.CircleStop, page: 'stop' },
 ];
 
 /** What decides whether a command can run now. */
@@ -48,7 +50,7 @@ export interface SlashContext {
 
 /** Why a command cannot run now (an i18n key), or null when it can. */
 export function unavailable(id: SlashId, ctx: SlashContext): string | null {
-  if (ctx.busy && !['status', 'permissions', 'new'].includes(id)) return 'playground.slash.busy';
+  if (ctx.busy && !['status', 'permissions', 'new', 'ps', 'stop'].includes(id)) return 'playground.slash.busy';
   if ((id === 'compact' || id === 'fork') && !ctx.kept) return 'playground.slash.nothingYet';
   if (id === 'compact' && !ctx.replied) return 'playground.slash.nothingToCompact';
   if (id === 'effort' && !ctx.efforts) return 'playground.slash.noEfforts';

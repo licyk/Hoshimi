@@ -62,6 +62,7 @@ export const conversationsApi = {
     unwrap(api.POST('/api/v1/playground/conversations/{conversation_id}/steer', { ...path(id), body: { content } })),
   /** The background commands this conversation's tools started. */
   terminals: (id: string) => unwrap(api.GET('/api/v1/playground/conversations/{conversation_id}/terminals', path(id))),
+  stopTerminals: (id: string) => unwrap(api.DELETE('/api/v1/playground/conversations/{conversation_id}/terminals', path(id))),
   stopTerminal: (id: string, sessionId: number) =>
     unwrap(api.DELETE('/api/v1/playground/conversations/{conversation_id}/terminals/{session_id}', { params: { path: { conversation_id: id, session_id: sessionId } } })),
   /** How full the conversation on screen is against its model's window, and what its replies took. */

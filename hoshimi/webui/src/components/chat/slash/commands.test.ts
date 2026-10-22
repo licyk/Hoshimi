@@ -28,7 +28,7 @@ describe('slash commands', () => {
     expect(match('co')[1].range).toBeNull();
     expect(match('new').map((m) => m.command.id)).toEqual(['new']);
     // Found in an alias too: effort's "reasoning", status's "context".
-    expect(match('o').map((m) => m.command.id)).toEqual(['model', 'effort', 'compact', 'status', 'fork', 'tools', 'permissions']);
+    expect(match('o').map((m) => m.command.id)).toEqual(['model', 'effort', 'compact', 'status', 'fork', 'tools', 'permissions', 'stop']);
     expect(match('o')[0].range).toEqual([2, 3]);
     // The reader's own words for a command find it too.
     expect(match('模型', (c) => (c.id === 'model' ? ['模型'] : [])).map((m) => m.command.id)).toEqual(['model']);
@@ -37,7 +37,7 @@ describe('slash commands', () => {
   it('says why a command cannot run now', () => {
     expect(COMMANDS.every((c) => unavailable(c.id, idle) === null)).toBe(true);
     const busy = { ...idle, busy: true };
-    expect(COMMANDS.filter((c) => unavailable(c.id, busy) === null).map((c) => c.id)).toEqual(['status', 'new', 'permissions']);
+    expect(COMMANDS.filter((c) => unavailable(c.id, busy) === null).map((c) => c.id)).toEqual(['status', 'new', 'permissions', 'ps', 'stop']);
     expect(unavailable('compact', { ...idle, replied: false })).toBe('playground.slash.nothingToCompact');
     expect(unavailable('compact', { ...idle, replied: false, kept: false })).toBe('playground.slash.nothingYet');
     expect(unavailable('fork', { ...idle, kept: false })).toBe('playground.slash.nothingYet');

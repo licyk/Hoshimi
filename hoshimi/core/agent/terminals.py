@@ -281,7 +281,7 @@ class TerminalManager:
         return True
 
     def end(self, owner: str) -> None:
-        """Stop every session of a conversation that is going away."""
+        """Stop every existing session of a conversation, leaving other conversations alone."""
         with self.lock:
             ids = [s.id for s in self.sessions.values() if s.owner == owner]
         for session_id in ids:

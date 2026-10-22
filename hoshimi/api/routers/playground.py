@@ -535,6 +535,14 @@ def list_terminals(services: ServicesDep, conversation_id: str) -> TerminalList:
     return TerminalList(terminals=[TerminalView(**t) for t in services.agent.terminals.of(conversation_id)])
 
 
+@router.delete("/conversations/{conversation_id}/terminals", operation_id="stop_conversation_terminals", status_code=204, responses=ERROR_RESPONSES)
+def stop_terminals(services: ServicesDep, conversation_id: str) -> Response:
+    """Stop all existing background commands of this conversation, including their child processes."""
+    _conversation(services, conversation_id)
+    services.agent.terminals.end(conversation_id)
+    return Response(status_code=204)
+
+
 @router.delete("/conversations/{conversation_id}/terminals/{session_id}", operation_id="stop_conversation_terminal", status_code=204, responses=ERROR_RESPONSES)
 def stop_terminal(services: ServicesDep, conversation_id: str, session_id: int) -> Response:
     """Stop a background command, and everything it started."""

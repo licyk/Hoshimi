@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, ref, watch } from 'vue';
 import type { ContextView } from '@/api/types';
 import { filterOptions, find, match, parseDraft, unavailable, type SlashCommand, type SlashContext, type SlashId, type SlashPage } from '@/components/chat/slash/commands';
 import StatusPanel from '@/components/chat/StatusPanel.vue';
+import BackgroundCommandsPanel from '@/components/chat/BackgroundCommandsPanel.vue';
 import { useI18n } from '@/i18n';
 import { AppIcon, KeyHint, TRANSITIONS, icons, keepLeavingInPlace, prefersReducedMotion, staggerStyle, useAxisDirection, type ComposerOption } from '@/ui';
 import { useLayer } from '@/ui/layers';
@@ -37,8 +38,9 @@ const props = defineProps<{
   current: { model: string | null; effort: string; tools: string[]; permission: string };
   status: ContextView | null;
   statusLabels: { effort: string; tools: string[]; approval: string };
+  conversationId: string | null;
 }>();
-const emit = defineEmits<{ 'update:draft': [text: string]; run: [id: SlashId, argument: string]; choose: [page: SlashPage, value: string]; page: [page: SlashPage] }>();
+const emit = defineEmits<{ 'update:draft': [text: string]; run: [id: SlashId, argument: string]; choose: [page: SlashPage, value: string]; page: [page: SlashPage]; terminalsChanged: [] }>();
 const { t } = useI18n();
 const uid = `slash-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -84,13 +86,17 @@ const token = computed(() => (parsed.value ? `${view.value}|${parsed.value.name.
 const dismissed = ref('');
 // Typing another command (or anything else) forgets what was closed: the same one typed again opens.
 watch(token, (next) => next !== dismissed.value && (dismissed.value = ''));
-const open = computed(() => !!shown.value || (!!view.value && token.value !== dismissed.value && (view.value !== 'commands' || matches.value.length > 0)));
+const visible = ref(true);
+onActivated(() => (visible.value = true));
+onDeactivated(() => (visible.value = false));
+const open = computed(() => visible.value && (!!shown.value || (!!view.value && token.value !== dismissed.value && (view.value !== 'commands' || matches.value.length > 0))));
 function dismiss() {
   if (shown.value) shown.value = null;
   else dismissed.value = token.value;
 }
 
 const active = ref(0);
+const background = ref<InstanceType<typeof BackgroundCommandsPanel> | null>(null);
 watch([token, query], () => {
   // A list opens on its current choice; anything typed starts the highlight over at the first match.
   const at = view.value !== 'commands' && !query.value ? options.value.findIndex(selectedValue) : -1;
@@ -126,7 +132,15 @@ function place() {
 const onReflow = (e?: Event) => {
   if (open.value && !(e?.type === 'scroll' && menu.value?.contains(e.target as Node))) place();
 };
+let anchorObserver: ResizeObserver | null = null;
 function listen(on: boolean) {
+  anchorObserver?.disconnect();
+  anchorObserver = null;
+  const anchor = props.anchor();
+  if (on && anchor && typeof ResizeObserver !== 'undefined') {
+    anchorObserver = new ResizeObserver(() => onReflow());
+    anchorObserver.observe(anchor);
+  }
   const method = on ? 'addEventListener' : 'removeEventListener';
   window[method]('scroll', onReflow, true);
   window[method]('resize', onReflow);
@@ -151,7 +165,7 @@ async function follow() {
 watch([active, count, view, open], () => void follow());
 
 // A list opening from a command slides in from the side; the menu eases to its new height.
-const direction = useAxisDirection(computed(() => view.value ?? 'commands'), () => ['commands', 'models', 'efforts', 'tools', 'permissions', 'status']);
+const direction = useAxisDirection(computed(() => view.value ?? 'commands'), () => ['commands', 'models', 'efforts', 'tools', 'permissions', 'status', 'terminals', 'stop']);
 watch(
   view,
   (next, previous) => {
@@ -205,6 +219,7 @@ function onKey(e: KeyboardEvent): boolean {
   if (!open.value || e.isComposing || e.keyCode === 229) return false;
   // Opened from its button: the draft is the user's own, and only Escape is the menu's.
   if (shown.value && e.key !== 'Escape') return false;
+  if ((view.value === 'terminals' || view.value === 'stop') && e.key !== 'Escape') return background.value?.onKey(e) ?? false;
   const step = e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n') ? 1 : e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p') ? -1 : 0;
   if (step) {
     e.preventDefault();
@@ -243,6 +258,8 @@ const title = computed(() => {
     case 'tools': return t('playground.tools');
     case 'permissions': return t('settings.approval');
     case 'status': return t('playground.slash.commands.status.label');
+    case 'terminals': return t('playground.slash.commands.ps.label');
+    case 'stop': return t('playground.slash.commands.stop.label');
     default: return t('playground.slash.title');
   }
 });
@@ -270,7 +287,7 @@ defineExpose({ onKey, reopen, toggle, combobox, open });
             <AppIcon :icon="icons.ArrowLeft" :size="18" />
           </button>
           <span class="type-title-small">{{ title }}</span>
-          <span v-if="view !== 'commands' && query" class="type-body-small muted query">“{{ query }}”</span>
+          <span v-if="view !== 'commands' && view !== 'stop' && query" class="type-body-small muted query">“{{ query }}”</span>
           <span class="keys type-body-small muted" aria-hidden="true">
             <template v-if="!shown">
               <KeyHint keys="ArrowUp" /><KeyHint keys="ArrowDown" />
@@ -282,7 +299,10 @@ defineExpose({ onKey, reopen, toggle, combobox, open });
         </header>
         <div ref="body" class="body" :style="{ '--axis-dir': direction }">
           <Transition :name="TRANSITIONS.sharedAxisX">
-            <div v-if="view === 'status'" key="status" class="pane status app-scroll app-scroll-auto">
+            <div v-if="view === 'terminals' || view === 'stop'" :id="`${uid}-list`" :key="`${view}:${conversationId}`" class="pane background">
+              <BackgroundCommandsPanel ref="background" :conversation-id="conversationId" :mode="view" :query="query" @stop="emit('update:draft', '/stop ')" @changed="emit('terminalsChanged')" />
+            </div>
+            <div v-else-if="view === 'status'" key="status" class="pane status app-scroll app-scroll-auto">
               <StatusPanel v-if="status" :view="status" :effort-label="statusLabels.effort" :tools="statusLabels.tools" :approval-label="statusLabels.approval" />
               <p v-else class="type-body-medium muted empty">{{ t('playground.slash.statusLoading') }}</p>
             </div>
@@ -371,6 +391,7 @@ defineExpose({ onKey, reopen, toggle, combobox, open });
 .body { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .pane { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
 .pane.status { padding: var(--app-space-1) var(--app-space-2) var(--app-space-2); }
+.pane.background { padding: var(--app-space-1) var(--app-space-2) var(--app-space-2); }
 .list { position: relative; display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-height: 0; }
 /* The highlight: one shape that slides to the row the arrows reach, rather than each row flashing. */
 .indicator {

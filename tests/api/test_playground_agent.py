@@ -349,6 +349,29 @@ def test_background_commands_are_listed_stopped_and_end_with_their_conversation(
     assert services.agent.terminals.of(cid) == []
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shell")
+def test_stop_all_background_commands_is_scoped_and_repeatable(client: Any, services: Services, tmp_path: Any) -> None:
+    cid, other = _new(client), _new(client)
+    manager = services.agent.terminals
+    for owner in (cid, cid, other):
+        manager.start(owner, "sleep 30", str(tmp_path), 0, threading.Event())
+    owned = [session for session in manager.sessions.values() if session.owner == cid]
+    unrelated = [session for session in manager.sessions.values() if session.owner == other]
+    try:
+        assert client.delete("/api/v1/playground/conversations/missing/terminals").status_code == 404
+        assert all(session.running for session in owned + unrelated)
+        assert client.delete(f"/api/v1/playground/conversations/{cid}/terminals").status_code == 204
+        assert manager.of(cid) == []
+        assert all(not session.running for session in owned)
+        assert all(session.running for session in unrelated)
+        assert client.delete(f"/api/v1/playground/conversations/{cid}/terminals").status_code == 204
+        # The conversation remains usable after stopping its current commands.
+        manager.start(cid, "sleep 30", str(tmp_path), 0, threading.Event())
+        assert len(manager.of(cid)) == 1
+    finally:
+        manager.close()
+
+
 # -- settings ---------------------------------------------------------------------------- #
 def test_the_tools_are_set_in_settings(client: Any, services: Services) -> None:
     view = client.get("/api/v1/settings").json()["playground"]
