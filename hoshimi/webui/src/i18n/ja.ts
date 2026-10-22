@@ -456,6 +456,7 @@ export default {
     olderCall: '古い呼び出し',
   },
   playground: {
+    copyCode: 'コードをコピー',
     effort: '思考の深さ',
     effortAuto: '自動（サーバー既定）',
     effortAutoShort: '自動',

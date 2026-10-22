@@ -456,6 +456,7 @@ export default {
     olderCall: '较早的调用',
   },
   playground: {
+    copyCode: '复制代码',
     effort: '推理强度',
     effortAuto: '自动（服务端默认）',
     effortAutoShort: '自动',

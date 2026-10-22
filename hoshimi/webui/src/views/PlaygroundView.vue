@@ -7,6 +7,8 @@ import { useModelSpecs, useModels } from '@/api/queries/app';
 import { useI18n } from '@/i18n';
 import CatalogStatus from '@/components/CatalogStatus.vue';
 import { ChipButton, Composer, ComposerMenu, EmptyState, TRANSITIONS, icons, keepLeavingInPlace, useSnackbar } from '@/ui';
+// Not through '@/ui': markdown-it and highlight.js would then load with every page, not with this one.
+import Markdown from '@/ui/Markdown.vue';
 
 const { t } = useI18n();
 const route = useRoute();
@@ -115,6 +117,15 @@ function stop() {
   controller?.abort();
 }
 onBeforeUnmount(stop);
+/** A code block's copy button: the code goes to the clipboard, as the Models page copies an id. */
+async function copy(code: string) {
+  try {
+    await navigator.clipboard.writeText(code);
+    snackbar.show(t('common.copied'));
+  } catch {
+    snackbar.error(t('common.error'));
+  }
+}
 function clear() {
   controller?.abort();
   turns.value = [];
@@ -140,8 +151,10 @@ function clear() {
         <TransitionGroup v-else key="turns" :name="TRANSITIONS.list" tag="div" class="turns">
           <div v-for="(turn, i) in turns" :key="i" class="turn" :class="turn.role">
             <span class="who type-label-medium">{{ turn.role === 'user' ? t('playground.you') : t('playground.assistant') }}</span>
-            <div class="bubble type-body-medium">
-              <template v-if="turn.content">{{ turn.content }}</template>
+            <!-- A reply is Markdown, rendered as it streams; what the user typed stays the text they typed. -->
+            <div class="bubble type-body-medium" :class="{ rich: turn.role === 'assistant' && turn.content }">
+              <Markdown v-if="turn.role === 'assistant' && turn.content" :source="turn.content" :copy-label="t('playground.copyCode')" @copy="copy" />
+              <template v-else-if="turn.content">{{ turn.content }}</template>
               <span v-else class="muted">{{ t('playground.streaming') }}</span>
             </div>
           </div>
@@ -228,6 +241,8 @@ function clear() {
 .turn.user { align-self: flex-end; align-items: flex-end; }
 .who { min-width: 0; overflow-wrap: anywhere; }
 .bubble { min-width: 0; padding: var(--app-space-2) var(--app-space-3); border-radius: var(--md-sys-shape-corner-large); white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Markdown lays out its own blocks; the source's line breaks are not the bubble's to keep. */
+.bubble.rich { white-space: normal; }
 .turn.user .bubble { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
 .turn.assistant .bubble { background: var(--md-sys-color-surface-container); color: var(--md-sys-color-on-surface); }
 .dock { display: flex; flex-direction: column; gap: var(--app-space-2); flex: none; width: min(100%, var(--column)); align-self: center; }

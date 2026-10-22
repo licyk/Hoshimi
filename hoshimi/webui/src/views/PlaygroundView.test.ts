@@ -4,12 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import PlaygroundView from '@/views/PlaygroundView.vue';
 
-const state = vi.hoisted(() => ({ error: vi.fn() }));
+const state = vi.hoisted(() => ({ error: vi.fn(), show: vi.fn() }));
 vi.mock('@/api/queries/app', () => ({
   useModels: () => ({ data: { value: { data: [{ id: 'test/model' }] } }, isPending: { value: false }, isFetching: { value: false } }),
   useModelSpecs: () => ({ data: { value: { data: [] } } }),
 }));
-vi.mock('@/ui', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/ui')>()), useSnackbar: () => ({ error: state.error }) }));
+vi.mock('@/ui', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/ui')>()), useSnackbar: () => ({ error: state.error, show: state.show }) }));
 
 async function openPlayground() {
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/playground', component: PlaygroundView }] });
@@ -54,6 +54,44 @@ describe('Playground live output', () => {
     expect(JSON.parse(fetch.mock.calls[1][1]!.body as string).messages).toEqual([
       { role: 'user', content: 'hello' }, { role: 'assistant', content: '第一段，第二段' }, { role: 'user', content: 'continue' },
     ]);
+    wrapper.unmount();
+    await flushPromises();
+  });
+
+  it('copies a code block from a reply and says so', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    const wrapper = await openPlayground();
+    await wrapper.find('textarea').setValue('show me');
+    await wrapper.find('textarea').trigger('keydown', { key: 'Enter' });
+    await flushPromises();
+    emit('Run:\n\n```bash\nhoshimi serve\n```');
+    source.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+    await flushPromises();
+    expect(wrapper.find('.assistant .code-lang').text()).toBe('bash');
+    await wrapper.find('.assistant button.code-copy').trigger('click');
+    await flushPromises();
+    expect(writeText).toHaveBeenCalledWith('hoshimi serve');
+    expect(state.show).toHaveBeenCalledWith('Copied to the clipboard');
+    wrapper.unmount();
+    await flushPromises();
+  });
+
+  it('renders a reply as Markdown while it streams, and keeps what the user typed as typed', async () => {
+    const wrapper = await openPlayground();
+    await wrapper.find('textarea').setValue('**not bold** <b>me</b>');
+    await wrapper.find('textarea').trigger('keydown', { key: 'Enter' });
+    await flushPromises();
+    emit('Here is **bold**');
+    await flushPromises();
+    expect(wrapper.find('.assistant .bubble strong').text()).toBe('bold');
+    emit(' and a list:\n\n- one\n- two');
+    await flushPromises();
+    expect(wrapper.findAll('.assistant .bubble li').map((li) => li.text())).toEqual(['one', 'two']);
+    expect(wrapper.find('.user .bubble').text()).toBe('**not bold** <b>me</b>');
+    expect(wrapper.find('.user .bubble strong').exists()).toBe(false);
+    source.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+    await flushPromises();
     wrapper.unmount();
     await flushPromises();
   });

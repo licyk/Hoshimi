@@ -456,6 +456,7 @@ export default {
     olderCall: 'Older call',
   },
   playground: {
+    copyCode: 'Copy code',
     effort: 'Effort',
     effortAuto: 'Auto (server default)',
     effortAutoShort: 'Auto',
