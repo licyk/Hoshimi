@@ -1,10 +1,16 @@
-import { mount } from '@vue/test-utils';
-import { describe, expect, it } from 'vitest';
-import Markdown, { renderMarkdown } from '@/ui/Markdown.vue';
+import { flushPromises, mount } from '@vue/test-utils';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import Markdown, { COPIED_MS, renderMarkdown } from '@/ui/Markdown.vue';
 
-const render = (source: string) => mount(Markdown, { props: { source, copyLabel: 'Copy code' } });
+const render = (source: string) => mount(Markdown, { props: { source, copyLabel: 'Copy code', copiedLabel: 'Copied' } });
+const clipboard = (writeText: (text: string) => Promise<void>) => vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
 
 describe('Markdown', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
   it('renders the usual blocks and inline marks', () => {
     const w = render('# Title\n\nSome **bold**, *italic* and `code`.\n\n- one\n- two\n\n1. first\n\n> quoted');
     expect(w.find('h1').text()).toBe('Title');
@@ -39,14 +45,46 @@ describe('Markdown', () => {
     expect(other.find('code').element.innerHTML).toBe('if &lt;x&gt; then\n');
   });
 
-  it('reports a code block’s code, without its last newline, when its copy button is pressed', async () => {
+  it('copies a code block’s code, without its last newline, and says so on the page', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    clipboard(writeText);
     const w = render('Before\n\n```bash\npip install -U hoshimi\nhoshimi serve\n```\n\n    indented code\n');
     const buttons = w.findAll('button.code-copy');
     expect(buttons.map((b) => b.attributes('aria-label'))).toEqual(['Copy code', 'Copy code']);
     await buttons[0].trigger('click');
     await buttons[1].trigger('click');
     await w.find('p').trigger('click');
-    expect(w.emitted('copy')).toEqual([['pip install -U hoshimi\nhoshimi serve'], ['indented code']]);
+    await flushPromises();
+    expect(writeText.mock.calls).toEqual([['pip install -U hoshimi\nhoshimi serve'], ['indented code']]);
+    expect(w.emitted('copied')).toEqual([['pip install -U hoshimi\nhoshimi serve'], ['indented code']]);
+  });
+
+  it('shows a check on the button it copied from, for a moment, on the same button', async () => {
+    vi.useFakeTimers();
+    clipboard(vi.fn().mockResolvedValue(undefined));
+    const w = render('```\none\n```\n\n```\ntwo\n```');
+    const [first, second] = w.findAll('button.code-copy');
+    expect(first.findAll('svg').map((s) => s.classes()[0])).toEqual(['icon-copy', 'icon-check']);
+    await first.trigger('click');
+    await flushPromises();
+    // The same element, so focus stays put: the check is set on it, not rendered anew.
+    expect(w.find('button.code-copy').element).toBe(first.element);
+    expect(first.classes()).toContain('copied');
+    expect(first.attributes('aria-label')).toBe('Copied');
+    expect(second.classes()).not.toContain('copied');
+    vi.advanceTimersByTime(COPIED_MS);
+    expect(first.classes()).not.toContain('copied');
+    expect(first.attributes('aria-label')).toBe('Copy code');
+  });
+
+  it('shows no check when the clipboard refuses, and says that instead', async () => {
+    clipboard(vi.fn().mockRejectedValue(new Error('denied')));
+    const w = render('```\none\n```');
+    await w.find('button.code-copy').trigger('click');
+    await flushPromises();
+    expect(w.find('button.code-copy').classes()).not.toContain('copied');
+    expect(w.emitted('copyFailed')).toHaveLength(1);
+    expect(w.emitted('copied')).toBeUndefined();
   });
 
   it('shows a reply’s own HTML as text and refuses script links', () => {

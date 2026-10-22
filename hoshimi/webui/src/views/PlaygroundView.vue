@@ -117,15 +117,6 @@ function stop() {
   controller?.abort();
 }
 onBeforeUnmount(stop);
-/** A code block's copy button: the code goes to the clipboard, as the Models page copies an id. */
-async function copy(code: string) {
-  try {
-    await navigator.clipboard.writeText(code);
-    snackbar.show(t('common.copied'));
-  } catch {
-    snackbar.error(t('common.error'));
-  }
-}
 function clear() {
   controller?.abort();
   turns.value = [];
@@ -153,7 +144,14 @@ function clear() {
             <span class="who type-label-medium">{{ turn.role === 'user' ? t('playground.you') : t('playground.assistant') }}</span>
             <!-- A reply is Markdown, rendered as it streams; what the user typed stays the text they typed. -->
             <div class="bubble type-body-medium" :class="{ rich: turn.role === 'assistant' && turn.content }">
-              <Markdown v-if="turn.role === 'assistant' && turn.content" :source="turn.content" :copy-label="t('playground.copyCode')" @copy="copy" />
+              <Markdown
+                v-if="turn.role === 'assistant' && turn.content"
+                :source="turn.content"
+                :copy-label="t('playground.copyCode')"
+                :copied-label="t('playground.codeCopied')"
+                @copied="snackbar.show(t('common.copied'))"
+                @copy-failed="snackbar.error(t('common.error'))"
+              />
               <template v-else-if="turn.content">{{ turn.content }}</template>
               <span v-else class="muted">{{ t('playground.streaming') }}</span>
             </div>

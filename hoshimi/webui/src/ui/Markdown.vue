@@ -11,15 +11,22 @@ import { highlight } from '@/ui/highlight';
  *
  * A code block is highlighted when its fence names a language this build knows (``highlight.ts``)
  * and carries a head with that name and a copy button. The button is plain HTML in the rendered
- * string, so a click on it is caught on the whole reply and reported as ``copy`` with the code.
+ * string, so a click on it is caught on the whole reply: the code goes to the clipboard, the button
+ * shows a check (and says ``copiedLabel``) for a moment, and ``copied`` or ``copyFailed`` lets the
+ * page say so too. The check is set on the button in place rather than rendered, so a keyboard
+ * user's focus stays on it.
  */
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
 const escape = md.utils.escapeHtml;
 
-/** Lucide's copy icon, as the button is markup rather than a component. */
-const COPY_ICON =
-  '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-  '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
+/** Lucide's copy and check icons, as the button is markup rather than a component; CSS shows one. */
+const ICON = (className: string, shapes: string) =>
+  `<svg class="${className}" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${shapes}</svg>`;
+const COPY_ICONS =
+  ICON('icon-copy', '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>') +
+  ICON('icon-check', '<path d="M20 6 9 17l-5-5"/>');
+/** How long a copy button shows its check. */
+export const COPIED_MS = 1500;
 
 interface Env {
   copyLabel: string;
@@ -32,7 +39,7 @@ function codeBlock(code: string, info: string, env: Env): string {
   return (
     '<div class="code-block">' +
     `<div class="code-head"><span class="code-lang">${escape(language)}</span>` +
-    `<button type="button" class="code-copy" data-copy aria-label="${label}" title="${label}">${COPY_ICON}</button></div>` +
+    `<button type="button" class="code-copy" data-copy aria-label="${label}" title="${label}">${COPY_ICONS}</button></div>` +
     `<pre class="app-scroll app-scroll-auto"><code class="hljs${highlighted === null ? '' : ` language-${escape(language)}`}">${highlighted ?? escape(code)}</code></pre>` +
     '</div>\n'
   );
@@ -55,15 +62,37 @@ export const renderMarkdown = (source: string, copyLabel = 'Copy'): string => md
 <script setup lang="ts">
 import { computed } from 'vue';
 
-const props = defineProps<{ source: string; copyLabel: string }>();
-const emit = defineEmits<{ copy: [code: string] }>();
+const props = defineProps<{ source: string; copyLabel: string; copiedLabel: string }>();
+const emit = defineEmits<{ copied: [code: string]; copyFailed: [] }>();
 const html = computed(() => renderMarkdown(props.source, props.copyLabel));
 
-function onClick(event: MouseEvent) {
+const timers = new WeakMap<Element, ReturnType<typeof setTimeout>>();
+function showCopied(button: Element) {
+  clearTimeout(timers.get(button));
+  button.classList.add('copied');
+  button.setAttribute('aria-label', props.copiedLabel);
+  button.setAttribute('title', props.copiedLabel);
+  timers.set(button, setTimeout(() => {
+    button.classList.remove('copied');
+    button.setAttribute('aria-label', props.copyLabel);
+    button.setAttribute('title', props.copyLabel);
+  }, COPIED_MS));
+}
+
+async function onClick(event: MouseEvent) {
   const button = (event.target as Element).closest('[data-copy]');
   const code = button?.closest('.code-block')?.querySelector('pre > code');
+  if (!button || !code) return;
   // A fence's code ends with the newline before its closing fence; the copy leaves it out.
-  if (code) emit('copy', (code.textContent ?? '').replace(/\n$/, ''));
+  const text = (code.textContent ?? '').replace(/\n$/, '');
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    emit('copyFailed');
+    return;
+  }
+  showCopied(button);
+  emit('copied', text);
 }
 </script>
 
@@ -101,6 +130,9 @@ function onClick(event: MouseEvent) {
   transition: background-color var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
 }
 .markdown :deep(.code-copy:hover) { background: color-mix(in srgb, currentColor calc(var(--md-sys-state-hover-state-layer-opacity) * 100%), transparent); }
+.markdown :deep(.code-copy .icon-check), .markdown :deep(.code-copy.copied .icon-copy) { display: none; }
+.markdown :deep(.code-copy.copied .icon-check) { display: block; }
+.markdown :deep(.code-copy.copied) { color: var(--md-sys-color-primary); }
 .markdown :deep(.code-copy:active) { background: color-mix(in srgb, currentColor calc(var(--md-sys-state-pressed-state-layer-opacity) * 100%), transparent); }
 .markdown :deep(pre) { margin: 0; padding: 0 var(--app-space-3) var(--app-space-2); white-space: pre; overflow-wrap: normal; --app-scroll-inset: var(--app-space-2); }
 .markdown :deep(pre code) { padding: 0; background: none; font-size: var(--md-sys-typescale-body-small-size); line-height: 1.5; }

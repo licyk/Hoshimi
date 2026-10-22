@@ -457,6 +457,7 @@ export default {
   },
   playground: {
     copyCode: 'コードをコピー',
+    codeCopied: 'コピーしました',
     effort: '思考の深さ',
     effortAuto: '自動（サーバー既定）',
     effortAutoShort: '自動',

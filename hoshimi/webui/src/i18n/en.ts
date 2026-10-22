@@ -457,6 +457,7 @@ export default {
   },
   playground: {
     copyCode: 'Copy code',
+    codeCopied: 'Copied',
     effort: 'Effort',
     effortAuto: 'Auto (server default)',
     effortAutoShort: 'Auto',
