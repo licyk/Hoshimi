@@ -128,6 +128,11 @@ export {
   X,
   ZoomIn,
   ZoomOut,
+  // The Playground's tools.
+  FilePen,
+  ShieldAlert,
+  SquareTerminal,
+  Terminal,
 } from '@lucide/vue';
 
 // Hoshimi's own mark: a guiding star connected to three model nodes. The favicon uses

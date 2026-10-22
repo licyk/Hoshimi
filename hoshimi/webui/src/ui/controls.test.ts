@@ -209,4 +209,21 @@ describe('ComposerMenu', () => {
     const { menu } = await openIn(100, 600, { options: options.slice(0, 3) });
     expect(menu.classList.contains('fixed')).toBe(false);
   });
+
+  it('picks several with multiple, staying open, and skips a disabled option', async () => {
+    vi.stubGlobal('innerWidth', 1280);
+    vi.stubGlobal('innerHeight', 900);
+    const tools = [{ value: 'read', label: 'Read files' }, { value: 'shell', label: 'Run commands' }, { value: 'web', label: 'Search', disabled: true }];
+    const { w, menu } = await openIn(400, 600, { options: tools, multiple: true, values: ['read'], searchLabel: undefined, modelValue: null });
+    const items = () => [...menu.querySelectorAll<HTMLElement>('[role="option"]')];
+    expect(menu.querySelector('[role="listbox"]')!.getAttribute('aria-multiselectable')).toBe('true');
+    expect(items().map((i) => i.getAttribute('aria-selected'))).toEqual(['true', 'false', 'false']);
+    items()[1].click();
+    items()[0].click();
+    items()[2].click();
+    await flushPromises();
+    expect(w.emitted('update:values')).toEqual([[['read', 'shell']], [['shell']]]);
+    expect(document.body.querySelector('.menu[role="dialog"]')).not.toBeNull();
+    expect(items()[2].getAttribute('aria-disabled')).toBe('true');
+  });
 });

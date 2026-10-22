@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import copy
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Body, Request
 from pydantic import Field
 
 from hoshimi.api.deps import ServicesDep
 from hoshimi.api.errors import ERROR_RESPONSES
+from hoshimi.api.playground import PlaygroundRunner
 from hoshimi.core.config import Settings, save_settings, settings_from_dict, settings_to_dict, validate_settings
 from hoshimi.core.context import Services
 from hoshimi.core.errors import ValidationError
@@ -84,6 +85,17 @@ class PlaygroundSettingsView(Record):
     system_prompt: str = ""
     title_model: str = ""
     vision_model: str = "auto"
+    tools: list[str] = Field(default_factory=list)
+    """The built-in tools turned on: ``read``, ``apply_patch``, ``shell``, ``terminal``, ``web_search``, ``web_fetch``."""
+    workspace: str = ""
+    """Where the tools work, as configured; empty for the default."""
+    workspace_path: str = ""
+    """Where the tools work, in effect."""
+    approval: Literal["ask", "auto"] = "ask"
+    """``ask`` has the user approve commands, file changes and reads outside the workspace."""
+    max_steps: int = 50
+    search_url: str = ""
+    """A SearXNG instance for ``web_search``; empty searches DuckDuckGo."""
 
 
 class SettingsView(Record):
@@ -128,7 +140,10 @@ def _view(services: Services, request: Request | None = None) -> SettingsView:
         config_path=str(services.config_path),
         network=network_view(settings.network.as_dict()),
         playground=PlaygroundSettingsView(
-            system_prompt=settings.playground_system_prompt, title_model=settings.playground_title_model, vision_model=settings.playground_vision_model
+            system_prompt=settings.playground_system_prompt, title_model=settings.playground_title_model, vision_model=settings.playground_vision_model,
+            tools=list(settings.playground_tools), workspace=settings.playground_workspace, workspace_path=str(PlaygroundRunner(services).workspace()),
+            approval="auto" if settings.playground_approval == "auto" else "ask", max_steps=settings.playground_max_steps,
+            search_url=settings.playground_search_url,
         ),
         server=ServerView(
             host=settings.host,

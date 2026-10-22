@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from hoshimi.core.agent.runtime import AgentRuntime
 from hoshimi.core.config import Settings, load_settings
 from hoshimi.core.conversations import ConversationStore
 from hoshimi.core.credentials import collect_provider_accounts
@@ -32,8 +33,9 @@ class Services:
     availability verdict per model, ``stats`` counts what the gateway served
     (and, through ``stats.live``, what it is serving right now),
     ``refresher`` renews credentials on a timer, ``updates`` asks PyPI
-    whether a newer release exists, and ``conversations`` keeps the
-    Playground's conversations.
+    whether a newer release exists, ``conversations`` keeps the
+    Playground's conversations, and ``agent`` its tools' background commands
+    and approvals.
 
     Built directly (tests, embedders), every store keeps its rows in memory.
     """
@@ -48,6 +50,7 @@ class Services:
     login: LoginManager | None = None
     updates: UpdateChecker | None = None
     conversations: ConversationStore = field(default_factory=ConversationStore)
+    agent: AgentRuntime = field(default_factory=AgentRuntime)
 
     def __post_init__(self) -> None:
         MODELSDEV.network = self.settings.network
@@ -72,6 +75,7 @@ class Services:
             self.login.close()
         if self.updates is not None:
             self.updates.stop()
+        self.agent.close()
         self.registry.close()
         # Writes are batched; whatever the last second counted lands now. Then
         # the database closes — a second close (the lifespan and the serve

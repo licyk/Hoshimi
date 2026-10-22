@@ -89,6 +89,8 @@ class ChatMessage:
     """What the model reasoned before it answered, when it shows that; empty otherwise."""
     reasoning_ms: int = 0
     """How long it reasoned: from its first reasoning to its first word (or to the end)."""
+    steps: list[dict[str, Any]] = field(default_factory=list)
+    """A reply that used tools, step by step (as the Playground runner keeps them); empty for one that did not."""
 
 
 @dataclass(frozen=True)
@@ -106,6 +108,8 @@ class Conversation:
     created_at: float
     updated_at: float
     messages: list[ChatMessage] = field(default_factory=list)
+    tools_off: list[str] = field(default_factory=list)
+    """The tools (by their Settings switch) this conversation does without."""
 
 
 def title_from(text: str) -> str:
@@ -137,12 +141,12 @@ class ConversationStore:
         )
         return [_conversation(row) for row in rows]
 
-    def create(self, *, model: str = "", effort: str = "", title: str = "", temporary: bool = False) -> Conversation:
+    def create(self, *, model: str = "", effort: str = "", title: str = "", temporary: bool = False, tools_off: list[str] | None = None) -> Conversation:
         now = time.time()
         conversation_id = _id()
         self._db.execute(
-            "INSERT INTO conversations(id, title, title_state, model, effort, archived, temporary, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)",
-            (conversation_id, title_from(title), "user" if title.strip() else "", model, effort, int(temporary), now, now),
+            "INSERT INTO conversations(id, title, title_state, model, effort, archived, temporary, tools_off, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
+            (conversation_id, title_from(title), "user" if title.strip() else "", model, effort, int(temporary), json.dumps(tools_off or []), now, now),
         )
         conversation = self.get(conversation_id)
         assert conversation is not None
@@ -159,7 +163,7 @@ class ConversationStore:
 
     def update(
         self, conversation_id: str, *, title: str | None = None, title_state: TitleState | None = None, model: str | None = None,
-        effort: str | None = None, archived: bool | None = None, current_leaf: str | None = None,
+        effort: str | None = None, archived: bool | None = None, current_leaf: str | None = None, tools_off: list[str] | None = None,
     ) -> Conversation | None:
         """Change what is given; archiving and moving between versions do not count as use.
 
@@ -179,6 +183,8 @@ class ConversationStore:
             changes["effort"] = effort
         if archived is not None:
             changes["archived"] = int(archived)
+        if tools_off is not None:
+            changes["tools_off"] = json.dumps(list(dict.fromkeys(tools_off)))
         if current_leaf is not None:
             if self._db.fetchone("SELECT 1 FROM chat_messages WHERE id = ? AND conversation_id = ?", (current_leaf, conversation_id)) is None:
                 raise ValueError(f"No message '{current_leaf}' in this conversation.")
@@ -263,14 +269,20 @@ class ConversationStore:
 
     def finish_message(
         self, message_id: str, *, content: str, status: Status, error: str = "", notices: list[dict[str, Any]] | None = None,
-        reasoning: str = "", reasoning_ms: int = 0,
+        reasoning: str = "", reasoning_ms: int = 0, steps: list[dict[str, Any]] | None = None,
     ) -> None:
-        """Settle a streamed reply: what it said (and reasoned), and how it ended."""
+        """Settle a streamed reply: what it said (and reasoned, and did), and how it ended."""
         changes: dict[str, object] = {"content": content, "status": status, "error": error, "reasoning": reasoning, "reasoning_ms": reasoning_ms}
         if notices is not None:
             changes["notices"] = json.dumps(notices)
+        if steps is not None:
+            changes["steps"] = json.dumps(steps, ensure_ascii=False)
         assignments = ", ".join(f"{column} = ?" for column in changes)
         self._db.execute(f"UPDATE chat_messages SET {assignments} WHERE id = ?", (*changes.values(), message_id))
+
+    def save_steps(self, message_id: str, steps: list[dict[str, Any]], content: str) -> None:
+        """Keep a reply's steps so far, while it goes on: a tool's effects are real before the reply ends."""
+        self._db.execute("UPDATE chat_messages SET steps = ?, content = ? WHERE id = ?", (json.dumps(steps, ensure_ascii=False), content, message_id))
 
     def path(self, conversation_id: str, leaf_id: str | None = None) -> list[ChatMessage]:
         """The messages from the root to ``leaf_id`` (by default the conversation's current leaf), in order."""
@@ -291,18 +303,18 @@ class ConversationStore:
         branch_id = _id()
         with self._lock, self._db.transaction(immediate=True) as conn:
             conn.execute(
-                "INSERT INTO conversations(id, title, title_state, model, effort, archived, temporary, branched_from, branched_at, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)",
-                (branch_id, source.title, source.title_state, source.model, source.effort, int(source.temporary), source.id, message_id, now, now),
+                "INSERT INTO conversations(id, title, title_state, model, effort, archived, temporary, branched_from, branched_at, tools_off, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)",
+                (branch_id, source.title, source.title_state, source.model, source.effort, int(source.temporary), source.id, message_id, json.dumps(source.tools_off), now, now),
             )
             parent: str | None = None
             for i, m in enumerate(path):
                 copy_id = _id()
                 # Kept in their order: each copy a moment after the last.
                 conn.execute(
-                    "INSERT INTO chat_messages(id, conversation_id, parent_id, role, content, model, effort, status, error, notices, reasoning, reasoning_ms, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (copy_id, branch_id, parent, m.role, m.content, m.model, m.effort, m.status, m.error, json.dumps(m.notices), m.reasoning, m.reasoning_ms, m.created_at + i * 1e-6),
+                    "INSERT INTO chat_messages(id, conversation_id, parent_id, role, content, model, effort, status, error, notices, reasoning, reasoning_ms, steps, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (copy_id, branch_id, parent, m.role, m.content, m.model, m.effort, m.status, m.error, json.dumps(m.notices), m.reasoning, m.reasoning_ms, json.dumps(m.steps, ensure_ascii=False), m.created_at + i * 1e-6),
                 )
                 conn.executemany(
                     "INSERT INTO message_attachments(message_id, attachment_id, position) VALUES (?, ?, ?)",
@@ -412,13 +424,21 @@ def _message(row: sqlite3.Row, attachments: list[AttachmentInfo]) -> ChatMessage
     return ChatMessage(
         id=row["id"], conversation_id=row["conversation_id"], parent_id=row["parent_id"], role=row["role"], content=row["content"],
         model=row["model"], effort=row["effort"], status=row["status"], error=row["error"], notices=notices if isinstance(notices, list) else [],
-        created_at=row["created_at"], attachments=attachments, reasoning=row["reasoning"], reasoning_ms=row["reasoning_ms"],
+        created_at=row["created_at"], attachments=attachments, reasoning=row["reasoning"], reasoning_ms=row["reasoning_ms"], steps=_json_list(row["steps"]),
     )
+
+
+def _json_list(raw: str | None) -> list[Any]:
+    try:
+        value = json.loads(raw or "[]")
+    except ValueError:
+        return []
+    return value if isinstance(value, list) else []
 
 
 def _conversation(row: sqlite3.Row, messages: list[ChatMessage] | None = None) -> Conversation:
     return Conversation(
         id=row["id"], title=row["title"], title_state=row["title_state"], model=row["model"], effort=row["effort"], archived=bool(row["archived"]),
         temporary=bool(row["temporary"]), current_leaf=row["current_leaf"], branched_from=row["branched_from"], branched_at=row["branched_at"],
-        created_at=row["created_at"], updated_at=row["updated_at"], messages=messages or [],
+        created_at=row["created_at"], updated_at=row["updated_at"], messages=messages or [], tools_off=[str(t) for t in _json_list(row["tools_off"])],
     )

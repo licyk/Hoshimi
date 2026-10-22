@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { MessageView, Notice } from '@/api/types';
+import type { ApprovalDecision, MessageView, Notice, ToolStep } from '@/api/types';
 import ActionButton from '@/components/chat/ActionButton.vue';
 import ReasoningSection from '@/components/chat/ReasoningSection.vue';
+import ToolCall from '@/components/chat/ToolCall.vue';
 import VersionSwitcher from '@/components/chat/VersionSwitcher.vue';
 import { useI18n } from '@/i18n';
-import type { Stage } from '@/stores/chat';
+import { stepsOf, type Stage } from '@/stores/chat';
 import { AppButton, AppIcon, AppMenu, icons } from '@/ui';
 // Not through '@/ui': markdown-it and highlight.js load with the Playground alone.
 import Markdown from '@/ui/Markdown.vue';
@@ -15,7 +16,8 @@ import Markdown from '@/ui/Markdown.vue';
  * model that shows its reasoning), the Markdown it said, what is happening while it has said nothing
  * yet (reading an image, waiting for the model), how it ended when it did not end
  * well, and what the reader should know about how it was made (an image described by another
- * model). Under it: Copy, Try again (with the model now in the composer), Branch in a new chat, the
+ * model). A reply that used tools is its steps in order: what it reasoned, said and called, each
+ * call a line that opens (and asks for approval when it must). Under it: Copy, Try again (with the model now in the composer), Branch in a new chat, the
  * way between its versions, and More (Copy as API request). The latest reply keeps its actions in view.
  */
 const props = defineProps<{
@@ -29,37 +31,68 @@ const props = defineProps<{
   local: boolean;
   temporary: boolean;
 }>();
-const emit = defineEmits<{ copy: []; retry: []; branch: []; 'copy-request': []; previous: []; next: []; copied: []; 'copy-failed': [] }>();
+const emit = defineEmits<{
+  copy: []; retry: []; branch: []; 'copy-request': []; previous: []; next: []; copied: []; 'copy-failed': []; approve: [ToolStep, ApprovalDecision];
+}>();
 const { t } = useI18n();
 
 const streaming = computed(() => props.message.status === 'streaming');
-// Reasoning has its own line ("Thinking…"); the waiting line covers the time before anything comes.
+const steps = computed(() => stepsOf(props.message));
+/** Step by step while it streams (it may call a tool yet), and kept so when it did. */
+const timeline = computed(() => steps.value.length > 0);
+const SETTLED = new Set(['done', 'error', 'denied', 'stopped']);
+// Reasoning has its own line ("Thinking…"); the waiting line covers the time before anything comes,
+// and the time between a round's calls and the model's next words.
 const waiting = computed(() => {
-  if (!streaming.value || props.message.content || props.message.reasoning) return '';
+  if (!streaming.value) return '';
+  const last = steps.value[steps.value.length - 1];
+  if (last) return last.type === 'tool' && SETTLED.has(last.status) ? t('playground.working') : '';
+  if (props.message.content || props.message.reasoning) return '';
   if (props.stage?.kind === 'describing') return t('playground.describing', { model: props.stage.model });
   return t('playground.answering');
 });
 const noticeText = (n: Notice) =>
   n.kind === 'image-described' ? t('playground.noticeDescribed', { name: n.name, model: n.model })
   : n.kind === 'image-refused' ? t('playground.noticeRefused', { model: n.model })
+  : n.kind === 'tools-unsupported' ? t('playground.noticeNoTools', { model: n.model })
+  : n.kind === 'step-limit' ? t('playground.noticeStepLimit', { n: n.name })
   : t('playground.noticeOmitted', { name: n.name });
+const noticeIcon = (n: Notice) =>
+  n.kind === 'image-described' ? icons.Image : n.kind === 'tools-unsupported' ? icons.Wrench : n.kind === 'step-limit' ? icons.AlertTriangle : icons.ImageOff;
 const more = computed(() => [{ id: 'request', label: t('playground.copyRequest'), icon: icons.FileText }]);
 const failure = computed(() => [t('playground.replyFailed'), props.message.error].filter(Boolean).join(' '));
 </script>
 
 <template>
   <div class="assistant-message" :class="{ last, streaming }">
-    <ReasoningSection v-if="message.reasoning" :reasoning="message.reasoning" :ms="message.reasoning_ms" :active="streaming && !message.content" />
+    <template v-if="timeline">
+      <template v-for="(s, i) in steps" :key="s.type === 'tool' ? s.id : `${s.type}-${i}`">
+        <ReasoningSection v-if="s.type === 'reasoning'" :reasoning="s.text" :ms="s.ms" :active="streaming && i === steps.length - 1" />
+        <Markdown
+          v-else-if="s.type === 'text'"
+          class="content type-body-large"
+          :source="s.text"
+          :copy-label="t('playground.copyCode')"
+          :copied-label="t('playground.codeCopied')"
+          @copied="emit('copied')"
+          @copy-failed="emit('copy-failed')"
+        />
+        <ToolCall v-else :step="s" @approve="(decision) => emit('approve', s, decision)" />
+      </template>
+    </template>
+    <template v-else>
+      <ReasoningSection v-if="message.reasoning" :reasoning="message.reasoning" :ms="message.reasoning_ms" :active="streaming && !message.content" />
+      <Markdown
+        v-if="message.content"
+        class="content type-body-large"
+        :source="message.content"
+        :copy-label="t('playground.copyCode')"
+        :copied-label="t('playground.codeCopied')"
+        @copied="emit('copied')"
+        @copy-failed="emit('copy-failed')"
+      />
+    </template>
     <div v-if="waiting" class="waiting type-body-medium muted" role="status"><span class="dot" aria-hidden="true" />{{ waiting }}</div>
-    <Markdown
-      v-if="message.content"
-      class="content type-body-large"
-      :source="message.content"
-      :copy-label="t('playground.copyCode')"
-      :copied-label="t('playground.codeCopied')"
-      @copied="emit('copied')"
-      @copy-failed="emit('copy-failed')"
-    />
     <p v-if="message.status === 'stopped'" class="ended type-body-small muted">{{ t('playground.stopped') }}</p>
     <div v-if="message.status === 'error'" class="failed type-body-medium" role="alert">
       <AppIcon :icon="icons.AlertTriangle" :size="18" />
@@ -67,7 +100,7 @@ const failure = computed(() => [t('playground.replyFailed'), props.message.error
       <AppButton variant="text" :icon="icons.RotateCcw" :disabled="busy || local" @click="emit('retry')">{{ t('playground.retry') }}</AppButton>
     </div>
     <ul v-if="message.notices.length" class="notices type-body-small muted">
-      <li v-for="(n, i) in message.notices" :key="i"><AppIcon :icon="n.kind === 'image-described' ? icons.Image : icons.ImageOff" :size="18" />{{ noticeText(n) }}</li>
+      <li v-for="(n, i) in message.notices" :key="i"><AppIcon :icon="noticeIcon(n)" :size="18" />{{ noticeText(n) }}</li>
     </ul>
     <div v-if="!streaming" class="actions" :class="{ pinned: last || total > 1 }">
       <ActionButton v-if="message.content" :icon="icons.Copy" :label="t('playground.copyMessage')" @click="emit('copy')" />

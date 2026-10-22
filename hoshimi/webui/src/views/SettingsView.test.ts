@@ -10,7 +10,7 @@ const settings = ref({
   data_dir: '/data', config_path: '/data/config.json', restart_required: false, network: { mode: 'auto', proxy_configured: false, system_proxy: false }, providers: [],
   server: { host: '127.0.0.1', port: 10600, allow_cidrs: ['10.0.0.0/8'], allow_hosts: [], allow_origins: [], auto_checkin: true, auto_refresh: true, default_model: null, max_account_retries: 3, max_body_bytes: 1000, access_token_configured: false, model_api_key_configured: false, strict_port: false, stats_keep_days: 90 },
   listening: { host: '127.0.0.1', port: 10601, requested_port: 10600, fallback: true },
-  playground: { system_prompt: '', title_model: '', vision_model: 'auto' },
+  playground: { system_prompt: '', title_model: '', vision_model: 'auto', tools: ['read'], workspace: '', workspace_path: '/data/workspace', approval: 'ask', max_steps: 50, search_url: '' },
 });
 
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ replace: ({ query }: { query: Record<string, string> }) => (route.query = query), push: vi.fn() }) }));
@@ -60,6 +60,25 @@ describe('settings', () => {
     await prompt.setValue('Answer briefly.');
     await prompt.trigger('change');
     expect(state.update.mock.calls[0][0]).toEqual({ playground: { system_prompt: 'Answer briefly.' } });
+  });
+
+  it('turns tools on one by one, in their order, and asks before acting until told not to', async () => {
+    route.query = { tab: 'tools' };
+    const w = mount(SettingsView, { global: { plugins: [createPinia()] } });
+    expect(w.findAll('h2').map((h) => h.text())).toEqual(['Playground tools', 'How tools run']);
+    const toggle = (label: string) => w.findAll('.switch').find((s) => s.text() === label)!.trigger('click');
+    await toggle('Run commands');
+    await toggle('Read files');
+    await toggle('Ask before acting');
+    expect(state.update.mock.calls.map((c) => c[0])).toEqual([
+      { playground: { tools: ['read', 'shell'] } },
+      { playground: { tools: [] } },
+      { playground: { approval: 'auto' } },
+    ]);
+    const workspace = w.find('input[aria-label="Workspace"]');
+    await workspace.setValue('~/agent');
+    await workspace.trigger('change');
+    expect(state.update.mock.calls.at(-1)![0]).toEqual({ playground: { workspace: '~/agent' } });
   });
 
   it('saves an allow-list as a list the moment it changes', async () => {

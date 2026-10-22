@@ -12,6 +12,25 @@ sent is put together here, from the conversation's path:
   left out and the reply says so. A model said to read images whose station
   refuses them is asked once more, with descriptions.
 
+With tools turned on (``playground.tools``, less the ones a conversation
+turned off), a reply is an agent loop: the model is offered the built-in
+tools (:mod:`hoshimi.core.agent`); each round it streams, the tools it called
+run one after another (after the user approves the ones that act, when
+``playground.approval`` is ``ask``), their results go back to it, and it goes
+on until a round calls nothing, or ``playground.max_steps`` rounds are spent.
+Such a reply keeps its *steps*, in order:
+
+- ``{"type": "reasoning", "text", "ms", "round"}``;
+- ``{"type": "text", "text", "round"}``;
+- ``{"type": "tool", "id", "name", "arguments", "status", "output", "exit_code",
+  "ms", "meta", "approval", "round"}``, where ``status`` is ``pending`` (being
+  written), ``waiting`` (for approval, ``approval`` saying why), ``running``,
+  ``done``, ``error``, ``denied`` or ``stopped``.
+
+Its ``content`` is its text steps together. Sent to a model again, each round
+becomes an assistant message with its ``tool_calls`` and a ``tool`` message
+per call (or, with no tools offered, the same as text).
+
 The reply streams back as events (see :func:`event`) while it is kept: it is
 filed as ``streaming`` before the first word, and settles as ``complete``,
 ``stopped`` (the page stopped it or went away) or ``error``. Titles are
@@ -23,13 +42,19 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import re
+import threading
 import time
+import uuid
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from hoshimi.api.inference import tracked_chunks
+from hoshimi.core.agent.base import Tool, ToolContext, ToolError
+from hoshimi.core.agent.tools import GROUPS, parse_arguments, run_tool, tools_for, unsupported
 from hoshimi.core.context import Services
 from hoshimi.core.conversations import Attachment, ChatMessage, Conversation, ConversationStore, Status, path_to
 from hoshimi.core.errors import HoshimiError, ValidationError
@@ -55,6 +80,7 @@ UNREADABLE_STATES = {"unavailable", "region-blocked"}
 """Probe verdicts that rule a model out as the one to describe images."""
 
 _IMAGE_REFUSAL = re.compile(r"image|vision|multimodal|multi-modal|image_url|visual", re.IGNORECASE)
+_TOOLS_REFUSAL = re.compile(r"\btools?\b|tool_choice|function[ _-]?call", re.IGNORECASE)
 
 
 def event(kind: str, **fields: Any) -> dict[str, Any]:
@@ -66,7 +92,11 @@ def event(kind: str, **fields: Any) -> dict[str, Any]:
     - ``notice``: something the reader should know about this reply (``notice``);
     - ``delta``: more of the reply (``text``);
     - ``reasoning``: more of what the model reasons before it answers (``text``), for a model that shows it;
+    - ``tool``: a tool call as it now stands (``step``, a tool step; the page replaces the one with its ``id``);
     - ``done``: the reply as kept, with how it ended (``message``).
+
+    ``delta`` and ``reasoning`` add to the last step when it is of their kind,
+    and start a new step otherwise.
     """
     return {"type": kind, **fields}
 
@@ -82,22 +112,124 @@ class Prepared:
 
 
 @dataclass
-class Thought:
-    """What a reply reasoned, and when: from its first reasoning to its first word (or to the end)."""
+class Run:
+    """A reply as it is made: its steps in order, and the round of tool calls it is in."""
 
-    parts: list[str] = field(default_factory=list)
-    started: float | None = None
-    ended: float | None = None
+    steps: list[dict[str, Any]] = field(default_factory=list)
+    round: int = 0
+    _reasoning_since: float | None = None
+
+    def _last(self, kind: str) -> dict[str, Any] | None:
+        last = self.steps[-1] if self.steps else None
+        return last if last is not None and last["type"] == kind and last["round"] == self.round else None
+
+    def add_text(self, piece: str) -> None:
+        self.end_reasoning()
+        step = self._last("text")
+        if step is None:
+            self.steps.append({"type": "text", "text": piece, "round": self.round})
+        else:
+            step["text"] += piece
+
+    def add_reasoning(self, piece: str) -> None:
+        step = self._last("reasoning")
+        if step is None:
+            self._reasoning_since = time.monotonic()
+            self.steps.append({"type": "reasoning", "text": piece, "ms": 0, "round": self.round})
+        else:
+            step["text"] += piece
+
+    def end_reasoning(self) -> None:
+        """The reasoning step going on (if any) ends: the model has moved on to answering or calling."""
+        if self._reasoning_since is None:
+            return
+        for step in reversed(self.steps):
+            if step["type"] == "reasoning":
+                step["ms"] = round((time.monotonic() - self._reasoning_since) * 1000)
+                break
+        self._reasoning_since = None
+
+    def add_call(self, call_id: str, name: str) -> dict[str, Any]:
+        self.end_reasoning()
+        if not call_id or any(s.get("id") == call_id for s in self.steps):
+            call_id = f"call_{uuid.uuid4().hex[:24]}"
+        step = {"type": "tool", "id": call_id, "name": name, "arguments": "", "status": "pending", "output": "", "exit_code": None, "ms": 0,
+                "meta": {}, "approval": "", "round": self.round}
+        self.steps.append(step)
+        return step
 
     @property
     def text(self) -> str:
-        return "".join(self.parts)
+        return "\n\n".join(s["text"] for s in self.steps if s["type"] == "text" and s["text"].strip())
 
     @property
-    def ms(self) -> int:
-        if self.started is None:
-            return 0
-        return round(((self.ended or time.monotonic()) - self.started) * 1000)
+    def reasoning(self) -> str:
+        return "\n\n".join(s["text"] for s in self.steps if s["type"] == "reasoning")
+
+    @property
+    def reasoning_ms(self) -> int:
+        return sum(int(s.get("ms") or 0) for s in self.steps if s["type"] == "reasoning")
+
+    @property
+    def calls(self) -> list[dict[str, Any]]:
+        return [s for s in self.steps if s["type"] == "tool"]
+
+    def kept_steps(self) -> list[dict[str, Any]]:
+        """The steps to keep: a reply that called no tool is its text and reasoning alone."""
+        return self.steps if self.calls else []
+
+    def stop_calls(self) -> None:
+        """Calls the stop cut short before they ran."""
+        for step in self.calls:
+            if step["status"] in ("pending", "waiting", "running"):
+                step["status"] = "stopped"
+                step["output"] = step["output"] or STOPPED_CALL
+
+
+STOPPED_CALL = "The user stopped the reply before this call finished."
+DENIED_CALL = "The user declined this call; it did not run. Do not try it again unless they ask."
+
+
+def call_result(step: dict[str, Any]) -> str:
+    """What a model is told a call gave."""
+    if step["status"] == "stopped":
+        return step["output"] or STOPPED_CALL
+    if step["status"] == "denied":
+        return DENIED_CALL
+    return step["output"] or "(no output)"
+
+
+def replay(message: ChatMessage, *, tools: bool) -> list[dict[str, Any]]:
+    """A kept reply as a model is sent it again: per round, what it said and called, then what each call gave.
+
+    With no tools offered now, the calls and their results go as text, so no
+    station is sent tool calls it was not told about.
+    """
+    if not message.steps:
+        return [{"role": "assistant", "content": message.content}] if message.content else []
+    out: list[dict[str, Any]] = []
+    rounds: dict[int, list[dict[str, Any]]] = {}
+    for step in message.steps:
+        rounds.setdefault(int(step.get("round") or 0), []).append(step)
+    for number in sorted(rounds):
+        steps = rounds[number]
+        text = "".join(s["text"] for s in steps if s["type"] == "text")
+        calls = [s for s in steps if s["type"] == "tool"]
+        if not calls:
+            if text.strip():
+                out.append({"role": "assistant", "content": text})
+            continue
+        if not tools:
+            done = "\n\n".join(f"[Called {c['name']}({c['arguments']}); it gave:]\n{call_result(c)}" for c in calls)
+            out.append({"role": "assistant", "content": (text + "\n\n" if text.strip() else "") + done})
+            continue
+        out.append({
+            "role": "assistant",
+            "content": text or None,
+            "tool_calls": [{"id": c["id"], "type": "function", "function": {"name": c["name"], "arguments": c["arguments"] or "{}"}} for c in calls],
+        })
+        out.extend({"role": "tool", "tool_call_id": c["id"], "content": call_result(c)} for c in calls)
+    return out
 
 
 class PlaygroundRunner:
@@ -163,11 +295,12 @@ class PlaygroundRunner:
             self.store.describe(attachment.id, text)
         return text
 
-    def prepare(self, conversation: Conversation, path: list[ChatMessage], model: str, *, describe: bool) -> Prepared:
+    def prepare(self, conversation: Conversation, path: list[ChatMessage], model: str, *, describe: bool, tools: bool = False) -> Prepared:
         """The Chat Completions messages for a reply after ``path``.
 
         ``describe`` sends images as descriptions rather than images; it is
-        what happens for a model that cannot read them.
+        what happens for a model that cannot read them. ``tools`` says tools
+        are offered, so earlier calls go as calls (see :func:`replay`).
         """
         prepared = Prepared(messages=[])
         prompt = self.services.settings.playground_system_prompt
@@ -177,8 +310,7 @@ class PlaygroundRunner:
         asked = False
         for message in path:
             if message.role == "assistant":
-                if message.content:
-                    prepared.messages.append({"role": "assistant", "content": message.content})
+                prepared.messages.extend(replay(message, tools=tools))
                 continue
             parts: list[dict[str, Any]] = []
             text = message.content
@@ -218,8 +350,27 @@ class PlaygroundRunner:
             prepared.messages.append({"role": "user", "content": content})
         return prepared
 
+    # -- tools -------------------------------------------------------------- #
+    def tools(self, conversation: Conversation, model: str) -> list[Tool]:
+        """The tools offered to ``model`` in ``conversation``: on in Settings, not turned off here, and none for a model without tool calls."""
+        groups = [g for g in GROUPS if g in self.services.settings.playground_tools and g not in conversation.tools_off]
+        spec = self.services.registry.spec(model)
+        if not groups or (spec is not None and spec.tools is False):
+            return []
+        return tools_for(groups)
+
+    def workspace(self) -> Path:
+        configured = self.services.settings.playground_workspace
+        return Path(os.path.expanduser(configured)) if configured else self.services.data_dir / "workspace"
+
+    def context(self, conversation_id: str, cancel: threading.Event) -> ToolContext:
+        return ToolContext(
+            workspace=self.workspace(), conversation_id=conversation_id, cancel=cancel, terminals=self.services.agent.terminals,
+            network=self.services.settings.network, search_url=self.services.settings.playground_search_url,
+        )
+
     def request(self, conversation_id: str, message_id: str) -> dict[str, Any]:
-        """The Chat Completions request that produced a reply (or would answer a question), as sent."""
+        """The Chat Completions request that produced a reply (or would answer a question), as sent: its first round, for one that used tools."""
         conversation = self.store.get(conversation_id)
         if conversation is None:
             raise HoshimiError(f"No conversation '{conversation_id}'.")
@@ -230,8 +381,18 @@ class PlaygroundRunner:
         path = path_to(conversation.messages, leaf or "")
         model = message.model if message.role == "assistant" and message.model else conversation.model
         effort = message.effort if message.role == "assistant" else conversation.effort
-        prepared = self.prepare(conversation, path, model, describe=not self.sees_images(model) or any(n.get("kind") == "image-described" for n in message.notices))
-        body: dict[str, Any] = {"model": model, "messages": prepared.messages, "stream": True}
+        tools = self.tools(conversation, model)
+        describe = not self.sees_images(model) or any(n.get("kind") == "image-described" for n in message.notices)
+        prepared = self.prepare(conversation, path, model, describe=describe, tools=bool(tools))
+        return self._body(model, effort, prepared.messages, tools)
+
+    @staticmethod
+    def _body(model: str, effort: str, messages: list[dict[str, Any]], tools: list[Tool], *, last_round: bool = False) -> dict[str, Any]:
+        body: dict[str, Any] = {"model": model, "messages": messages, "stream": True}
+        if tools:
+            body["tools"] = [t.definition() for t in tools]
+            # The last round may not call: it answers with what it has.
+            body["tool_choice"] = "none" if last_round else "auto"
         if effort:
             body["reasoning_effort"] = effort
         return body
@@ -247,77 +408,178 @@ class PlaygroundRunner:
         return False
 
     # -- replies ------------------------------------------------------------- #
-    def reply(self, conversation_id: str, parent_id: str, *, model: str, effort: str) -> Iterator[dict[str, Any]]:
-        """Stream and keep a new reply to the question ``parent_id``."""
+    def reply(self, conversation_id: str, parent_id: str, *, model: str, effort: str, cancel: threading.Event | None = None) -> Iterator[dict[str, Any]]:
+        """Stream and keep a new reply to the question ``parent_id``; ``cancel`` is set when the page stops it."""
+        cancel = cancel or threading.Event()
         conversation = self.store.get(conversation_id)
         assert conversation is not None
         message = self.store.add_message(conversation_id, parent_id, "assistant", "", model=model, effort=effort, status="streaming")
         assert message is not None
         yield event("assistant", message=message)
         path = path_to(conversation.messages, parent_id)
-        text: list[str] = []
-        thought = Thought()
+        run = Run()
         notices: list[dict[str, Any]] = []
         status: Status = "complete"
         error = ""
+
+        def settle(status: Status, error: str = "") -> None:
+            self.store.finish_message(
+                message.id, content=run.text, status=status, error=error, notices=notices, reasoning=run.reasoning, reasoning_ms=run.reasoning_ms,
+                steps=run.kept_steps(),
+            )
+
+        def notice(item: dict[str, Any]) -> Iterator[dict[str, Any]]:
+            if item not in notices:
+                notices.append(item)
+                yield event("notice", notice=item)
+
         try:
+            tools = self.tools(conversation, model)
+            spec = self.services.registry.spec(model)
+            if not tools and spec is not None and spec.tools is False and any(g not in conversation.tools_off for g in self.services.settings.playground_tools):
+                yield from notice({"kind": "tools-unsupported", "model": model})
             describe = not self.sees_images(model)
-            for attempt in range(2):
+            for attempt in range(3):
                 if describe and self._undescribed(path):
                     describer = self.vision_model(besides=model)
                     if describer:
                         yield event("stage", stage="describing", model=describer)
-                prepared = self.prepare(conversation, path, model, describe=describe)
-                for notice in prepared.notices:
-                    if notice not in notices:
-                        notices.append(notice)
-                        yield event("notice", notice=notice)
-                body: dict[str, Any] = {"model": model, "messages": prepared.messages, "stream": True}
-                if effort:
-                    body["reasoning_effort"] = effort
+                prepared = self.prepare(conversation, path, model, describe=describe, tools=bool(tools))
+                for item in prepared.notices:
+                    yield from notice(item)
                 try:
-                    yield from self._stream(model, body, text, thought)
+                    yield from self._agent(run, conversation_id, message.id, model, effort, prepared.messages, tools, cancel, notice)
                     break
                 except HoshimiError as exc:
+                    # A station that refuses tools, before a word of the reply: once more, without them.
+                    if tools and not run.steps and _TOOLS_REFUSAL.search(exc.message or str(exc)):
+                        tools = []
+                        yield from notice({"kind": "tools-unsupported", "model": model})
+                        continue
                     # A station that refuses images, before a word of the reply: once more, with descriptions.
-                    if attempt == 0 and prepared.images and not text and _IMAGE_REFUSAL.search(exc.message or str(exc)):
+                    if not describe and prepared.images and not run.steps and _IMAGE_REFUSAL.search(exc.message or str(exc)):
                         describe = True
-                        notice = {"kind": "image-refused", "model": model}
-                        notices.append(notice)
-                        yield event("notice", notice=notice)
+                        yield from notice({"kind": "image-refused", "model": model})
                         continue
                     raise
         except GeneratorExit:
             # The page stopped the reply, or went away: what came is kept.
-            self.store.finish_message(message.id, content="".join(text), status="stopped", notices=notices, reasoning=thought.text, reasoning_ms=thought.ms)
+            run.end_reasoning()
+            run.stop_calls()
+            settle("stopped")
             raise
         except HoshimiError as exc:
             status, error = "error", exc.message or str(exc)
         except Exception as exc:  # the reply must still be settled
             logger.exception("Playground reply failed")
             status, error = "error", str(exc) or exc.__class__.__name__
-        self.store.finish_message(message.id, content="".join(text), status=status, error=error, notices=notices, reasoning=thought.text, reasoning_ms=thought.ms)
+        run.end_reasoning()
+        run.stop_calls()
+        settle(status, error)
         yield event("done", message=self.store.message(message.id))
 
-    def _stream(self, model: str, body: dict[str, Any], text: list[str], thought: Thought) -> Iterator[dict[str, Any]]:
+    def _agent(
+        self, run: Run, conversation_id: str, message_id: str, model: str, effort: str, messages: list[dict[str, Any]], tools: list[Tool],
+        cancel: threading.Event, notice: Any,
+    ) -> Iterator[dict[str, Any]]:
+        """Rounds of streaming and calling, until a round calls nothing."""
+        limit = self.services.settings.playground_max_steps
+        ctx = self.context(conversation_id, cancel)
+        if tools:
+            try:
+                ctx.workspace.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                logger.warning("could not create the workspace %s: %s", ctx.workspace, exc)
+        offered = {t.name: t for t in tools}
+        while True:
+            last_round = bool(tools) and run.round >= limit
+            calls = yield from self._stream(model, self._body(model, effort, messages, tools, last_round=last_round), run)
+            if not calls:
+                return
+            if last_round:
+                for step in calls:
+                    step.update(status="stopped", output=f"Not run: this reply reached its limit of {limit} rounds of tool calls.")
+                    yield event("tool", step=step)
+                yield from notice({"kind": "step-limit", "name": str(limit)})
+                return
+            messages.append({
+                "role": "assistant",
+                "content": "".join(s["text"] for s in run.steps if s["type"] == "text" and s["round"] == run.round) or None,
+                "tool_calls": [{"id": c["id"], "type": "function", "function": {"name": c["name"], "arguments": c["arguments"] or "{}"}} for c in calls],
+            })
+            for step in calls:
+                yield from self._call(step, offered.get(step["name"]), ctx)
+                messages.append({"role": "tool", "tool_call_id": step["id"], "content": call_result(step)})
+                self.store.save_steps(message_id, run.steps, run.text)
+            run.round += 1
+
+    def _call(self, step: dict[str, Any], tool: Tool | None, ctx: ToolContext) -> Iterator[dict[str, Any]]:
+        """Run one call (asking first, when it must) and keep how it went on its step."""
+        try:
+            args = parse_arguments(step["arguments"]) if tool is not None else {}
+        except ToolError as exc:
+            step.update(status="error", output=str(exc))
+            yield event("tool", step=step)
+            return
+        if tool is None:
+            step.update(status="error", output=unsupported(step["name"]))
+            yield event("tool", step=step)
+            return
+        settings = self.services.settings
+        approvals = self.services.agent.approvals
+        reason = tool.approval(args, ctx) if settings.playground_approval == "ask" else None
+        if reason and not approvals.allowed(ctx.conversation_id, tool.group):
+            step.update(status="waiting", approval=reason)
+            yield event("tool", step=step)
+            decision = approvals.ask(ctx.conversation_id, step["id"], tool.group, ctx.cancel)
+            if decision is None:
+                step.update(status="stopped", output=STOPPED_CALL)
+                yield event("tool", step=step)
+                return
+            if decision == "deny":
+                step.update(status="denied", output="")
+                yield event("tool", step=step)
+                return
+        step.update(status="running")
+        yield event("tool", step=step)
+        started = time.monotonic()
+        result = run_tool(tool, step["name"], args, ctx)
+        step.update(
+            status="stopped" if result.meta.get("cancelled") else "done" if result.ok else "error",
+            output=result.output, exit_code=result.exit_code, ms=round((time.monotonic() - started) * 1000), meta=result.meta,
+        )
+        yield event("tool", step=step)
+
+    def _stream(self, model: str, body: dict[str, Any], run: Run) -> Generator[dict[str, Any], None, list[dict[str, Any]]]:
+        """One round: the reply's words and reasoning as events; returns the calls it made, their arguments complete."""
+        calls: list[dict[str, Any]] = []
+        by_index: dict[int, dict[str, Any]] = {}
         for chunk in tracked_chunks(self.services, model, body, origin="playground", stream=True):
             kind = chunk.get("type")
             if kind == "text_delta":
                 piece = str(chunk.get("text") or "")
                 if piece:
-                    if thought.started is not None and thought.ended is None:
-                        thought.ended = time.monotonic()
-                    text.append(piece)
+                    run.add_text(piece)
                     yield event("delta", text=piece)
             elif kind == "reasoning_delta":
                 piece = str(chunk.get("text") or "")
                 if piece:
-                    if thought.started is None:
-                        thought.started = time.monotonic()
-                    thought.parts.append(piece)
+                    run.add_reasoning(piece)
                     yield event("reasoning", text=piece)
+            elif kind == "tool_call_start":
+                step = run.add_call(str(chunk.get("id") or ""), str(chunk.get("name") or ""))
+                step["arguments"] = str(chunk.get("arguments") or "")
+                calls.append(step)
+                by_index[int(chunk.get("index") or 0)] = step
+                yield event("tool", step=step)
+            elif kind == "tool_call_delta":
+                step = by_index.get(int(chunk.get("index") or 0))
+                if step is not None:
+                    step["arguments"] += str(chunk.get("arguments") or "")
             elif kind == "error":
                 raise HoshimiError(str(chunk.get("message") or "The upstream stream failed."))
+        run.end_reasoning()
+        return calls
 
     # -- titles -------------------------------------------------------------- #
     def title(self, conversation_id: str) -> Conversation | None:

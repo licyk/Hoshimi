@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, reactive, ref } from 'vue';
 import { conversationsApi, type ReplyEvent } from '@/api/conversations';
-import type { AttachmentView, ConversationView, MessageView } from '@/api/types';
+import type { ApprovalDecision, AttachmentView, ConversationView, MessageView, Step, TerminalView, ToolGroup, ToolStep } from '@/api/types';
 
 type Summary = Omit<ConversationView, 'messages'>;
 
@@ -11,6 +11,19 @@ export type Stage = { kind: 'describing'; model: string } | null;
 let localIds = 0;
 const localId = (kind: string) => `local-${kind}-${++localIds}`;
 export const isLocal = (id: string) => id.startsWith('local-');
+
+/** A reply's steps (``MessageView.steps``), typed. */
+export const stepsOf = (m: MessageView) => (m.steps ?? []) as Step[];
+
+/** More words or reasoning: onto the last step when it is of that kind, as a new step otherwise (as the server keeps them). */
+function addTo(m: MessageView, type: 'text' | 'reasoning', text: string) {
+  m.steps ??= [];
+  const steps = stepsOf(m);
+  const last = steps[steps.length - 1];
+  if (last?.type === type) last.text += text;
+  else steps.push(type === 'text' ? { type, text, round: 0 } : { type, text, ms: 0, round: 0 });
+}
+const UNSETTLED = new Set(['pending', 'waiting', 'running']);
 
 /**
  * The Playground's open conversation: its message tree, the path on screen, and what can be done to
@@ -27,6 +40,10 @@ export const useChatStore = defineStore('chat', () => {
   const temporary = ref(false);
   const model = ref<string | null>(null);
   const effort = ref('');
+  /** The tools this conversation (or the next new one) does without. */
+  const toolsOff = ref<ToolGroup[]>([]);
+  /** The background commands its tools started. */
+  const terminals = ref<TerminalView[]>([]);
   const busy = ref(false);
   const stage = ref<Stage>(null);
   /** Bumped whenever the history list should be read again. */
@@ -72,6 +89,8 @@ export const useChatStore = defineStore('chat', () => {
     temporary.value = view.temporary;
     if (view.model) model.value = view.model;
     effort.value = view.effort;
+    toolsOff.value = (view.tools_off ?? []) as ToolGroup[];
+    void refreshTerminals();
   }
 
   /** A temporary conversation ends when it is left. */
@@ -96,12 +115,13 @@ export const useChatStore = defineStore('chat', () => {
     messages.clear();
     leaf.value = '';
     temporary.value = !!options.temporary;
+    terminals.value = [];
     void conversationsApi.setSession(null).catch(() => undefined);
   }
 
   async function ensure(): Promise<string> {
     if (conversation.value) return conversation.value.id;
-    const view = await conversationsApi.create(model.value ?? '', effort.value, temporary.value);
+    const view = await conversationsApi.create(model.value ?? '', effort.value, temporary.value, toolsOff.value);
     load(view);
     if (!view.temporary) {
       void conversationsApi.setSession(view.id).catch(() => undefined);
@@ -126,7 +146,7 @@ export const useChatStore = defineStore('chat', () => {
           const waiting = messages.get(reply);
           messages.delete(reply);
           reply = event.message.id;
-          messages.set(reply, { ...event.message, content: waiting?.content ?? '', reasoning: waiting?.reasoning ?? '', notices: waiting?.notices ?? [] });
+          messages.set(reply, { ...event.message, content: waiting?.content ?? '', reasoning: waiting?.reasoning ?? '', notices: waiting?.notices ?? [], steps: waiting?.steps ?? [] });
           leaf.value = reply;
           break;
         }
@@ -136,7 +156,10 @@ export const useChatStore = defineStore('chat', () => {
         case 'reasoning': {
           stage.value = null;
           const m = messages.get(reply);
-          if (m) m.reasoning += event.text;
+          if (m) {
+            m.reasoning += event.text;
+            addTo(m, 'reasoning', event.text);
+          }
           break;
         }
         case 'notice': {
@@ -147,7 +170,22 @@ export const useChatStore = defineStore('chat', () => {
         case 'delta': {
           stage.value = null;
           const m = messages.get(reply);
-          if (m) m.content += event.text;
+          if (m) {
+            m.content += event.text;
+            addTo(m, 'text', event.text);
+          }
+          break;
+        }
+        case 'tool': {
+          stage.value = null;
+          const m = messages.get(reply);
+          if (!m) break;
+          m.steps ??= [];
+          const steps = stepsOf(m);
+          const at = steps.findIndex((s) => s.type === 'tool' && s.id === event.step.id);
+          if (at >= 0) steps[at] = event.step;
+          else steps.push(event.step);
+          if (['exec_command', 'write_stdin', 'kill_session'].includes(event.step.name) && !UNSETTLED.has(event.step.status)) void refreshTerminals();
           break;
         }
         case 'done':
@@ -188,7 +226,11 @@ export const useChatStore = defineStore('chat', () => {
       }
       // The reply in flight: whatever id it has by now.
       const reply = [...messages.values()].find((m) => m.status === 'streaming');
-      if (reply) messages.set(reply.id, { ...reply, status: stopped ? 'stopped' : 'error', error: stopped ? '' : (error as Error).message });
+      if (reply) {
+        // What the server settles as stopped: the calls the stop cut short.
+        const steps = stepsOf(reply).map((s) => (s.type === 'tool' && UNSETTLED.has(s.status) ? { ...s, status: 'stopped' as const } : s));
+        messages.set(reply.id, { ...reply, steps, status: stopped ? 'stopped' : 'error', error: stopped ? '' : (error as Error).message });
+      }
     } finally {
       if (controller === local) controller = null;
       busy.value = false;
@@ -196,12 +238,14 @@ export const useChatStore = defineStore('chat', () => {
     }
     listChanged.value++;
     void title();
+    void refreshTerminals();
   }
 
   function placeholder(role: 'user' | 'assistant', parent: string | null, content = '', attachments: AttachmentView[] = []): MessageView {
     return {
       id: localId(role), parent_id: parent, role, content, attachments, notices: [], created_at: Date.now() / 1000,
       status: role === 'assistant' ? 'streaming' : 'complete', error: '', model: role === 'assistant' ? (model.value ?? '') : '', effort: '', reasoning: '', reasoning_ms: 0,
+      steps: [],
     };
   }
 
@@ -299,6 +343,41 @@ export const useChatStore = defineStore('chat', () => {
     if (id) void conversationsApi.update(id, { model: model.value ?? '', effort: effort.value }).catch(() => undefined);
   }
 
+  /** Which tools this conversation does without; kept with it. */
+  function chooseTools(off: ToolGroup[]) {
+    toolsOff.value = off;
+    const id = conversation.value?.id;
+    if (id) void conversationsApi.update(id, { tools_off: off }).catch(() => undefined);
+  }
+
+  /** The user's answer to a call that waits; the reply's own events show what came of it. */
+  async function approve(step: ToolStep, decision: ApprovalDecision) {
+    const id = conversation.value?.id;
+    if (!id) return;
+    await conversationsApi.approve(id, step.id, decision);
+  }
+
+  async function refreshTerminals() {
+    const id = conversation.value?.id;
+    if (!id || isLocal(id)) {
+      terminals.value = [];
+      return;
+    }
+    try {
+      const list = (await conversationsApi.terminals(id)).terminals;
+      if (conversation.value?.id === id) terminals.value = list;
+    } catch {
+      /* the list stays as it was */
+    }
+  }
+
+  async function stopTerminal(sessionId: number) {
+    const id = conversation.value?.id;
+    if (!id) return;
+    await conversationsApi.stopTerminal(id, sessionId).catch(() => undefined);
+    await refreshTerminals();
+  }
+
   /** Something done to a conversation elsewhere (the history's menu): the page follows. */
   function forget(id: string) {
     if (conversation.value?.id === id) {
@@ -306,11 +385,12 @@ export const useChatStore = defineStore('chat', () => {
       messages.clear();
       leaf.value = '';
       temporary.value = false;
+      terminals.value = [];
     }
   }
 
   return {
-    conversation, messages, leaf, temporary, model, effort, busy, stage, listChanged, children, path,
-    siblings, leafUnder, load, open, startNew, submit, edit, retry, stop, switchTo, branch, rename, title, choose, forget,
+    conversation, messages, leaf, temporary, model, effort, toolsOff, terminals, busy, stage, listChanged, children, path,
+    siblings, leafUnder, load, open, startNew, submit, edit, retry, stop, switchTo, branch, rename, title, choose, chooseTools, approve, refreshTerminals, stopTerminal, forget,
   };
 });

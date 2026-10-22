@@ -62,6 +62,11 @@ hoshimi config path
 | `playground.system_prompt` | 作为 Playground 每个对话的第一条消息发送（在 设置 → 常规 中设置）；留空则不发送 |
 | `playground.title_model` | 在新对话收到第一条回复后为其命名的模型；留空则使用对话自身的模型 |
 | `playground.vision_model` | 为无法读取图片的模型描述图片：`auto`（默认）选择第一个可用且能读取图片的模型，`off` 略去图片，也可填写模型 ID |
+| `playground.tools` | Playground 模型可以调用的内置工具（设置 → 工具）：`read`、`apply_patch`、`shell`、`terminal`（后台命令：`exec_command`、`write_stdin`、`kill_session`）、`web_search`、`web_fetch`；默认全部关闭。命令和编辑以运行 Hoshimi 的用户身份在本机执行，没有沙箱 |
+| `playground.workspace` | 工具的工作目录；相对路径从这里开始，`apply_patch` 不会修改其外的文件。留空：`<数据目录>/workspace` |
+| `playground.approval` | `ask`（默认）：命令、文件更改和读取工作区外的文件会在对话中等待用户批准；`auto` 直接执行 |
+| `playground.max_steps` | 一条回复最多进行的工具调用轮数（默认 50）；最后一轮必须作答 |
+| `playground.search_url` | `web_search` 使用的 SearXNG 实例（需开启 JSON 格式）；留空使用 DuckDuckGo |
 | `server.stats_keep_days` | 每条调用记录在 `hoshimi.db` 中保留的天数（默认 `90`，至少 `1`）；按日总量和累计计数始终保留 |
 | `security.allow_cidrs` | 允许访问的客户端网段 |
 | `security.allow_origins` | 跨域来源，要求设置工具访问密钥 |

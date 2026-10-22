@@ -9,19 +9,20 @@ const state = vi.hoisted(() => {
   const route = vi.fn();
   const fetch = (...args: unknown[]) => route(...args);
   vi.stubGlobal('fetch', fetch);
-  return { error: vi.fn(), show: vi.fn(), route, fetch };
+  return { error: vi.fn(), show: vi.fn(), route, fetch, tools: [] as string[] };
 });
 vi.mock('@/api/queries/app', () => ({
   useModels: () => ({ data: { value: { data: [{ id: 'test/model', owned_by: 'test' }, { id: 'other/model', owned_by: 'test' }] } }, isPending: { value: false }, isFetching: { value: false } }),
   useModelSpecs: () => ({ data: { value: { data: [{ id: 'test/model', vision: false, efforts: [] }] } } }),
+  useSettings: () => ({ data: { value: { playground: { tools: state.tools } } } }),
 }));
 vi.mock('@/api/conversations', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/api/conversations')>()), useConversations: () => ({ data: { value: { conversations: [] } }, isPending: { value: false }, refetch: vi.fn() }), useRefreshConversations: () => vi.fn() }));
 vi.mock('@/ui', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/ui')>()), useSnackbar: () => ({ error: state.error, show: state.show }) }));
 
 // -- a server in memory: conversations as trees, replies streamed by the test -----------------
-interface Msg { id: string; parent_id: string | null; role: 'user' | 'assistant'; content: string; model: string; effort: string; status: string; error: string; notices: { kind: string; name: string; model: string }[]; created_at: number; attachments: unknown[]; reasoning?: string; reasoning_ms?: number }
+interface Msg { id: string; parent_id: string | null; role: 'user' | 'assistant'; content: string; model: string; effort: string; status: string; error: string; notices: { kind: string; name: string; model: string }[]; created_at: number; attachments: unknown[]; reasoning?: string; reasoning_ms?: number; steps?: unknown[] }
 interface Conv { id: string; title: string; title_state: string; model: string; effort: string; archived: boolean; temporary: boolean; branched_from: string; created_at: number; updated_at: number; current_leaf: string; messages: Msg[] }
-let server: { conversations: Map<string, Conv>; session: string | null; calls: { method: string; path: string; body: unknown }[]; ids: number; clock: number };
+let server: { conversations: Map<string, Conv>; session: string | null; calls: { method: string; path: string; body: unknown }[]; ids: number; clock: number; terminals?: unknown[] };
 /** The reply streams the test has not yet finished: it writes their events and closes them. */
 let streams: { send: (event: object) => void; close: () => void; signal: AbortSignal }[];
 
@@ -100,6 +101,12 @@ async function handle(input: RequestInfo | URL, init?: RequestInit): Promise<Res
     const reply = message(c, target.role === 'user' ? target.id : target.parent_id, 'assistant', '', { status: 'streaming', model: (body as { model?: string }).model || 'test/model' });
     return sse(request.signal, [{ type: 'assistant', message: reply }]);
   }
+  if (sub === 'approvals') return json(null, 204);
+  if (sub === 'terminals' && request.method === 'GET') return json({ terminals: server.terminals ?? [] });
+  if (sub === 'terminals' && request.method === 'DELETE') {
+    server.terminals = [];
+    return json(null, 204);
+  }
   if (sub === 'messages' && action === 'request') return json({ model: 'test/model', messages: [{ role: 'user', content: 'hello' }], stream: true });
   return json({ code: 'not_found', message: path }, 404);
 }
@@ -155,7 +162,7 @@ describe('Playground chat', () => {
     const { wrapper } = await openPlayground();
     expect(wrapper.text()).toContain('What can I help with?');
     await ask(wrapper, 'What is **this**?');
-    expect(calls('POST', /^\/conversations$/)[0].body).toEqual({ model: 'test/model', effort: '', temporary: false, title: '' });
+    expect(calls('POST', /^\/conversations$/)[0].body).toEqual({ model: 'test/model', effort: '', temporary: false, title: '', tools_off: [] });
     expect(server.session).toBe('c1');
     expect(wrapper.find('.assistant-message').text()).toContain('Answering…');
     await answer('It is a **gateway**.');
@@ -312,6 +319,54 @@ describe('Playground chat', () => {
     await ask(wrapper, 'and now?');
     await answer('Plainly.');
     expect(wrapper.findAll('.assistant-message').at(-1)!.find('.reasoning').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('shows a reply that used tools step by step, asks before a command, and lists what keeps running', async () => {
+    state.tools = ['read', 'shell', 'terminal'];
+    const { wrapper } = await openPlayground();
+    // The tools Settings turned on, all on for a new chat; one turned off here goes with the chat.
+    expect(wrapper.find('.tools-menu').text()).toContain('3');
+    await ask(wrapper, 'look around');
+    const stream = streams[0];
+    stream.send({ type: 'delta', text: 'Let me look.' });
+    const call = { type: 'tool', id: 'call_1', name: 'shell', arguments: '', status: 'pending', output: '', exit_code: null, ms: 0, meta: {}, approval: '', round: 0 };
+    stream.send({ type: 'tool', step: call });
+    await flushPromises();
+    const tool = () => wrapper.find('.assistant-message .tool-call');
+    expect(tool().find('.state').text()).toBe('Preparing…');
+    const asked = { ...call, arguments: '{"command": "ls -la"}', status: 'waiting', approval: 'runs a command' };
+    stream.send({ type: 'tool', step: asked });
+    await flushPromises();
+    expect([tool().find('.verb').text(), tool().find('.detail').text()]).toEqual(['Run', 'ls -la']);
+    expect(tool().find('.approval').text()).toContain('Run this command?');
+    // A call that waits stands open, with what it would run.
+    expect(tool().find('.command').text()).toBe('$ ls -la');
+    await tool().findAll('.answers md-filled-button, .answers button').at(-1)!.trigger('click');
+    await flushPromises();
+    expect(calls('POST', /\/approvals\/call_1$/).map((c) => c.body)).toEqual([{ decision: 'allow' }]);
+    const done = { ...asked, status: 'done', approval: 'runs a command', output: 'total 0', exit_code: 0, ms: 1200 };
+    stream.send({ type: 'tool', step: { ...asked, status: 'running' } });
+    stream.send({ type: 'tool', step: done });
+    await flushPromises();
+    expect(tool().find('.approval').exists()).toBe(false);
+    expect(tool().find('.state').text()).toBe('1.2 s');
+    // Opened to ask, it folds again once done; it opens on a press.
+    expect(tool().find('.output').exists()).toBe(false);
+    await tool().find('.line').trigger('click');
+    expect(tool().find('.output').text()).toBe('total 0');
+    expect(wrapper.find('.assistant-message .waiting').text()).toBe('Working…');
+    server.terminals = [{ id: 3, command: 'npm run dev', cwd: '/w', started_at: 1, running: true, exit_code: null }];
+    await answer('All good.', { steps: [{ type: 'text', text: 'Let me look.', round: 0 }, done, { type: 'text', text: 'All good.', round: 1 }] });
+    expect(wrapper.findAll('.assistant-message .content').map((c) => c.text())).toEqual(['Let me look.', 'All good.']);
+    expect(wrapper.find('.assistant-message .waiting').exists()).toBe(false);
+    // What a tool left running sits over the composer, with a way to stop it.
+    expect(wrapper.find('.terminals .command').text()).toBe('npm run dev');
+    await wrapper.find('.terminals md-icon-button, .terminals button').trigger('click');
+    await flushPromises();
+    expect(calls('DELETE', /\/terminals\/3$/)).toHaveLength(1);
+    expect(wrapper.find('.terminals').exists()).toBe(false);
+    state.tools = [];
     wrapper.unmount();
   });
 

@@ -74,7 +74,7 @@ and [authentication](authentication.md) before enabling remote access.
 | Models | Search, capabilities, free markers, availability probes and catalogue retry |
 | Channels | Accounts, OAuth/device login, expiry, renewal, balance, check-in and deletion |
 | Usage | Daily and per-model tokens, TTFT, generation speed and recent calls |
-| Playground | Streaming chat, model selection and reasoning effort |
+| Playground | Streaming chat, model selection and reasoning effort, and (when turned on in Settings → Tools) an agent that reads and edits files, runs commands and searches the web, asking before it acts |
 | Settings | Server, independent gateway keys, network policy, providers and appearance |
 
 The interface follows the system language (`en`, `zh-CN`, `ja`). Theme, accent

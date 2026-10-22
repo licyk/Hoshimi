@@ -439,6 +439,26 @@ export interface paths {
         patch: operations["update_conversation"];
         trace?: never;
     };
+    "/api/v1/playground/conversations/{conversation_id}/approvals/{call_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer Approval
+         * @description Answer a tool call that waits for approval in a streaming reply.
+         */
+        post: operations["answer_tool_approval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/playground/conversations/{conversation_id}/branch": {
         parameters: {
             query?: never;
@@ -518,6 +538,46 @@ export interface paths {
          */
         post: operations["retry_conversation_message"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/playground/conversations/{conversation_id}/terminals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Terminals
+         * @description The background commands this conversation's tools started, running or exited and not yet read.
+         */
+        get: operations["list_conversation_terminals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/playground/conversations/{conversation_id}/terminals/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Stop Terminal
+         * @description Stop a background command, and everything it started.
+         */
+        delete: operations["stop_conversation_terminal"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1132,6 +1192,17 @@ export interface components {
             /** Version */
             version: string;
         };
+        /**
+         * Approval
+         * @description The user's answer to a call that waits: ``allow`` it, ``always`` allow this tool in this conversation, or ``deny`` it.
+         */
+        Approval: {
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "allow" | "always" | "deny";
+        };
         /** AttachmentView */
         AttachmentView: {
             /** Height */
@@ -1599,6 +1670,8 @@ export interface components {
              * @default
              */
             title: string;
+            /** Tools Off */
+            tools_off?: string[];
         };
         /** ConversationList */
         ConversationList: {
@@ -1620,6 +1693,8 @@ export interface components {
             model?: string | null;
             /** Title */
             title?: string | null;
+            /** Tools Off */
+            tools_off?: string[] | null;
         };
         /** ConversationSummary */
         ConversationSummary: {
@@ -1644,6 +1719,8 @@ export interface components {
              * @enum {string}
              */
             title_state: "" | "provisional" | "auto" | "user";
+            /** Tools Off */
+            tools_off: string[];
             /** Updated At */
             updated_at: number;
         };
@@ -1674,6 +1751,8 @@ export interface components {
              * @enum {string}
              */
             title_state: "" | "provisional" | "auto" | "user";
+            /** Tools Off */
+            tools_off: string[];
             /** Updated At */
             updated_at: number;
         };
@@ -2100,6 +2179,10 @@ export interface components {
              * @enum {string}
              */
             status: "complete" | "streaming" | "stopped" | "error";
+            /** Steps */
+            steps: {
+                [key: string]: unknown;
+            }[];
         };
         /** ModelList */
         ModelList: {
@@ -2240,7 +2323,8 @@ export interface components {
         };
         /**
          * Notice
-         * @description Something about how a reply was made: ``image-described`` (by ``model``), ``image-omitted``, or ``image-refused`` (by ``model``).
+         * @description Something about how a reply was made: ``image-described`` (by ``model``), ``image-omitted``, ``image-refused`` (by ``model``),
+         *     ``tools-unsupported`` (``model`` makes no tool calls), or ``step-limit`` (the reply spent its ``name`` rounds of tool calls).
          */
         Notice: {
             /** Kind */
@@ -2333,6 +2417,22 @@ export interface components {
          */
         PlaygroundSettingsView: {
             /**
+             * Approval
+             * @default ask
+             * @enum {string}
+             */
+            approval: "ask" | "auto";
+            /**
+             * Max Steps
+             * @default 50
+             */
+            max_steps: number;
+            /**
+             * Search Url
+             * @default
+             */
+            search_url: string;
+            /**
              * System Prompt
              * @default
              */
@@ -2342,11 +2442,23 @@ export interface components {
              * @default
              */
             title_model: string;
+            /** Tools */
+            tools: string[];
             /**
              * Vision Model
              * @default auto
              */
             vision_model: string;
+            /**
+             * Workspace
+             * @default
+             */
+            workspace: string;
+            /**
+             * Workspace Path
+             * @default
+             */
+            workspace_path: string;
         };
         /**
          * ProbeRequest
@@ -2611,6 +2723,29 @@ export interface components {
         StatsReset: {
             /** Cleared At */
             cleared_at: string;
+        };
+        /** TerminalList */
+        TerminalList: {
+            /** Terminals */
+            terminals: components["schemas"]["TerminalView"][];
+        };
+        /**
+         * TerminalView
+         * @description A background command a tool started for this conversation.
+         */
+        TerminalView: {
+            /** Command */
+            command: string;
+            /** Cwd */
+            cwd: string;
+            /** Exit Code */
+            exit_code: number | null;
+            /** Id */
+            id: number;
+            /** Running */
+            running: boolean;
+            /** Started At */
+            started_at: number;
         };
         /** UnavailableReset */
         UnavailableReset: {
@@ -4023,6 +4158,76 @@ export interface operations {
             };
         };
     };
+    answer_tool_approval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                call_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Approval"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     branch_conversation: {
         parameters: {
             query?: never;
@@ -4261,6 +4466,139 @@ export interface operations {
                     "application/json": unknown;
                     "text/event-stream": unknown;
                 };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_conversation_terminals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TerminalList"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_conversation_terminal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                session_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Bad Request */
             400: {

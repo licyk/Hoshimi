@@ -66,6 +66,11 @@ contains demonstration credentials and is not a ready-to-run account bundle.
 | `playground.system_prompt` | sent first in every Playground conversation (set in Settings → General); empty sends none |
 | `playground.title_model` | the model that names new Playground chats after their first reply; empty uses the chat's own model |
 | `playground.vision_model` | describes images for models that cannot read them: `auto` (default) picks the first available model that reads images, `off` leaves images out, or a model id |
+| `playground.tools` | the built-in tools Playground models may call (Settings → Tools): `read`, `apply_patch`, `shell`, `terminal` (background commands: `exec_command`, `write_stdin`, `kill_session`), `web_search`, `web_fetch`; none by default. Commands and edits run on this machine as the user running Hoshimi, with no sandbox |
+| `playground.workspace` | where the tools work; relative paths start here, and `apply_patch` changes nothing outside it. Empty: `<data dir>/workspace` |
+| `playground.approval` | `ask` (default): commands, file changes and reads outside the workspace wait in the chat for the user's approval; `auto` runs them without asking |
+| `playground.max_steps` | the most rounds of tool calls one reply makes (default 50); the last round must answer |
+| `playground.search_url` | a SearXNG instance for `web_search` (with its JSON format on); empty searches DuckDuckGo |
 | `server.stats_keep_days` | days each recorded call is kept in `hoshimi.db` (default `90`, at least `1`); daily totals and lifetime counters are kept regardless |
 | `security.allow_cidrs` | client IP allowlist; required to bind non-loopback |
 | `security.allow_origins` | CORS origins; requires `server.access_token` |

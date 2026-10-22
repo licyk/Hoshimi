@@ -13,6 +13,8 @@ export interface ComposerOption {
   description?: string;
   /** More words the search matches. */
   keywords?: string[];
+  /** Shown, but not to be picked (a tool turned off in Settings). */
+  disabled?: boolean;
 }
 
 /**
@@ -25,6 +27,9 @@ export interface ComposerOption {
  * is in (``align="center"``: a long list to choose from, centred on a phone's screen); either way it
  * is kept inside the window. A menu with a search keeps one size whatever the search leaves in it,
  * so it does not shrink and jump as the list empties.
+ *
+ * With ``multiple``, it picks any number (``v-model:values``): a press checks or unchecks an
+ * option, and the menu stays open.
  */
 const props = withDefaults(
   defineProps<{
@@ -46,10 +51,13 @@ const props = withDefaults(
     noMatches?: string;
     /** Where the menu stands: lined up with its control, or centred over the composer it is in. */
     align?: 'start' | 'center';
+    multiple?: boolean;
   }>(),
-  { searchFrom: 0, noMatches: '', align: 'start' },
+  { searchFrom: 0, noMatches: '', align: 'start', multiple: false },
 );
 const model = defineModel<string | null>({ default: null });
+const values = defineModel<string[]>('values', { default: () => [] });
+const selected = (o: ComposerOption) => (props.multiple ? values.value.includes(o.value) : o.value === model.value);
 
 const open = ref(false);
 const root = ref<HTMLElement | null>(null);
@@ -144,7 +152,7 @@ watch(open, async (isOpen) => {
   listen(isOpen);
   if (!isOpen) return;
   query.value = '';
-  active.value = Math.max(0, props.options.findIndex((o) => o.value === model.value));
+  active.value = props.multiple ? 0 : Math.max(0, props.options.findIndex((o) => o.value === model.value));
   await nextTick();
   place();
   itemAt(active.value)?.scrollIntoView({ block: 'nearest' });
@@ -163,6 +171,11 @@ function toggle() {
   if (!props.loading) open.value = !open.value;
 }
 function pick(o: ComposerOption) {
+  if (o.disabled) return;
+  if (props.multiple) {
+    values.value = selected(o) ? values.value.filter((v) => v !== o.value) : [...values.value, o.value];
+    return;
+  }
   model.value = o.value;
   open.value = false;
 }
@@ -182,7 +195,7 @@ function pick(o: ComposerOption) {
             <AppIcon :icon="Search" :size="18" class="muted" />
             <input ref="search" v-model="query" type="text" role="searchbox" class="type-body-medium" :placeholder="searchLabel" :aria-label="searchLabel" autocomplete="off" spellcheck="false" />
           </label>
-          <div ref="list" class="list app-scroll app-scroll-auto" role="listbox" :aria-label="label">
+          <div ref="list" class="list app-scroll app-scroll-auto" role="listbox" :aria-label="label" :aria-multiselectable="multiple || undefined">
             <button
               v-for="(o, i) in shown"
               :key="o.value"
@@ -190,7 +203,8 @@ function pick(o: ComposerOption) {
               role="option"
               class="item state-layer"
               :class="{ active: i === active }"
-              :aria-selected="o.value === model"
+              :aria-selected="selected(o)"
+              :aria-disabled="o.disabled || undefined"
               :tabindex="searchable ? -1 : 0"
               @click="pick(o)"
               @pointermove="active = i"
@@ -199,7 +213,7 @@ function pick(o: ComposerOption) {
                 <span class="type-body-medium name">{{ o.label }}</span>
                 <span v-if="o.description" class="type-body-small muted meta">{{ o.description }}</span>
               </span>
-              <AppIcon v-if="o.value === model" :icon="Check" :size="18" class="check" />
+              <AppIcon v-if="selected(o)" :icon="Check" :size="18" class="check" />
             </button>
             <p v-if="!shown.length && noMatches" class="type-body-medium muted empty">{{ noMatches }}</p>
           </div>
@@ -237,6 +251,7 @@ function pick(o: ComposerOption) {
 .name, .meta { overflow-wrap: anywhere; }
 .item[aria-selected='true'] .meta { color: var(--md-sys-color-on-surface-variant); }
 .check { flex: none; }
+.item[aria-disabled='true'] { opacity: 0.38; cursor: default; }
 .empty { margin: 0; padding: var(--app-space-2); }
 /* With a search, one size whatever it leaves: the menu as wide as a menu grows (within the window),
    the list as tall as it may be (within the room the placement gives it), "no matches" in its middle. */

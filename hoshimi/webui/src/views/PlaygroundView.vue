@@ -3,8 +3,8 @@ import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMoun
 import { useRoute, useRouter } from 'vue-router';
 import { BASE_URL } from '@/api/baseUrl';
 import { conversationsApi, rememberAttachment, useRefreshConversations } from '@/api/conversations';
-import { useModelSpecs, useModels } from '@/api/queries/app';
-import type { AttachmentView, ConversationSummary, MessageView } from '@/api/types';
+import { useModelSpecs, useModels, useSettings } from '@/api/queries/app';
+import { TOOL_GROUPS, type ApprovalDecision, type AttachmentView, type ConversationSummary, type MessageView, type ToolGroup, type ToolStep } from '@/api/types';
 import CatalogStatus from '@/components/CatalogStatus.vue';
 import AssistantMessage from '@/components/chat/AssistantMessage.vue';
 import AttachmentPreview from '@/components/chat/AttachmentPreview.vue';
@@ -12,8 +12,9 @@ import { AttachmentError, prepare } from '@/components/chat/attachments';
 import ChatSidebar, { type ConversationAction } from '@/components/chat/ChatSidebar.vue';
 import UserMessage from '@/components/chat/UserMessage.vue';
 import { useI18n } from '@/i18n';
-import { isLocal, useChatStore } from '@/stores/chat';
+import { isLocal, stepsOf, useChatStore } from '@/stores/chat';
 import { AppButton, AppDialog, AppIcon, AppMenu, ChipButton, Composer, ComposerMenu, ConfirmDialog, EmptyState, IconButton, SideSheet, TRANSITIONS, TextField, icons, useSnackbar } from '@/ui';
+import { useElementHeight } from '@/ui/useElementHeight';
 import { useElementWidth } from '@/ui/useElementWidth';
 
 /**
@@ -23,8 +24,9 @@ import { useElementWidth } from '@/ui/useElementWidth';
  * The header holds the list's button at its start and, at its end, the chat's menu and one button
  * that starts what comes next: a new chat, or, on a new chat no one has written in yet, a temporary
  * one. The composer takes text, photos and files (by its + button, by dropping them on the page,
- * or by pasting), the model and its effort. Everything said is kept on the server, which also
- * writes the titles and describes images for models that cannot read them.
+ * or by pasting), the model and its effort, and the tools the model may call (those Settings turned
+ * on), with the commands they left running above it. Everything said is kept on the server, which
+ * also writes the titles, describes images for models that cannot read them, and runs the tools.
  */
 const { t } = useI18n();
 const route = useRoute();
@@ -67,6 +69,26 @@ const spec = computed(() => specs.data.value?.data.find((m) => m.id === chat.mod
 const effortOptions = computed(() => [{ value: '', label: t('playground.effortAuto') }, ...(spec.value?.efforts ?? []).map((o) => ({ value: o.id, label: o.name }))]);
 const effortText = computed(() => (chat.effort ? effortOptions.value.find((o) => o.value === chat.effort)?.label : t('playground.effortAutoShort')));
 
+// -- tools ---------------------------------------------------------------------
+// The tools Settings turned on, less the ones this chat does without.
+const settings = useSettings();
+const enabledTools = computed(() => TOOL_GROUPS.filter((g) => settings.data.value?.playground.tools.includes(g)));
+const toolOptions = computed(() => enabledTools.value.map((g) => ({ value: g, label: t(`playground.toolNames.${g}`) })));
+const toolsOn = computed(() => enabledTools.value.filter((g) => !chat.toolsOff.includes(g)));
+function chooseTools(on: string[]) {
+  // A tool off in Settings keeps this chat's own choice for when it is turned back on.
+  const offElsewhere = chat.toolsOff.filter((g) => !enabledTools.value.includes(g));
+  chat.chooseTools([...offElsewhere, ...enabledTools.value.filter((g) => !on.includes(g))] as ToolGroup[]);
+}
+const runningTerminals = computed(() => chat.terminals.filter((term) => term.running));
+async function approve(step: ToolStep, decision: ApprovalDecision) {
+  try {
+    await chat.approve(step, decision);
+  } catch (error) {
+    snackbar.error(error instanceof Error && error.message ? error.message : t('playground.approvalFailed'));
+  }
+}
+
 // -- the layout ----------------------------------------------------------------
 const root = ref<HTMLElement | null>(null);
 const width = useElementWidth(root, 1280);
@@ -107,8 +129,21 @@ async function toBottom(force = false) {
   await nextTick();
   if (force || pinned) scroller.value?.scrollTo({ top: scroller.value.scrollHeight });
 }
-watch(() => [chat.path.length, chat.path[chat.path.length - 1]?.content.length], () => void toBottom());
+// A reply grows by its words, and by its tool calls as they come and change (one that asks must be seen).
+watch(
+  () => {
+    const last = chat.path[chat.path.length - 1];
+    const steps = last ? stepsOf(last) : [];
+    const tail = steps[steps.length - 1];
+    return [chat.path.length, last?.content.length, steps.length, tail?.type === 'tool' ? tail.status : ''];
+  },
+  () => void toBottom(),
+);
 watch(() => chat.conversation?.id, () => void toBottom(true));
+// And by what opens inside it as it streams (a call that asks, opening to show what it would do).
+const column = ref<HTMLElement | null>(null);
+const columnHeight = useElementHeight(column);
+watch(columnHeight, () => chat.busy && void toBottom());
 
 const versionsOf = (m: MessageView) => {
   const list = chat.siblings(m);
@@ -409,7 +444,7 @@ onBeforeUnmount(() => {
       <CatalogStatus />
 
       <div ref="scroller" class="thread app-scroll" role="log" @scroll.passive="onScroll">
-        <div class="column">
+        <div ref="column" class="column">
           <p v-if="chat.temporary" class="temporary-note type-body-medium" role="note">
             <AppIcon :icon="icons.MessageCircleDashed" :size="18" />{{ t('playground.temporaryText') }}
           </p>
@@ -452,6 +487,7 @@ onBeforeUnmount(() => {
               @copy-request="copyRequest(m)"
               @previous="step(m, -1)"
               @next="step(m, 1)"
+              @approve="approve"
             />
           </template>
         </div>
@@ -474,6 +510,14 @@ onBeforeUnmount(() => {
           @recall="recall"
         >
           <template #above>
+            <ul v-if="runningTerminals.length" class="terminals" :aria-label="t('playground.terminals')">
+              <li v-for="term in runningTerminals" :key="term.id" class="terminal type-body-small">
+                <AppIcon :icon="icons.SquareTerminal" :size="18" class="muted" />
+                <code class="command" :title="term.command">{{ term.command }}</code>
+                <span class="muted">{{ t('playground.terminalRunning') }}</span>
+                <IconButton :icon="icons.CircleStop" :label="t('playground.stopTerminal', { command: term.command })" @click="chat.stopTerminal(term.id)" />
+              </li>
+            </ul>
             <div v-if="pending.length" class="tray">
               <AttachmentPreview
                 v-for="p in pending"
@@ -517,6 +561,19 @@ onBeforeUnmount(() => {
               :options="effortOptions"
               :disabled="chat.busy"
               @update:model-value="(e) => chat.choose({ effort: e ?? '' })"
+            />
+            <ComposerMenu
+              v-if="toolOptions.length"
+              class="tools-menu"
+              multiple
+              :values="toolsOn"
+              :icon="icons.Wrench"
+              :label="t('playground.tools')"
+              :hint="t('playground.toolsHelp')"
+              :text="toolsOn.length ? String(toolsOn.length) : t('playground.toolsOff')"
+              :options="toolOptions"
+              :disabled="chat.busy"
+              @update:values="chooseTools"
             />
           </template>
         </Composer>
@@ -604,7 +661,10 @@ onBeforeUnmount(() => {
 .dock { display: flex; flex-direction: column; gap: var(--app-space-2); flex: none; width: min(100%, var(--column)); align-self: center; }
 .tray { display: flex; flex-wrap: wrap; gap: var(--app-space-2); padding: var(--app-space-3) var(--app-space-4) 0; }
 .file-input { display: none; }
-.effort { flex: none; }
+.effort, .tools-menu { flex: none; }
+.terminals { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: var(--app-space-2) var(--app-space-3) 0 var(--app-space-4); list-style: none; }
+.terminal { display: flex; align-items: center; gap: var(--app-space-2); min-width: 0; }
+.terminal .command { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .vision-hint { display: flex; align-items: center; gap: var(--app-space-1); margin: 0; padding: 0 var(--app-space-2); }
 .hint { margin: 0; text-align: center; }
 .below { flex: 0 0 0; }

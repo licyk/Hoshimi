@@ -69,6 +69,17 @@ class Settings:
     # The model that describes images for one that cannot read them (playground.vision_model):
     # "auto" picks one from the catalogue, "off" never asks, anything else is that model.
     playground_vision_model: str = "auto"
+    # The Playground's built-in tools that are turned on (playground.tools): read, apply_patch, shell,
+    # terminal, web_search, web_fetch. None by default: shell and apply_patch act on this machine.
+    playground_tools: list[str] = field(default_factory=list)
+    # Where the tools work (playground.workspace); empty: <data dir>/workspace.
+    playground_workspace: str = ""
+    # "ask" has the user approve commands, file changes and reads outside the workspace; "auto" does not.
+    playground_approval: str = "ask"
+    # The most rounds of tool calls one reply makes (playground.max_steps).
+    playground_max_steps: int = 50
+    # A SearXNG instance for web_search (playground.search_url); empty searches DuckDuckGo.
+    playground_search_url: str = ""
 
 
 def validate_settings(settings: Settings) -> str | None:
@@ -89,6 +100,17 @@ def validate_settings(settings: Settings) -> str | None:
         return "server.max_account_retries must be at least 1."
     if settings.stats_keep_days < 1:
         return "server.stats_keep_days must be at least 1."
+    from hoshimi.core.agent.tools import GROUPS
+
+    unknown = [t for t in settings.playground_tools if t not in GROUPS]
+    if unknown:
+        return f"playground.tools: unknown tool {unknown[0]!r} (known: {', '.join(GROUPS)})."
+    if settings.playground_approval not in ("ask", "auto"):
+        return "playground.approval must be ask or auto."
+    if not 1 <= settings.playground_max_steps <= 500:
+        return "playground.max_steps must be between 1 and 500."
+    if settings.playground_search_url and not settings.playground_search_url.startswith(("http://", "https://")):
+        return "playground.search_url must be an http(s) address."
     return None
 
 
@@ -163,6 +185,29 @@ def settings_from_dict(data: dict[str, Any], settings: Settings | None = None) -
             if value is not None and not isinstance(value, str):
                 raise ValueError(f"playground.{key} must be a string")
             setattr(settings, attribute, (value or "").strip() or default)
+        for key, attribute, default in (
+            ("workspace", "playground_workspace", ""),
+            ("approval", "playground_approval", "ask"),
+            ("search_url", "playground_search_url", ""),
+        ):
+            if key not in playground:
+                continue
+            value = playground[key]
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"playground.{key} must be a string")
+            setattr(settings, attribute, (value or "").strip() or default)
+        if "tools" in playground:
+            tools = playground["tools"]
+            if tools is None:
+                tools = []
+            if not isinstance(tools, list) or not all(isinstance(t, str) for t in tools):
+                raise ValueError("playground.tools must be a list of tool names")
+            settings.playground_tools = list(dict.fromkeys(t.strip() for t in tools if t.strip()))
+        if "max_steps" in playground:
+            value = playground["max_steps"]
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError("playground.max_steps must be a whole number")
+            settings.playground_max_steps = value
 
     providers = data.get("providers")
     if isinstance(providers, dict):
@@ -269,6 +314,11 @@ def settings_to_dict(settings: Settings) -> dict[str, Any]:
             ("system_prompt", settings.playground_system_prompt, ""),
             ("title_model", settings.playground_title_model, ""),
             ("vision_model", settings.playground_vision_model, "auto"),
+            ("tools", settings.playground_tools, []),
+            ("workspace", settings.playground_workspace, ""),
+            ("approval", settings.playground_approval, "ask"),
+            ("max_steps", settings.playground_max_steps, 50),
+            ("search_url", settings.playground_search_url, ""),
         )
         if value != default
     }

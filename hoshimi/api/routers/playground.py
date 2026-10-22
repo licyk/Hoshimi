@@ -7,6 +7,7 @@ Server-Sent Events, one JSON object per event (see
 together on the server (:class:`hoshimi.api.playground.PlaygroundRunner`).
 """
 
+import asyncio
 import threading
 from collections.abc import AsyncIterator, Iterator
 from typing import Annotated, Any, Literal
@@ -21,6 +22,7 @@ from hoshimi.api.errors import ERROR_RESPONSES
 from hoshimi.api.playground import PlaygroundRunner, event, sse
 from hoshimi.api.routers.chat import chat_completion
 from hoshimi.api.routers.models import ModelList, list_models
+from hoshimi.core.agent.tools import GROUPS
 from hoshimi.core.context import Services
 from hoshimi.core.conversations import AttachmentInfo, ChatMessage, Conversation
 from hoshimi.core.errors import NotFoundError, ValidationError
@@ -54,7 +56,8 @@ def create_playground_chat_completion(
 
 # -- views ---------------------------------------------------------------------- #
 class Notice(Record):
-    """Something about how a reply was made: ``image-described`` (by ``model``), ``image-omitted``, or ``image-refused`` (by ``model``)."""
+    """Something about how a reply was made: ``image-described`` (by ``model``), ``image-omitted``, ``image-refused`` (by ``model``),
+    ``tools-unsupported`` (``model`` makes no tool calls), or ``step-limit`` (the reply spent its ``name`` rounds of tool calls)."""
 
     kind: str
     name: str = ""
@@ -89,6 +92,8 @@ class MessageView(Record):
     """What the model reasoned before it answered, for a model that shows it; empty otherwise."""
     reasoning_ms: int = 0
     """How long it reasoned, in milliseconds."""
+    steps: list[dict[str, Any]] = Field(default_factory=list)
+    """A reply that used tools, step by step: reasoning, text and tool calls in order (see :mod:`hoshimi.api.playground`); empty otherwise."""
 
 
 class ConversationSummary(Record):
@@ -102,6 +107,8 @@ class ConversationSummary(Record):
     temporary: bool
     branched_from: str
     """The conversation this one was branched from, if any."""
+    tools_off: list[str] = Field(default_factory=list)
+    """The tools (by their Settings switch) this conversation does without."""
     created_at: float
     updated_at: float
     """Unix seconds of the last message, which orders the list."""
@@ -123,6 +130,7 @@ class ConversationCreate(Record):
     effort: str = ""
     title: str = ""
     temporary: bool = False
+    tools_off: list[str] = Field(default_factory=list)
 
 
 class ConversationPatch(Record):
@@ -133,6 +141,7 @@ class ConversationPatch(Record):
     effort: str | None = None
     archived: bool | None = None
     current_leaf: str | None = None
+    tools_off: list[str] | None = None
 
 
 class MessageSend(Record):
@@ -156,6 +165,27 @@ class Branch(Record):
     message_id: str
 
 
+class Approval(Record):
+    """The user's answer to a call that waits: ``allow`` it, ``always`` allow this tool in this conversation, or ``deny`` it."""
+
+    decision: Literal["allow", "always", "deny"]
+
+
+class TerminalView(Record):
+    """A background command a tool started for this conversation."""
+
+    id: int
+    command: str
+    cwd: str
+    started_at: float
+    running: bool
+    exit_code: int | None = None
+
+
+class TerminalList(Record):
+    terminals: list[TerminalView]
+
+
 class Session(Record):
     """The conversation open last, so the Playground can return to it; None for a new one."""
 
@@ -170,14 +200,14 @@ def _message(m: ChatMessage) -> MessageView:
     return MessageView(
         id=m.id, parent_id=m.parent_id, role=m.role, content=m.content, model=m.model, effort=m.effort, status=m.status, error=m.error,
         notices=[Notice(**{k: v for k, v in n.items() if k in ("kind", "name", "model")}) for n in m.notices if isinstance(n, dict) and n.get("kind")],
-        created_at=m.created_at, attachments=[_attachment(a) for a in m.attachments], reasoning=m.reasoning, reasoning_ms=m.reasoning_ms,
+        created_at=m.created_at, attachments=[_attachment(a) for a in m.attachments], reasoning=m.reasoning, reasoning_ms=m.reasoning_ms, steps=m.steps,
     )
 
 
 def _summary(c: Conversation) -> ConversationSummary:
     return ConversationSummary(
         id=c.id, title=c.title, title_state=c.title_state, model=c.model, effort=c.effort, archived=c.archived, temporary=c.temporary,
-        branched_from=c.branched_from, created_at=c.created_at, updated_at=c.updated_at,
+        branched_from=c.branched_from, tools_off=c.tools_off, created_at=c.created_at, updated_at=c.updated_at,
     )
 
 
@@ -192,6 +222,13 @@ def _conversation(services: Services, conversation_id: str) -> Conversation:
     return conversation
 
 
+def _groups(names: list[str]) -> list[str]:
+    unknown = [n for n in names if n not in GROUPS]
+    if unknown:
+        raise ValidationError(f"No tool '{unknown[0]}' (known: {', '.join(GROUPS)}).")
+    return list(dict.fromkeys(names))
+
+
 def _model(services: Services, *candidates: str) -> str:
     model = next((c for c in candidates if c), "") or services.settings.default_model or services.registry.default_model or ""
     if not model:
@@ -199,13 +236,22 @@ def _model(services: Services, *candidates: str) -> str:
     return model
 
 
-def _stream(events: Iterator[dict[str, Any]]) -> StreamingResponse:
+PING = ": ping\n\n"
+PING_SECONDS = 2.0
+"""How long a reply may go without a line before it sends a comment: a page that went away is
+found only by writing to it, and a tool that runs (or waits for approval) writes nothing."""
+
+
+def _stream(events: Iterator[dict[str, Any]], cancel: threading.Event | None = None) -> StreamingResponse:
     """Events as an SSE response that no proxy buffers.
 
     The events are read on a worker thread, one at a time, and the reader is
     closed as soon as the response ends: when the page stops a reply or goes
     away, the reply settles as stopped at once, not whenever the abandoned
-    generator happens to be collected.
+    generator happens to be collected. ``cancel`` is set first, so a tool
+    that is running (or waiting for approval) gives up and lets it close.
+    While no event comes, a comment goes out every :data:`PING_SECONDS`, so
+    the server learns soon that the page is gone.
     """
     lines = sse(_wired(events))
     lock = threading.Lock()
@@ -220,10 +266,25 @@ def _stream(events: Iterator[dict[str, Any]]) -> StreamingResponse:
             lines.close()
 
     async def body() -> AsyncIterator[str]:
+        pending: asyncio.Future[Any] | None = None
         try:
-            while (line := await run_in_threadpool(pull)) is not done:
+            while True:
+                if pending is None:
+                    pending = asyncio.ensure_future(run_in_threadpool(pull))
+                finished, _ = await asyncio.wait({pending}, timeout=PING_SECONDS)
+                if not finished:
+                    yield PING
+                    continue
+                line, pending = pending.result(), None
+                if line is done:
+                    return
                 yield line
         finally:
+            if cancel is not None:
+                cancel.set()
+            if pending is not None:
+                # The read under way ends soon: a tool gives up on the cancel, a model's next chunk comes.
+                await asyncio.gather(pending, return_exceptions=True)
             await run_in_threadpool(close)
 
     return StreamingResponse(body(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -257,7 +318,7 @@ def list_conversations(services: ServicesDep, archived: Annotated[bool, Query(de
 
 @router.post("/conversations", operation_id="create_conversation", status_code=201)
 def create_conversation(services: ServicesDep, body: ConversationCreate) -> ConversationView:
-    return _view(services.conversations.create(model=body.model, effort=body.effort, title=body.title, temporary=body.temporary))
+    return _view(services.conversations.create(model=body.model, effort=body.effort, title=body.title, temporary=body.temporary, tools_off=_groups(body.tools_off)))
 
 
 @router.get("/conversations/{conversation_id}", operation_id="get_conversation", responses=ERROR_RESPONSES)
@@ -270,7 +331,8 @@ def update_conversation(services: ServicesDep, conversation_id: str, body: Conve
     _conversation(services, conversation_id)
     try:
         conversation = services.conversations.update(
-            conversation_id, title=body.title, model=body.model, effort=body.effort, archived=body.archived, current_leaf=body.current_leaf
+            conversation_id, title=body.title, model=body.model, effort=body.effort, archived=body.archived, current_leaf=body.current_leaf,
+            tools_off=None if body.tools_off is None else _groups(body.tools_off),
         )
     except ValueError as exc:
         raise ValidationError(str(exc)) from None
@@ -282,6 +344,7 @@ def update_conversation(services: ServicesDep, conversation_id: str, body: Conve
 def delete_conversation(services: ServicesDep, conversation_id: str) -> Response:
     if not services.conversations.delete(conversation_id):
         raise NotFoundError(f"No conversation '{conversation_id}'.")
+    services.agent.end(conversation_id)
     return Response(status_code=204)
 
 
@@ -304,12 +367,13 @@ def send_message(services: ServicesDep, conversation_id: str, body: MessageSend)
     assert question is not None
     services.conversations.update(conversation_id, model=model, effort=body.effort)
     runner = PlaygroundRunner(services)
+    cancel = threading.Event()
 
     def events() -> Any:
         yield event("user", message=question)
-        yield from runner.reply(conversation_id, question.id, model=model, effort=body.effort)
+        yield from runner.reply(conversation_id, question.id, model=model, effort=body.effort, cancel=cancel)
 
-    return _stream(events())
+    return _stream(events(), cancel)
 
 
 @router.post("/conversations/{conversation_id}/messages/{message_id}/retry", operation_id="retry_conversation_message", responses=SSE_RESPONSES)
@@ -326,7 +390,33 @@ def retry_message(services: ServicesDep, conversation_id: str, message_id: str, 
     model = _model(services, body.model, message.model if replied else "", conversation.model)
     effort = body.effort if body.effort is not None else (message.effort if replied else conversation.effort)
     runner = PlaygroundRunner(services)
-    return _stream(runner.reply(conversation_id, question, model=model, effort=effort))
+    cancel = threading.Event()
+    return _stream(runner.reply(conversation_id, question, model=model, effort=effort, cancel=cancel), cancel)
+
+
+@router.post("/conversations/{conversation_id}/approvals/{call_id}", operation_id="answer_tool_approval", status_code=204, responses=ERROR_RESPONSES)
+def answer_approval(services: ServicesDep, conversation_id: str, call_id: str, body: Approval) -> Response:
+    """Answer a tool call that waits for approval in a streaming reply."""
+    _conversation(services, conversation_id)
+    if not services.agent.approvals.answer(conversation_id, call_id, body.decision):
+        raise NotFoundError(f"No call '{call_id}' waits for approval.")
+    return Response(status_code=204)
+
+
+@router.get("/conversations/{conversation_id}/terminals", operation_id="list_conversation_terminals", responses=ERROR_RESPONSES)
+def list_terminals(services: ServicesDep, conversation_id: str) -> TerminalList:
+    """The background commands this conversation's tools started, running or exited and not yet read."""
+    _conversation(services, conversation_id)
+    return TerminalList(terminals=[TerminalView(**t) for t in services.agent.terminals.of(conversation_id)])
+
+
+@router.delete("/conversations/{conversation_id}/terminals/{session_id}", operation_id="stop_conversation_terminal", status_code=204, responses=ERROR_RESPONSES)
+def stop_terminal(services: ServicesDep, conversation_id: str, session_id: int) -> Response:
+    """Stop a background command, and everything it started."""
+    _conversation(services, conversation_id)
+    if not services.agent.terminals.stop(conversation_id, session_id):
+        raise NotFoundError(f"No background command {session_id} in this conversation.")
+    return Response(status_code=204)
 
 
 @router.get("/conversations/{conversation_id}/messages/{message_id}/request", operation_id="get_conversation_message_request", responses=ERROR_RESPONSES)

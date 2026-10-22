@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { BASE_URL } from '@/api/baseUrl';
 import { useMeta, useModelSpecs, useModels, useSettings, useUpdateSettings, useVersion } from '@/api/queries/app';
 import { useChannels } from '@/api/queries/channels';
+import { TOOL_GROUPS, type ToolGroup } from '@/api/types';
 import NetworkSettings from '@/components/NetworkSettings.vue';
 import { useI18n } from '@/i18n';
 import { usePreferencesStore } from '@/stores/preferences';
@@ -14,8 +15,8 @@ import { AppButton, AppIcon, AxisPanes, ChipInput, Collapse, DataList, NumberFie
  * is in the address (``?tab=``). Every field saves on its own as it changes. A channel's own
  * switch and network route are on its page in Channels, not here.
  */
-type Tab = 'general' | 'access' | 'security' | 'network' | 'automation' | 'appearance' | 'about';
-const TABS = ['general', 'access', 'security', 'network', 'automation', 'appearance', 'about'] as const;
+type Tab = 'general' | 'tools' | 'access' | 'security' | 'network' | 'automation' | 'appearance' | 'about';
+const TABS = ['general', 'tools', 'access', 'security', 'network', 'automation', 'appearance', 'about'] as const;
 const { t, localeOptions } = useI18n();
 const route = useRoute();
 const router = useRouter();
@@ -81,6 +82,11 @@ const visionModel = computed({
   get: () => s.value?.playground.vision_model || 'auto',
   set: (value: string | null) => save({ playground: { vision_model: value || 'auto' } }),
 });
+// Tools: each switch saves the whole list.
+function setTool(group: ToolGroup, on: boolean) {
+  const current = s.value?.playground.tools ?? [];
+  save({ playground: { tools: on ? TOOL_GROUPS.filter((g) => g === group || current.includes(g)) : current.filter((g) => g !== group) } });
+}
 const locale = computed({ get: () => prefs.prefs.locale, set: (v: string | null) => (prefs.prefs.locale = (v ?? 'auto') as typeof prefs.prefs.locale) });
 
 // Automation
@@ -170,6 +176,39 @@ async function copy(text: string) {
               <PickerMenu v-model="visionModel" :label="t('settings.visionModel')" :options="visionModelOptions" :loading="models.isPending.value" :search-label="t('settings.searchModels')" :search-from="8" :no-matches="t('models.none')" />
               <p class="type-body-small muted">{{ t('settings.visionModelHelp') }}</p>
             </div>
+          </div>
+        </PageSection>
+      </div>
+
+      <div v-else-if="tab === 'tools'" key="tools" class="panel">
+        <PageSection :title="t('settings.tools')" :subtitle="t('settings.toolsHint')">
+          <p class="type-body-medium tools-warning" role="note"><AppIcon :icon="icons.ShieldAlert" :size="18" />{{ t('settings.toolsWarning') }}</p>
+          <Switch
+            v-for="g in TOOL_GROUPS"
+            :key="g"
+            :model-value="s.playground.tools.includes(g)"
+            :label="t(`playground.toolNames.${g}`)"
+            :supporting-text="t(`settings.toolHelp.${g}`)"
+            @update:model-value="setTool(g, $event)"
+          />
+        </PageSection>
+        <PageSection :title="t('settings.toolsRun')" :subtitle="t('settings.toolsRunHint')">
+          <Switch
+            :model-value="s.playground.approval === 'ask'"
+            :label="t('settings.approval')"
+            :supporting-text="t('settings.approvalHelp')"
+            @update:model-value="save({ playground: { approval: $event ? 'ask' : 'auto' } })"
+          />
+          <TextField
+            :model-value="s.playground.workspace"
+            :label="t('settings.workspace')"
+            :placeholder="s.playground.workspace_path"
+            :supporting-text="t('settings.workspaceHelp', { path: s.playground.workspace_path })"
+            @change="save({ playground: { workspace: $event } })"
+          />
+          <div class="row">
+            <NumberField :model-value="s.playground.max_steps" :min="1" :max="500" :label="t('settings.maxSteps')" :supporting-text="t('settings.maxStepsHelp')" v-bind="arrows('settings.maxSteps')" @change="save({ playground: { max_steps: num($event) } })" />
+            <TextField :model-value="s.playground.search_url" :label="t('settings.searchUrl')" placeholder="https://searx.example.org" :supporting-text="t('settings.searchUrlHelp')" @change="save({ playground: { search_url: $event } })" />
           </div>
         </PageSection>
       </div>
@@ -294,6 +333,11 @@ p { margin: 0; }
 .row { display: flex; flex-wrap: wrap; gap: var(--app-space-3); align-items: flex-start; }
 .row > * { flex: 1 1 260px; min-width: 0; }
 .field { display: flex; flex-direction: column; gap: var(--app-space-1); }
+.tools-warning {
+  display: flex; align-items: flex-start; gap: var(--app-space-2); margin: 0; padding: var(--app-space-3);
+  border-radius: var(--md-sys-shape-corner-medium); background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container);
+}
+.tools-warning :deep(svg) { flex: none; margin-top: 2px; }
 .field p { margin: 0; }
 .field-row { display: flex; align-items: center; justify-content: space-between; gap: var(--app-space-4); min-height: 56px; flex-wrap: wrap; }
 .field-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 200px; }

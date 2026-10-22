@@ -3,7 +3,7 @@ import { computed, type Ref } from 'vue';
 import { authedFetch, readSse } from '@/api/chat';
 import { api, unwrap } from '@/api/client';
 import { keys } from '@/api/queries/keys';
-import type { AttachmentView, MessageView, Notice } from '@/api/types';
+import type { ApprovalDecision, AttachmentView, MessageView, Notice, ToolGroup, ToolStep } from '@/api/types';
 
 /**
  * The Playground's kept conversations. A conversation is a tree of messages; sending, editing and
@@ -17,6 +17,7 @@ export type ReplyEvent =
   | { type: 'notice'; notice: Notice }
   | { type: 'reasoning'; text: string }
   | { type: 'delta'; text: string }
+  | { type: 'tool'; step: ToolStep }
   | { type: 'done'; message: MessageView };
 
 export interface SendBody {
@@ -35,10 +36,10 @@ async function stream(path: string, body: unknown, onEvent: (event: ReplyEvent) 
 const path = (id: string) => ({ params: { path: { conversation_id: id } } });
 
 export const conversationsApi = {
-  create: (model: string, effort: string, temporary = false) =>
-    unwrap(api.POST('/api/v1/playground/conversations', { body: { model, effort, temporary, title: '' } })),
+  create: (model: string, effort: string, temporary = false, toolsOff: ToolGroup[] = []) =>
+    unwrap(api.POST('/api/v1/playground/conversations', { body: { model, effort, temporary, title: '', tools_off: toolsOff } })),
   get: (id: string) => unwrap(api.GET('/api/v1/playground/conversations/{conversation_id}', path(id))),
-  update: (id: string, patch: { title?: string; model?: string; effort?: string; archived?: boolean; current_leaf?: string }) =>
+  update: (id: string, patch: { title?: string; model?: string; effort?: string; archived?: boolean; current_leaf?: string; tools_off?: ToolGroup[] }) =>
     unwrap(api.PATCH('/api/v1/playground/conversations/{conversation_id}', { ...path(id), body: patch })),
   remove: (id: string) => unwrap(api.DELETE('/api/v1/playground/conversations/{conversation_id}', path(id))),
   branch: (id: string, messageId: string) =>
@@ -47,6 +48,13 @@ export const conversationsApi = {
   /** The Chat Completions request behind a reply, as the gateway sent it. */
   request: (id: string, messageId: string) =>
     unwrap(api.GET('/api/v1/playground/conversations/{conversation_id}/messages/{message_id}/request', { params: { path: { conversation_id: id, message_id: messageId } } })),
+  /** Answer a tool call that waits for approval in the reply streaming now. */
+  approve: (id: string, callId: string, decision: ApprovalDecision) =>
+    unwrap(api.POST('/api/v1/playground/conversations/{conversation_id}/approvals/{call_id}', { params: { path: { conversation_id: id, call_id: callId } }, body: { decision } })),
+  /** The background commands this conversation's tools started. */
+  terminals: (id: string) => unwrap(api.GET('/api/v1/playground/conversations/{conversation_id}/terminals', path(id))),
+  stopTerminal: (id: string, sessionId: number) =>
+    unwrap(api.DELETE('/api/v1/playground/conversations/{conversation_id}/terminals/{session_id}', { params: { path: { conversation_id: id, session_id: sessionId } } })),
   session: () => unwrap(api.GET('/api/v1/playground/session')),
   setSession: (id: string | null) => unwrap(api.PUT('/api/v1/playground/session', { body: { conversation_id: id } })),
 
