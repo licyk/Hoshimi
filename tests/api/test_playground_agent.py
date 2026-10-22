@@ -206,7 +206,7 @@ def _until_waiting(events: Iterator[dict[str, Any]]) -> dict[str, Any]:
 def test_a_command_waits_for_approval_and_always_lasts_the_conversation(asking: Services, provider: AgentProvider) -> None:
     cid, events = _reply(asking, [["shell", {"command": "echo approved"}], ["shell", {"command": "echo again"}]])
     step = _until_waiting(events)
-    assert step["approval"] == "runs a command"
+    assert step["approval"] == "command"
     threading.Timer(0.1, lambda: asking.agent.approvals.answer(cid, step["id"], "always")).start()
     rest = list(events)
     calls = [s for s in rest[-1]["message"].steps if s["type"] == "tool"]
@@ -240,6 +240,58 @@ def test_a_stop_while_a_call_waits_keeps_the_reply_as_stopped(asking: Services) 
     assert [(s["status"], s["output"]) for s in reply.steps if s["type"] == "tool"] == [("stopped", STOPPED_CALL)]
 
 
+def _patch(name: str) -> list[Any]:
+    return ["apply_patch", {"input": f"*** Begin Patch\n*** Add File: {name}\n+hi\n*** End Patch"}]
+
+
+def test_auto_asks_only_before_reaching_outside_the_workspace(provider: AgentProvider, tmp_path: Any) -> None:
+    services = make_services(provider, playground_tools=["apply_patch", "shell"], playground_approval="auto")
+    workspace = PlaygroundRunner(services).workspace()
+    cid, events = _reply(services, [_patch("in.txt"), ["shell", {"command": "true"}], _patch(str(tmp_path / "out.txt"))])
+    step = _until_waiting(events)
+    assert (step["arguments"].count("out.txt"), step["approval"]) == (1, "edit-outside")
+    threading.Timer(0.1, lambda: services.agent.approvals.answer(cid, step["id"], "allow")).start()
+    reply = list(events)[-1]["message"]
+    assert [s["status"] for s in reply.steps if s["type"] == "tool"] == ["done", "done", "done"]
+    assert (workspace / "in.txt").exists() and (tmp_path / "out.txt").read_text() == "hi\n"
+
+
+def test_always_inside_the_workspace_is_not_leave_outside_it(asking: Services, tmp_path: Any) -> None:
+    asking.settings.playground_tools = ["apply_patch"]
+    cid, events = _reply(asking, [_patch("one.txt"), _patch("two.txt"), _patch(str(tmp_path / "far.txt"))])
+    first = _until_waiting(events)
+    threading.Timer(0.1, lambda: asking.agent.approvals.answer(cid, first["id"], "always")).start()
+    second = _until_waiting(events)
+    # The second patch, inside, ran without asking; the third reaches outside and asks.
+    assert second["approval"] == "edit-outside" and "far.txt" in second["arguments"]
+    threading.Timer(0.1, lambda: asking.agent.approvals.answer(cid, second["id"], "deny")).start()
+    reply = list(events)[-1]["message"]
+    assert [s["status"] for s in reply.steps if s["type"] == "tool"] == ["done", "done", "denied"]
+    assert not (tmp_path / "far.txt").exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shell")
+def test_full_access_runs_everything_without_asking(asking: Services, tmp_path: Any) -> None:
+    asking.settings.playground_tools = ["apply_patch", "shell", "read"]
+    conversation = asking.conversations.create(model="agent", full_access=True)
+    question = asking.conversations.add_message(conversation.id, None, "user", json.dumps([["shell", {"command": "echo free"}], _patch(str(tmp_path / "x.txt")), ["read", {"path": str(tmp_path / "x.txt")}]]))
+    assert question is not None
+    events = list(PlaygroundRunner(asking).reply(conversation.id, question.id, model="agent", effort=""))
+    assert not any(e["type"] == "tool" and e["step"]["status"] == "waiting" for e in events)
+    assert [s["status"] for s in events[-1]["message"].steps if s["type"] == "tool"] == ["done", "done", "done"]
+    # The whole of Settings can say so too.
+    asking.settings.playground_approval = "full"
+    _, again = _reply(asking, [["shell", {"command": "echo free"}]])
+    assert [s["status"] for s in list(again)[-1]["message"].steps if s["type"] == "tool"] == ["done"]
+
+
+def test_full_access_is_kept_with_the_conversation(client: Any) -> None:
+    cid = client.post("/api/v1/playground/conversations", json={"model": "agent", "full_access": True}).json()["id"]
+    assert client.get(f"/api/v1/playground/conversations/{cid}").json()["full_access"] is True
+    assert client.patch(f"/api/v1/playground/conversations/{cid}", json={"full_access": False}).json()["full_access"] is False
+    assert client.get("/api/v1/playground/conversations").json()["conversations"][0]["full_access"] is False
+
+
 def test_an_answer_with_nothing_waiting_is_not_found(client: Any) -> None:
     cid = _new(client)
     assert client.post(f"/api/v1/playground/conversations/{cid}/approvals/call_x", json={"decision": "allow"}).status_code == 404
@@ -270,5 +322,6 @@ def test_the_tools_are_set_in_settings(client: Any, services: Services) -> None:
     assert view["workspace_path"] == str(PlaygroundRunner(services).workspace())
     saved = client.patch("/api/v1/settings", json={"playground": {"tools": ["web_search"], "approval": "ask", "max_steps": 5, "workspace": "/tmp/ws"}}).json()["playground"]
     assert (saved["tools"], saved["approval"], saved["max_steps"], saved["workspace_path"]) == (["web_search"], "ask", 5, "/tmp/ws")
+    assert client.patch("/api/v1/settings", json={"playground": {"approval": "full"}}).json()["playground"]["approval"] == "full"
     for bad in ({"tools": ["rm"]}, {"approval": "never"}, {"max_steps": 0}, {"search_url": "searx.local"}):
         assert client.patch("/api/v1/settings", json={"playground": bad}).status_code == 400, bad

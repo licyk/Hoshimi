@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from hoshimi.core.agent.base import Tool, ToolContext, ToolError, ToolResult, integer, string
-from hoshimi.core.agent.patch import PatchError, commit, plan_patch
+from hoshimi.core.agent.base import Permission, Tool, ToolContext, ToolError, ToolResult, integer, string
+from hoshimi.core.agent.patch import PatchError, UpdateFile, commit, parse_patch, plan_patch
 
 READ_LIMIT = 2000
 """Lines a read returns when it names no limit."""
@@ -70,29 +70,33 @@ def _list(path: Path) -> ToolResult:
     return ToolResult(f"Directory {path}:\n{body}{more}", meta={"path": str(path), "entries": len(entries)})
 
 
-def _read_approval(args: dict[str, Any], ctx: ToolContext) -> str | None:
+def _read_permission(args: dict[str, Any], ctx: ToolContext) -> Permission | None:
     try:
         path = ctx.resolve(string(args, "path"))
     except ToolError:
         return None
-    return None if ctx.inside(path) else "reads outside the workspace"
+    return None if ctx.inside(path) else Permission("read", outside=True)
 
 
-def _patch_resolver(ctx: ToolContext):
-    def resolve(name: str) -> Path:
-        path = ctx.resolve(name)
-        if not ctx.inside(path):
-            raise PatchError(f"{name} is outside the workspace ({ctx.workspace}); apply_patch only changes files inside it.")
-        return path
-
-    return resolve
+def _patch_permission(args: dict[str, Any], ctx: ToolContext) -> Permission:
+    """A patch changes files; one that names a file outside the workspace (or moves one there) reaches outside it."""
+    try:
+        hunks = parse_patch(str(args.get("input") or ""))
+    except PatchError:
+        return Permission("edit")
+    names = [h.path for h in hunks] + [h.move_path for h in hunks if isinstance(h, UpdateFile) and h.move_path]
+    try:
+        outside = any(not ctx.inside(ctx.resolve(name)) for name in names)
+    except ToolError:
+        outside = False
+    return Permission("edit", outside=outside)
 
 
 def _apply_patch(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     patch = string(args, "input")
     ctx.workspace.mkdir(parents=True, exist_ok=True)
     try:
-        changes = plan_patch(patch, _patch_resolver(ctx))
+        changes = plan_patch(patch, ctx.resolve)
         ctx.check()
         applied = commit(changes)
     except PatchError as exc:
@@ -120,7 +124,7 @@ READ = Tool(
         "additionalProperties": False,
     },
     run=_read,
-    approval=_read_approval,
+    permission=_read_permission,
 )
 
 APPLY_PATCH_DESCRIPTION = """Use the `apply_patch` tool to edit files.
@@ -189,7 +193,7 @@ It is important to remember:
 
 - You must include a header with your intended action (Add/Delete/Update)
 - You must prefix new lines with `+` even when creating a new file
-- File references should be relative to the workspace; files outside it cannot be changed.
+- File references should be relative to the workspace; changing files outside it needs the user's approval.
 """
 """Codex's description of its JSON apply_patch tool (codex-rs, Apache-2.0), with the last rule fitted to the workspace."""
 
@@ -204,5 +208,5 @@ APPLY_PATCH = Tool(
         "additionalProperties": False,
     },
     run=_apply_patch,
-    approval=lambda args, ctx: "changes files",
+    permission=_patch_permission,
 )

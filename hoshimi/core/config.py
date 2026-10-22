@@ -74,7 +74,8 @@ class Settings:
     playground_tools: list[str] = field(default_factory=list)
     # Where the tools work (playground.workspace); empty: <data dir>/workspace.
     playground_workspace: str = ""
-    # "ask" has the user approve commands, file changes and reads outside the workspace; "auto" does not.
+    # When tools ask first (playground.approval): "ask" before commands, file changes and anything outside
+    # the workspace; "auto" only before reaching outside the workspace; "full" never.
     playground_approval: str = "ask"
     # The most rounds of tool calls one reply makes (playground.max_steps).
     playground_max_steps: int = 50
@@ -105,8 +106,8 @@ def validate_settings(settings: Settings) -> str | None:
     unknown = [t for t in settings.playground_tools if t not in GROUPS]
     if unknown:
         return f"playground.tools: unknown tool {unknown[0]!r} (known: {', '.join(GROUPS)})."
-    if settings.playground_approval not in ("ask", "auto"):
-        return "playground.approval must be ask or auto."
+    if settings.playground_approval not in ("ask", "auto", "full"):
+        return "playground.approval must be ask, auto or full."
     if not 1 <= settings.playground_max_steps <= 500:
         return "playground.max_steps must be between 1 and 500."
     if settings.playground_search_url and not settings.playground_search_url.startswith(("http://", "https://")):

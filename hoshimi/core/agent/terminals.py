@@ -29,7 +29,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from hoshimi.core.agent.base import Cancelled, Tool, ToolContext, ToolError, ToolResult, clip, integer, string
+from hoshimi.core.agent.base import Cancelled, Permission, Tool, ToolContext, ToolError, ToolResult, clip, integer, string
 
 SHELL_TIMEOUT_MS = 60_000
 SHELL_TIMEOUT_MAX_MS = 600_000
@@ -349,7 +349,7 @@ SHELL = Tool(
         "additionalProperties": False,
     },
     run=run_shell,
-    approval=lambda args, ctx: "runs a command",
+    permission=lambda args, ctx: Permission("command"),
 )
 
 EXEC_COMMAND = Tool(
@@ -371,7 +371,7 @@ EXEC_COMMAND = Tool(
         "additionalProperties": False,
     },
     run=run_exec_command,
-    approval=lambda args, ctx: "starts a command",
+    permission=lambda args, ctx: Permission("command"),
 )
 
 WRITE_STDIN = Tool(

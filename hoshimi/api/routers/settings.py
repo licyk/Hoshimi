@@ -91,8 +91,9 @@ class PlaygroundSettingsView(Record):
     """Where the tools work, as configured; empty for the default."""
     workspace_path: str = ""
     """Where the tools work, in effect."""
-    approval: Literal["ask", "auto"] = "ask"
-    """``ask`` has the user approve commands, file changes and reads outside the workspace."""
+    approval: Literal["ask", "auto", "full"] = "ask"
+    """When tools ask first: ``ask`` before commands, file changes and anything outside the workspace; ``auto`` only before
+    reaching outside the workspace; ``full`` never (a conversation can also be given full access on its own)."""
     max_steps: int = 50
     search_url: str = ""
     """A SearXNG instance for ``web_search``; empty searches DuckDuckGo."""
@@ -142,7 +143,7 @@ def _view(services: Services, request: Request | None = None) -> SettingsView:
         playground=PlaygroundSettingsView(
             system_prompt=settings.playground_system_prompt, title_model=settings.playground_title_model, vision_model=settings.playground_vision_model,
             tools=list(settings.playground_tools), workspace=settings.playground_workspace, workspace_path=str(PlaygroundRunner(services).workspace()),
-            approval="auto" if settings.playground_approval == "auto" else "ask", max_steps=settings.playground_max_steps,
+            approval=settings.playground_approval if settings.playground_approval in ("auto", "full") else "ask", max_steps=settings.playground_max_steps,
             search_url=settings.playground_search_url,
         ),
         server=ServerView(

@@ -42,6 +42,8 @@ export const useChatStore = defineStore('chat', () => {
   const effort = ref('');
   /** The tools this conversation (or the next new one) does without. */
   const toolsOff = ref<ToolGroup[]>([]);
+  /** Its tools run without asking, whatever the approval mode in Settings. */
+  const fullAccess = ref(false);
   /** The background commands its tools started. */
   const terminals = ref<TerminalView[]>([]);
   const busy = ref(false);
@@ -90,6 +92,7 @@ export const useChatStore = defineStore('chat', () => {
     if (view.model) model.value = view.model;
     effort.value = view.effort;
     toolsOff.value = (view.tools_off ?? []) as ToolGroup[];
+    fullAccess.value = !!view.full_access;
     void refreshTerminals();
   }
 
@@ -115,13 +118,15 @@ export const useChatStore = defineStore('chat', () => {
     messages.clear();
     leaf.value = '';
     temporary.value = !!options.temporary;
+    // A new chat asks again: full access is given to one chat at a time.
+    fullAccess.value = false;
     terminals.value = [];
     void conversationsApi.setSession(null).catch(() => undefined);
   }
 
   async function ensure(): Promise<string> {
     if (conversation.value) return conversation.value.id;
-    const view = await conversationsApi.create(model.value ?? '', effort.value, temporary.value, toolsOff.value);
+    const view = await conversationsApi.create(model.value ?? '', effort.value, temporary.value, toolsOff.value, fullAccess.value);
     load(view);
     if (!view.temporary) {
       void conversationsApi.setSession(view.id).catch(() => undefined);
@@ -350,6 +355,13 @@ export const useChatStore = defineStore('chat', () => {
     if (id) void conversationsApi.update(id, { tools_off: off }).catch(() => undefined);
   }
 
+  /** Let this chat's tools run without asking, or ask again; it holds from the next call on, even mid-reply. */
+  function chooseFullAccess(on: boolean) {
+    fullAccess.value = on;
+    const id = conversation.value?.id;
+    if (id) void conversationsApi.update(id, { full_access: on }).catch(() => undefined);
+  }
+
   /** The user's answer to a call that waits; the reply's own events show what came of it. */
   async function approve(step: ToolStep, decision: ApprovalDecision) {
     const id = conversation.value?.id;
@@ -390,7 +402,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   return {
-    conversation, messages, leaf, temporary, model, effort, toolsOff, terminals, busy, stage, listChanged, children, path,
-    siblings, leafUnder, load, open, startNew, submit, edit, retry, stop, switchTo, branch, rename, title, choose, chooseTools, approve, refreshTerminals, stopTerminal, forget,
+    conversation, messages, leaf, temporary, model, effort, toolsOff, fullAccess, terminals, busy, stage, listChanged, children, path,
+    siblings, leafUnder, load, open, startNew, submit, edit, retry, stop, switchTo, branch, rename, title, choose, chooseTools, chooseFullAccess, approve, refreshTerminals, stopTerminal, forget,
   };
 });

@@ -15,8 +15,8 @@ sent is put together here, from the conversation's path:
 With tools turned on (``playground.tools``, less the ones a conversation
 turned off), a reply is an agent loop: the model is offered the built-in
 tools (:mod:`hoshimi.core.agent`); each round it streams, the tools it called
-run one after another (after the user approves the ones that act, when
-``playground.approval`` is ``ask``), their results go back to it, and it goes
+run one after another (after the user approves the ones the approval mode
+asks about: see :func:`PlaygroundRunner.approval_mode`), their results go back to it, and it goes
 on until a round calls nothing, or ``playground.max_steps`` rounds are spent.
 Such a reply keeps its *steps*, in order:
 
@@ -53,7 +53,7 @@ from pathlib import Path
 from typing import Any
 
 from hoshimi.api.inference import tracked_chunks
-from hoshimi.core.agent.base import Tool, ToolContext, ToolError
+from hoshimi.core.agent.base import Tool, ToolContext, ToolError, needs_approval
 from hoshimi.core.agent.tools import GROUPS, parse_arguments, run_tool, tools_for, unsupported
 from hoshimi.core.context import Services
 from hoshimi.core.conversations import Attachment, ChatMessage, Conversation, ConversationStore, Status, path_to
@@ -363,6 +363,10 @@ class PlaygroundRunner:
         configured = self.services.settings.playground_workspace
         return Path(os.path.expanduser(configured)) if configured else self.services.data_dir / "workspace"
 
+    def approval_mode(self, conversation_id: str) -> str:
+        """``full`` for a conversation given full access; ``playground.approval`` (``ask``, ``auto`` or ``full``) otherwise."""
+        return "full" if self.store.full_access(conversation_id) else self.services.settings.playground_approval
+
     def context(self, conversation_id: str, cancel: threading.Event) -> ToolContext:
         return ToolContext(
             workspace=self.workspace(), conversation_id=conversation_id, cancel=cancel, terminals=self.services.agent.terminals,
@@ -525,13 +529,15 @@ class PlaygroundRunner:
             step.update(status="error", output=unsupported(step["name"]))
             yield event("tool", step=step)
             return
-        settings = self.services.settings
         approvals = self.services.agent.approvals
-        reason = tool.approval(args, ctx) if settings.playground_approval == "ask" else None
-        if reason and not approvals.allowed(ctx.conversation_id, tool.group):
-            step.update(status="waiting", approval=reason)
+        permission = tool.permission(args, ctx)
+        # "Always" covers one tool, inside the workspace or outside it: leave for the one is not leave for the other.
+        scope = f"{tool.group}:outside" if permission is not None and permission.outside else tool.group
+        if needs_approval(permission, self.approval_mode(ctx.conversation_id)) and not approvals.allowed(ctx.conversation_id, scope):
+            assert permission is not None
+            step.update(status="waiting", approval=permission.code)
             yield event("tool", step=step)
-            decision = approvals.ask(ctx.conversation_id, step["id"], tool.group, ctx.cancel)
+            decision = approvals.ask(ctx.conversation_id, step["id"], scope, ctx.cancel)
             if decision is None:
                 step.update(status="stopped", output=STOPPED_CALL)
                 yield event("tool", step=step)

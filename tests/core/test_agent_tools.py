@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 import pytest
 
-from hoshimi.core.agent.base import ToolContext, clip
+from hoshimi.core.agent.base import Permission, ToolContext, clip, needs_approval
 from hoshimi.core.agent.runtime import Approvals
 from hoshimi.core.agent.terminals import TerminalManager
 from hoshimi.core.agent.tools import TOOLS, parse_arguments, run_tool
@@ -50,11 +50,19 @@ def test_read_lists_a_directory_and_refuses_binary_and_missing_files(ctx: ToolCo
     assert not missing.ok and "No such file" in missing.output
 
 
-def test_read_outside_the_workspace_asks_first(ctx: ToolContext, tmp_path: Path) -> None:
+def test_read_outside_the_workspace_needs_leave(ctx: ToolContext, tmp_path: Path) -> None:
     read = TOOLS["read"]
-    assert read.approval({"path": "inside.txt"}, ctx) is None
-    assert read.approval({"path": str(tmp_path / "elsewhere.txt")}, ctx) == "reads outside the workspace"
-    assert read.approval({"path": "../escape.txt"}, ctx) == "reads outside the workspace"
+    assert read.permission({"path": "inside.txt"}, ctx) is None
+    assert read.permission({"path": str(tmp_path / "elsewhere.txt")}, ctx) == Permission("read", outside=True)
+    assert read.permission({"path": "../escape.txt"}, ctx) == Permission("read", outside=True)
+
+
+def test_each_mode_asks_for_what_it_says() -> None:
+    inside, outside = Permission("edit"), Permission("edit", outside=True)
+    assert [needs_approval(p, "ask") for p in (None, inside, outside)] == [False, True, True]
+    assert [needs_approval(p, "auto") for p in (None, inside, outside)] == [False, False, True]
+    assert [needs_approval(p, "full") for p in (None, inside, outside)] == [False, False, False]
+    assert (inside.code, outside.code) == ("edit", "edit-outside")
 
 
 def test_a_long_line_is_cut(ctx: ToolContext) -> None:
@@ -70,11 +78,16 @@ def test_apply_patch_changes_files_in_the_workspace(ctx: ToolContext) -> None:
     assert (ctx.workspace / "src/new.py").read_text() == "print('hi')\n"
 
 
-def test_apply_patch_refuses_paths_outside_the_workspace(ctx: ToolContext, tmp_path: Path) -> None:
-    for path in ("../outside.txt", str(tmp_path / "outside.txt")):
-        result = call("apply_patch", ctx, input=f"*** Begin Patch\n*** Add File: {path}\n+x\n*** End Patch")
-        assert not result.ok and "outside the workspace" in result.output
-    assert not (tmp_path / "outside.txt").exists()
+def test_apply_patch_outside_the_workspace_needs_leave_and_then_works(ctx: ToolContext, tmp_path: Path) -> None:
+    patch = TOOLS["apply_patch"]
+    inside = "*** Begin Patch\n*** Add File: a.txt\n+x\n*** End Patch"
+    assert patch.permission({"input": inside}, ctx) == Permission("edit")
+    moved = "*** Begin Patch\n*** Add File: b.txt\n+x\n*** Update File: a.txt\n*** Move to: ../moved.txt\n@@\n-x\n+y\n*** End Patch"
+    for text in (f"*** Begin Patch\n*** Add File: {tmp_path / 'abs.txt'}\n+x\n*** End Patch", "*** Begin Patch\n*** Delete File: ../gone.txt\n*** End Patch", moved):
+        assert patch.permission({"input": text}, ctx) == Permission("edit", outside=True), text
+    assert patch.permission({"input": "not a patch"}, ctx) == Permission("edit")
+    result = call("apply_patch", ctx, input="*** Begin Patch\n*** Add File: ../outside/new.txt\n+hello\n*** End Patch")
+    assert result.ok and (tmp_path / "outside" / "new.txt").read_text() == "hello\n"
 
 
 def test_apply_patch_failures_are_told_to_the_model(ctx: ToolContext) -> None:

@@ -139,10 +139,14 @@ const argumentsText = computed(() => {
     return props.step.arguments;
   }
 });
-const question = computed(() => {
-  const n = props.step.name;
-  return t(n === 'shell' || n === 'exec_command' ? 'playground.approveRun' : n === 'apply_patch' ? 'playground.approveEdit' : n === 'read' ? 'playground.approveRead' : 'playground.approveCall');
-});
+/** What the call needs leave for, as the server says (``command``, ``edit``, ``edit-outside``, ``read-outside``). */
+const QUESTIONS: Record<string, string> = {
+  command: 'playground.approveRun',
+  edit: 'playground.approveEdit',
+  'edit-outside': 'playground.approveEditOutside',
+  'read-outside': 'playground.approveRead',
+};
+const question = computed(() => t(QUESTIONS[props.step.approval] ?? 'playground.approveCall'));
 
 function answer(decision: ApprovalDecision) {
   answering.value = true;

@@ -36,10 +36,10 @@ async function stream(path: string, body: unknown, onEvent: (event: ReplyEvent) 
 const path = (id: string) => ({ params: { path: { conversation_id: id } } });
 
 export const conversationsApi = {
-  create: (model: string, effort: string, temporary = false, toolsOff: ToolGroup[] = []) =>
-    unwrap(api.POST('/api/v1/playground/conversations', { body: { model, effort, temporary, title: '', tools_off: toolsOff } })),
+  create: (model: string, effort: string, temporary = false, toolsOff: ToolGroup[] = [], fullAccess = false) =>
+    unwrap(api.POST('/api/v1/playground/conversations', { body: { model, effort, temporary, title: '', tools_off: toolsOff, full_access: fullAccess } })),
   get: (id: string) => unwrap(api.GET('/api/v1/playground/conversations/{conversation_id}', path(id))),
-  update: (id: string, patch: { title?: string; model?: string; effort?: string; archived?: boolean; current_leaf?: string; tools_off?: ToolGroup[] }) =>
+  update: (id: string, patch: { title?: string; model?: string; effort?: string; archived?: boolean; current_leaf?: string; tools_off?: ToolGroup[]; full_access?: boolean }) =>
     unwrap(api.PATCH('/api/v1/playground/conversations/{conversation_id}', { ...path(id), body: patch })),
   remove: (id: string) => unwrap(api.DELETE('/api/v1/playground/conversations/{conversation_id}', path(id))),
   branch: (id: string, messageId: string) =>

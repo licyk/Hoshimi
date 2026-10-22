@@ -19,11 +19,14 @@ withDefaults(
     /** Ends in a chevron that turns over while ``open``. */
     menu?: boolean;
     open?: boolean;
+    /** A switch's state: on, it reads as on (``aria-pressed``) in the colour that says so. */
+    pressed?: boolean;
     disabled?: boolean;
     /** Spins in place of the icon and does not respond: what it shows is still coming. */
     loading?: boolean;
   }>(),
-  { text: '' },
+  // Not a switch unless told: Vue would read a missing boolean as off.
+  { text: '', pressed: undefined },
 );
 defineEmits<{ click: [MouseEvent] }>();
 </script>
@@ -33,12 +36,13 @@ defineEmits<{ click: [MouseEvent] }>();
     <button
       type="button"
       class="face state-layer type-label-large"
-      :class="{ round: !text, open }"
+      :class="{ round: !text, open, pressed }"
       :disabled="disabled"
       :aria-busy="loading || undefined"
       :aria-label="label || undefined"
       :aria-haspopup="menu ? 'listbox' : undefined"
       :aria-expanded="menu ? open : undefined"
+      :aria-pressed="pressed === undefined ? undefined : pressed"
       :title="label || undefined"
       @click="!loading && $emit('click', $event)"
     >
@@ -66,6 +70,8 @@ defineEmits<{ click: [MouseEvent] }>();
 .face:active:not(:disabled) { transform: scale(0.96); }
 .face:disabled { opacity: var(--app-disabled-content-opacity); cursor: default; }
 .face[aria-busy='true'] { cursor: progress; }
+.face.pressed { color: var(--md-sys-color-on-error-container); background: var(--md-sys-color-error-container); }
+.face.pressed:hover:not(:disabled) { color: var(--md-sys-color-on-error-container); border-color: var(--md-sys-color-error); }
 .round { justify-content: center; width: 32px; padding: 0; }
 .lead { --md-circular-progress-active-indicator-color: currentColor; }
 /* A model id is one long word: cut it, the menu shows it whole. */

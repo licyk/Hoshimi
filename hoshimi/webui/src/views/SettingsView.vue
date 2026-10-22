@@ -82,6 +82,14 @@ const visionModel = computed({
   get: () => s.value?.playground.vision_model || 'auto',
   set: (value: string | null) => save({ playground: { vision_model: value || 'auto' } }),
 });
+// Tools: when they ask first.
+const approvalOptions = computed(() =>
+  (['ask', 'auto', 'full'] as const).map((value) => ({ value, label: t(`settings.approvalModes.${value}`), description: t(`settings.approvalModesHelp.${value}`) })),
+);
+const approval = computed({
+  get: () => s.value?.playground.approval ?? 'ask',
+  set: (value: string | null) => save({ playground: { approval: value || 'ask' } }),
+});
 // Tools: each switch saves the whole list.
 function setTool(group: ToolGroup, on: boolean) {
   const current = s.value?.playground.tools ?? [];
@@ -193,12 +201,10 @@ async function copy(text: string) {
           />
         </PageSection>
         <PageSection :title="t('settings.toolsRun')" :subtitle="t('settings.toolsRunHint')">
-          <Switch
-            :model-value="s.playground.approval === 'ask'"
-            :label="t('settings.approval')"
-            :supporting-text="t('settings.approvalHelp')"
-            @update:model-value="save({ playground: { approval: $event ? 'ask' : 'auto' } })"
-          />
+          <div class="field">
+            <PickerMenu v-model="approval" :label="t('settings.approval')" :options="approvalOptions" />
+            <p class="type-body-small muted">{{ t('settings.approvalHelp') }}</p>
+          </div>
           <TextField
             :model-value="s.playground.workspace"
             :label="t('settings.workspace')"

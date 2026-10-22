@@ -27,7 +27,8 @@ vi.mock('@/components/NetworkSettings.vue', () => ({ default: { template: '<div 
 vi.mock('@/ui', () => {
   const slot = { template: '<div><slot /></div>' };
   return {
-    icons: {}, TRANSITIONS: {}, AppButton: slot, AppIcon: slot, DataList: slot, NumberField: slot, PickerMenu: slot, SegmentedButton: slot, SelectField: slot, Skeleton: slot, TokenField: slot,
+    icons: {}, TRANSITIONS: {}, AppButton: slot, AppIcon: slot, DataList: slot, NumberField: slot,
+    PickerMenu: { props: ['label', 'modelValue', 'options'], emits: ['update:modelValue'], template: '<select class="picker" :aria-label="label" :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value)"><option v-for="o in options" :key="o.value" :value="o.value">{{ o.label }}</option></select>' }, SegmentedButton: slot, SelectField: slot, Skeleton: slot, TokenField: slot,
     TextField: { props: ['label', 'modelValue'], emits: ['change'], template: '<input class="text-field" :aria-label="label" :value="modelValue" @change="$emit(\'change\', $event.target.value)" />' },
     AxisPanes: slot,
     Collapse: { props: ['show'], template: '<div v-if="show"><slot /></div>' },
@@ -62,18 +63,20 @@ describe('settings', () => {
     expect(state.update.mock.calls[0][0]).toEqual({ playground: { system_prompt: 'Answer briefly.' } });
   });
 
-  it('turns tools on one by one, in their order, and asks before acting until told not to', async () => {
+  it('turns tools on one by one, in their order, and sets when they ask first', async () => {
     route.query = { tab: 'tools' };
     const w = mount(SettingsView, { global: { plugins: [createPinia()] } });
     expect(w.findAll('h2').map((h) => h.text())).toEqual(['Playground tools', 'How tools run']);
     const toggle = (label: string) => w.findAll('.switch').find((s) => s.text() === label)!.trigger('click');
     await toggle('Run commands');
     await toggle('Read files');
-    await toggle('Ask before acting');
+    const mode = w.find('select[aria-label="When tools ask first"]');
+    expect(mode.findAll('option').map((o) => o.text())).toEqual(['Ask first', 'Ask outside the workspace', 'Full access']);
+    await mode.setValue('full');
     expect(state.update.mock.calls.map((c) => c[0])).toEqual([
       { playground: { tools: ['read', 'shell'] } },
       { playground: { tools: [] } },
-      { playground: { approval: 'auto' } },
+      { playground: { approval: 'full' } },
     ]);
     const workspace = w.find('input[aria-label="Workspace"]');
     await workspace.setValue('~/agent');

@@ -80,6 +80,12 @@ function chooseTools(on: string[]) {
   const offElsewhere = chat.toolsOff.filter((g) => !enabledTools.value.includes(g));
   chat.chooseTools([...offElsewhere, ...enabledTools.value.filter((g) => !on.includes(g))] as ToolGroup[]);
 }
+// Full access: this chat's tools run without asking. Settings can give it to every chat, and then it stays on here.
+const fullAccessEverywhere = computed(() => settings.data.value?.playground.approval === 'full');
+const fullAccessOn = computed(() => fullAccessEverywhere.value || chat.fullAccess);
+const fullAccessLabel = computed(() =>
+  fullAccessEverywhere.value ? t('playground.fullAccessEverywhere') : chat.fullAccess ? t('playground.fullAccessOn') : t('playground.fullAccessOff'),
+);
 const runningTerminals = computed(() => chat.terminals.filter((term) => term.running));
 async function approve(step: ToolStep, decision: ApprovalDecision) {
   try {
@@ -534,7 +540,7 @@ onBeforeUnmount(() => {
             </div>
           </template>
           <template #tools>
-            <ChipButton :icon="icons.Plus" :label="t('playground.attach')" @click="fileInput?.click()" />
+            <ChipButton class="attach" :icon="icons.Plus" :label="t('playground.attach')" @click="fileInput?.click()" />
             <input ref="fileInput" class="file-input" type="file" multiple tabindex="-1" aria-hidden="true" @change="onPick" />
             <ComposerMenu
               class="model"
@@ -574,6 +580,16 @@ onBeforeUnmount(() => {
               :options="toolOptions"
               :disabled="chat.busy"
               @update:values="chooseTools"
+            />
+            <ChipButton
+              v-if="toolOptions.length"
+              class="full-access"
+              :icon="fullAccessOn ? icons.ShieldOff : icons.Shield"
+              :text="fullAccessOn ? t('playground.fullAccess') : ''"
+              :label="fullAccessLabel"
+              :pressed="fullAccessOn"
+              :disabled="fullAccessEverywhere"
+              @click="chat.chooseFullAccess(!chat.fullAccess)"
             />
           </template>
         </Composer>
@@ -661,7 +677,12 @@ onBeforeUnmount(() => {
 .dock { display: flex; flex-direction: column; gap: var(--app-space-2); flex: none; width: min(100%, var(--column)); align-self: center; }
 .tray { display: flex; flex-wrap: wrap; gap: var(--app-space-2); padding: var(--app-space-3) var(--app-space-4) 0; }
 .file-input { display: none; }
-.effort, .tools-menu { flex: none; }
+.attach, .effort, .tools-menu, .full-access { flex: none; }
+/* On a phone the shield says "full access" by its colour alone: the model's name needs the room. */
+@media (max-width: 599px) {
+  .full-access :deep(.text) { display: none; }
+  .full-access :deep(.face) { justify-content: center; width: 32px; padding: 0; }
+}
 .terminals { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: var(--app-space-2) var(--app-space-3) 0 var(--app-space-4); list-style: none; }
 .terminal { display: flex; align-items: center; gap: var(--app-space-2); min-width: 0; }
 .terminal .command { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }

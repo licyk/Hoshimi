@@ -243,6 +243,10 @@ MIGRATIONS: list[str] = [
     ALTER TABLE chat_messages ADD COLUMN steps     TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE conversations ADD COLUMN tools_off TEXT NOT NULL DEFAULT '[]';
     """,
+    # 6: a conversation whose tools run without asking, whatever the approval mode.
+    """
+    ALTER TABLE conversations ADD COLUMN full_access INTEGER NOT NULL DEFAULT 0;
+    """,
 ]
 
 

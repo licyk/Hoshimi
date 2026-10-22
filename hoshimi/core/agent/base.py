@@ -75,6 +75,32 @@ class ToolResult:
 
 
 @dataclass(frozen=True)
+class Permission:
+    """What a call needs the user's leave for: ``reason`` (``command``, ``edit`` or ``read``), and whether it reaches outside the workspace.
+
+    ``ask`` mode asks for every permission, ``auto`` only for one that reaches
+    outside the workspace, ``full`` for none.
+    """
+
+    reason: str
+    outside: bool = False
+
+    @property
+    def code(self) -> str:
+        """The permission as the page reads it: ``command``, ``edit``, ``edit-outside``, ``read-outside``…"""
+        return f"{self.reason}-outside" if self.outside else self.reason
+
+
+APPROVAL_MODES = ("ask", "auto", "full")
+
+
+def needs_approval(permission: Permission | None, mode: str) -> bool:
+    if permission is None or mode == "full":
+        return False
+    return mode != "auto" or permission.outside
+
+
+@dataclass(frozen=True)
 class Tool:
     name: str
     group: str
@@ -82,8 +108,8 @@ class Tool:
     description: str
     parameters: dict[str, Any]
     run: Callable[[dict[str, Any], ToolContext], ToolResult]
-    approval: Callable[[dict[str, Any], ToolContext], str | None] = lambda args, ctx: None
-    """Why this call needs the user's approval before it runs (when they ask to approve), or None."""
+    permission: Callable[[dict[str, Any], ToolContext], Permission | None] = lambda args, ctx: None
+    """What this call needs the user's leave for (whether it is asked depends on the approval mode), or None."""
 
     def definition(self) -> dict[str, Any]:
         """The tool as a Chat Completions ``tools`` entry."""

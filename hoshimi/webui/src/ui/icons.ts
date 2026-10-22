@@ -131,6 +131,7 @@ export {
   // The Playground's tools.
   FilePen,
   ShieldAlert,
+  ShieldOff,
   SquareTerminal,
   Terminal,
 } from '@lucide/vue';

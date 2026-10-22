@@ -109,6 +109,8 @@ class ConversationSummary(Record):
     """The conversation this one was branched from, if any."""
     tools_off: list[str] = Field(default_factory=list)
     """The tools (by their Settings switch) this conversation does without."""
+    full_access: bool = False
+    """Its tools run without asking, whatever ``playground.approval`` says."""
     created_at: float
     updated_at: float
     """Unix seconds of the last message, which orders the list."""
@@ -131,6 +133,7 @@ class ConversationCreate(Record):
     title: str = ""
     temporary: bool = False
     tools_off: list[str] = Field(default_factory=list)
+    full_access: bool = False
 
 
 class ConversationPatch(Record):
@@ -142,6 +145,8 @@ class ConversationPatch(Record):
     archived: bool | None = None
     current_leaf: str | None = None
     tools_off: list[str] | None = None
+    full_access: bool | None = None
+    """Let its tools run without asking (from the next call on, even in a reply under way)."""
 
 
 class MessageSend(Record):
@@ -207,7 +212,7 @@ def _message(m: ChatMessage) -> MessageView:
 def _summary(c: Conversation) -> ConversationSummary:
     return ConversationSummary(
         id=c.id, title=c.title, title_state=c.title_state, model=c.model, effort=c.effort, archived=c.archived, temporary=c.temporary,
-        branched_from=c.branched_from, tools_off=c.tools_off, created_at=c.created_at, updated_at=c.updated_at,
+        branched_from=c.branched_from, tools_off=c.tools_off, full_access=c.full_access, created_at=c.created_at, updated_at=c.updated_at,
     )
 
 
@@ -318,7 +323,8 @@ def list_conversations(services: ServicesDep, archived: Annotated[bool, Query(de
 
 @router.post("/conversations", operation_id="create_conversation", status_code=201)
 def create_conversation(services: ServicesDep, body: ConversationCreate) -> ConversationView:
-    return _view(services.conversations.create(model=body.model, effort=body.effort, title=body.title, temporary=body.temporary, tools_off=_groups(body.tools_off)))
+    return _view(services.conversations.create(model=body.model, effort=body.effort, title=body.title, temporary=body.temporary, tools_off=_groups(body.tools_off),
+                                                     full_access=body.full_access))
 
 
 @router.get("/conversations/{conversation_id}", operation_id="get_conversation", responses=ERROR_RESPONSES)
@@ -332,7 +338,7 @@ def update_conversation(services: ServicesDep, conversation_id: str, body: Conve
     try:
         conversation = services.conversations.update(
             conversation_id, title=body.title, model=body.model, effort=body.effort, archived=body.archived, current_leaf=body.current_leaf,
-            tools_off=None if body.tools_off is None else _groups(body.tools_off),
+            tools_off=None if body.tools_off is None else _groups(body.tools_off), full_access=body.full_access,
         )
     except ValueError as exc:
         raise ValidationError(str(exc)) from None

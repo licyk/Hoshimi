@@ -21,7 +21,7 @@ vi.mock('@/ui', async (importOriginal) => ({ ...(await importOriginal<typeof imp
 
 // -- a server in memory: conversations as trees, replies streamed by the test -----------------
 interface Msg { id: string; parent_id: string | null; role: 'user' | 'assistant'; content: string; model: string; effort: string; status: string; error: string; notices: { kind: string; name: string; model: string }[]; created_at: number; attachments: unknown[]; reasoning?: string; reasoning_ms?: number; steps?: unknown[] }
-interface Conv { id: string; title: string; title_state: string; model: string; effort: string; archived: boolean; temporary: boolean; branched_from: string; created_at: number; updated_at: number; current_leaf: string; messages: Msg[] }
+interface Conv { id: string; title: string; title_state: string; model: string; effort: string; archived: boolean; temporary: boolean; branched_from: string; created_at: number; updated_at: number; current_leaf: string; messages: Msg[]; tools_off?: string[]; full_access?: boolean }
 let server: { conversations: Map<string, Conv>; session: string | null; calls: { method: string; path: string; body: unknown }[]; ids: number; clock: number; terminals?: unknown[] };
 /** The reply streams the test has not yet finished: it writes their events and closes them. */
 let streams: { send: (event: object) => void; close: () => void; signal: AbortSignal }[];
@@ -66,8 +66,11 @@ async function handle(input: RequestInfo | URL, init?: RequestInit): Promise<Res
     return json({ id: `a${++server.ids}`, kind: 'file', name: url.searchParams.get('name'), mime: url.searchParams.get('type') || 'text/plain', size: text.length, width: null, height: null }, 201);
   }
   if (kind === 'conversations' && !id && request.method === 'POST') {
-    const b = body as { model: string; effort: string; temporary: boolean };
-    const conv: Conv = { id: `c${++server.ids}`, title: '', title_state: '', model: b.model, effort: b.effort, archived: false, temporary: b.temporary, branched_from: '', created_at: 1, updated_at: 1, current_leaf: '', messages: [] };
+    const b = body as { model: string; effort: string; temporary: boolean; tools_off?: string[]; full_access?: boolean };
+    const conv: Conv = {
+      id: `c${++server.ids}`, title: '', title_state: '', model: b.model, effort: b.effort, archived: false, temporary: b.temporary, branched_from: '', created_at: 1, updated_at: 1,
+      current_leaf: '', messages: [], tools_off: b.tools_off ?? [], full_access: !!b.full_access,
+    };
     server.conversations.set(conv.id, conv);
     return json(conv, 201);
   }
@@ -162,7 +165,7 @@ describe('Playground chat', () => {
     const { wrapper } = await openPlayground();
     expect(wrapper.text()).toContain('What can I help with?');
     await ask(wrapper, 'What is **this**?');
-    expect(calls('POST', /^\/conversations$/)[0].body).toEqual({ model: 'test/model', effort: '', temporary: false, title: '', tools_off: [] });
+    expect(calls('POST', /^\/conversations$/)[0].body).toEqual({ model: 'test/model', effort: '', temporary: false, title: '', tools_off: [], full_access: false });
     expect(server.session).toBe('c1');
     expect(wrapper.find('.assistant-message').text()).toContain('Answering…');
     await answer('It is a **gateway**.');
@@ -335,7 +338,7 @@ describe('Playground chat', () => {
     await flushPromises();
     const tool = () => wrapper.find('.assistant-message .tool-call');
     expect(tool().find('.state').text()).toBe('Preparing…');
-    const asked = { ...call, arguments: '{"command": "ls -la"}', status: 'waiting', approval: 'runs a command' };
+    const asked = { ...call, arguments: '{"command": "ls -la"}', status: 'waiting', approval: 'command' };
     stream.send({ type: 'tool', step: asked });
     await flushPromises();
     expect([tool().find('.verb').text(), tool().find('.detail').text()]).toEqual(['Run', 'ls -la']);
@@ -345,7 +348,7 @@ describe('Playground chat', () => {
     await tool().findAll('.answers md-filled-button, .answers button').at(-1)!.trigger('click');
     await flushPromises();
     expect(calls('POST', /\/approvals\/call_1$/).map((c) => c.body)).toEqual([{ decision: 'allow' }]);
-    const done = { ...asked, status: 'done', approval: 'runs a command', output: 'total 0', exit_code: 0, ms: 1200 };
+    const done = { ...asked, status: 'done', approval: 'command', output: 'total 0', exit_code: 0, ms: 1200 };
     stream.send({ type: 'tool', step: { ...asked, status: 'running' } });
     stream.send({ type: 'tool', step: done });
     await flushPromises();
@@ -366,6 +369,31 @@ describe('Playground chat', () => {
     await flushPromises();
     expect(calls('DELETE', /\/terminals\/3$/)).toHaveLength(1);
     expect(wrapper.find('.terminals').exists()).toBe(false);
+    state.tools = [];
+    wrapper.unmount();
+  });
+
+  it('gives one chat full access from the composer, and takes it back', async () => {
+    state.tools = ['shell'];
+    const { wrapper } = await openPlayground();
+    const shield = () => wrapper.find('.full-access button');
+    expect(shield().attributes('aria-pressed')).toBe('false');
+    await shield().trigger('click');
+    expect(shield().attributes('aria-pressed')).toBe('true');
+    expect(shield().text()).toBe('Full access');
+    // A new chat is created with it; a chat that exists keeps the change.
+    await ask(wrapper, 'go');
+    await answer('Went.');
+    expect((calls('POST', /^\/conversations$/)[0].body as { full_access: boolean }).full_access).toBe(true);
+    await shield().trigger('click');
+    await flushPromises();
+    expect(calls('PATCH', /^\/conversations\/c\d+$/).map((c) => c.body)).toContainEqual({ full_access: false });
+    // The next new chat asks again.
+    await shield().trigger('click');
+    await wrapper.find('.chat-header .corner').trigger('click');
+    expect(shield().attributes('aria-pressed')).toBe('false');
+    // Other chips are not switches.
+    expect(wrapper.find('.composer .model button').attributes('aria-pressed')).toBeUndefined();
     state.tools = [];
     wrapper.unmount();
   });

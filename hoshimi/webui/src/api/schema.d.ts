@@ -1656,6 +1656,11 @@ export interface components {
              */
             effort: string;
             /**
+             * Full Access
+             * @default false
+             */
+            full_access: boolean;
+            /**
              * Model
              * @default
              */
@@ -1689,6 +1694,8 @@ export interface components {
             current_leaf?: string | null;
             /** Effort */
             effort?: string | null;
+            /** Full Access */
+            full_access?: boolean | null;
             /** Model */
             model?: string | null;
             /** Title */
@@ -1706,6 +1713,11 @@ export interface components {
             created_at: number;
             /** Effort */
             effort: string;
+            /**
+             * Full Access
+             * @default false
+             */
+            full_access: boolean;
             /** Id */
             id: string;
             /** Model */
@@ -1736,6 +1748,11 @@ export interface components {
             current_leaf: string;
             /** Effort */
             effort: string;
+            /**
+             * Full Access
+             * @default false
+             */
+            full_access: boolean;
             /** Id */
             id: string;
             /** Messages */
@@ -2421,7 +2438,7 @@ export interface components {
              * @default ask
              * @enum {string}
              */
-            approval: "ask" | "auto";
+            approval: "ask" | "auto" | "full";
             /**
              * Max Steps
              * @default 50
