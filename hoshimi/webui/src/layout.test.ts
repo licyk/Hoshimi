@@ -127,8 +127,9 @@ describe('menus', () => {
  * their end by ``--app-scroll-lane`` less than their start: otherwise content sits a lane further from
  * the end edge than from the start. Menus and pickers (``app-scroll-auto``) give the lane up instead.
  */
+const FILL_PAGES = new Set(['views/PlaygroundView.vue']);
 const LANE_PADDED: [file: string, selector: string][] = [
-  ...PAGES.map((file): [string, string] => [file, `.${/<template>\s*<\w+[^>]*\bclass="([\w-]+)/.exec(readFileSync(join(SRC, file), 'utf8'))![1]}`]),
+  ...PAGES.filter((f) => !FILL_PAGES.has(f.replace(/\\/g, '/'))).map((file): [string, string] => [file, `.${/<template>\s*<\w+[^>]*\bclass="([\w-]+)/.exec(readFileSync(join(SRC, file), 'utf8'))![1]}`]),
   ['ui/AppDialog.vue', '.body'],
   ['ui/SideSheet.vue', '.body'],
   ['ui/DataTable.vue', '.row'],
@@ -138,6 +139,11 @@ describe('scrollbar lanes', () => {
     const own = rule(file, selector);
     expect(own).toMatch(/padding-inline-end:/);
     expect(own).toContain('var(--app-scroll-lane)');
+  });
+  it('a page that fills the frame keeps no shell lane, and its thread reaches into its padding', () => {
+    expect(readFileSync(join(SRC, 'router.ts'), 'utf8')).toMatch(/name: 'playground'[^\n]*meta: \{ fill: true \}/);
+    expect(readFileSync(join(SRC, 'ui/AppShell.vue'), 'utf8')).toContain(`:class="{ 'app-scroll-auto': fill }"`);
+    expect(rule('views/PlaygroundView.vue', '.thread')).toMatch(/margin-inline-end:[^;]*var\(--app-scroll-lane\)/);
   });
   it('the detail pane reaches into the page padding by its lane', () => {
     expect(rule('ui/ListDetail.vue', '.detail-pane')).toMatch(/margin-inline-end:[^;]*var\(--app-scroll-lane\)/);

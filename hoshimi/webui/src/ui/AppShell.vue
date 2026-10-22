@@ -7,8 +7,12 @@ import NavigationRail, { type NavItem } from '@/ui/NavigationRail.vue';
 import Snackbar from '@/ui/Snackbar.vue';
 import TopAppBar from '@/ui/TopAppBar.vue';
 
-/** Navigation switches between a bottom bar (compact) and a rail (medium and wider). */
-withDefaults(defineProps<{ items: NavItem[]; footer?: NavItem[]; title: string }>(), { footer: () => [] });
+/**
+ * Navigation switches between a bottom bar (compact) and a rail (medium and wider). A ``fill`` page
+ * takes the frame's height and scrolls inside itself, so the scroller gives its lane up until it is
+ * needed (``app-scroll-auto``) and the page pads both sides alike.
+ */
+withDefaults(defineProps<{ items: NavItem[]; footer?: NavItem[]; title: string; fill?: boolean }>(), { footer: () => [], fill: false });
 const windowClass = useWindowClass();
 const compact = computed(() => windowClass.value === 'compact');
 const content = ref<HTMLElement | null>(null);
@@ -25,7 +29,7 @@ defineExpose({ content });
       <TopAppBar :title="title"><template #actions><slot name="actions" /></template></TopAppBar>
       <!-- The frame (background, corners) belongs to the shell and never animates; the scroller inside
            it is the page, the only thing a navigation fades through. -->
-      <div class="frame"><main ref="content" class="content app-scroll"><slot /></main></div>
+      <div class="frame"><main ref="content" class="content app-scroll" :class="{ 'app-scroll-auto': fill }"><slot /></main></div>
     </div>
     <NavigationBar v-if="compact" :items="[...items, ...footer]" class="bottom" />
     <Snackbar />

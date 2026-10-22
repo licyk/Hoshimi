@@ -77,7 +77,7 @@ const liveLabel = computed(() => (running.value ? t('live.chip', { n: running.va
 </script>
 
 <template>
-  <AppShell ref="shell" :items="nav" :footer="footer" :title="t('app.title')">
+  <AppShell ref="shell" :items="nav" :footer="footer" :title="t('app.title')" :fill="route.meta.fill === true">
     <template #rail-top>
       <IconButton :icon="icons.Constellation" :label="t('app.title')" tonal />
     </template>

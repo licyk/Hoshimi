@@ -9,7 +9,8 @@ const routes: RouteRecordRaw[] = [
   // back gesture returns from a channel to the list on a narrow window.
   { path: '/channels/:id?', name: 'channels', component: () => import('@/views/ChannelsView.vue'), props: true },
   { path: '/usage', name: 'usage', component: () => import('@/views/UsageView.vue') },
-  { path: '/playground', name: 'playground', component: () => import('@/views/PlaygroundView.vue') },
+  // Fills the frame and scrolls inside itself: the shell keeps no scrollbar lane beside it (AppShell).
+  { path: '/playground', name: 'playground', component: () => import('@/views/PlaygroundView.vue'), meta: { fill: true } },
   { path: '/settings', name: 'settings', component: () => import('@/views/SettingsView.vue') },
   { path: '/:pathMatch(.*)*', redirect: '/overview' },
 ];
