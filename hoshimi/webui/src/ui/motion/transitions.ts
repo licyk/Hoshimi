@@ -1,5 +1,5 @@
 /** Named transitions and helpers for the motion system. See motion.css. */
-import { ref, watch, type Ref } from 'vue';
+import { nextTick, ref, watch, type Ref } from 'vue';
 
 export const TRANSITIONS = {
   fadeThrough: 'fade-through',
@@ -49,6 +49,31 @@ export function prefersReducedMotion(): boolean {
   if (typeof window === 'undefined') return false;
   if (document.documentElement.dataset.motion === 'reduced') return true;
   return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+}
+
+/**
+ * Change what a box holds and ease its height from what it was to what it becomes, instead of
+ * letting it jump: a question turning into its editor and back. ``change`` swaps the content (and
+ * may wait for it to settle, a text box fitted to its text); the new content fades in on its own
+ * (the ``morph-in`` class). Under reduced motion the box just takes its new height.
+ */
+/** A CSS time as milliseconds: the browser may give back ``300ms`` as ``.3s``. */
+export function milliseconds(time: string): number {
+  const value = parseFloat(time);
+  return /\ds\s*$/.test(time.trim()) && !/ms\s*$/.test(time.trim()) ? value * 1000 : value;
+}
+
+export async function morphHeight(el: HTMLElement | null | undefined, change: () => unknown): Promise<void> {
+  const from = el?.getBoundingClientRect().height ?? 0;
+  await change();
+  await nextTick();
+  if (!el || prefersReducedMotion() || typeof el.animate !== 'function') return;
+  const to = el.getBoundingClientRect().height;
+  if (Math.abs(to - from) < 1) return;
+  const root = getComputedStyle(document.documentElement);
+  const duration = milliseconds(root.getPropertyValue('--md-sys-motion-duration-medium2')) || 300;
+  const easing = root.getPropertyValue('--md-sys-motion-easing-emphasized').trim() || 'cubic-bezier(0.2, 0, 0, 1)';
+  el.animate([{ height: `${from}px`, overflow: 'hidden' }, { height: `${to}px`, overflow: 'hidden' }], { duration, easing });
 }
 
 /**

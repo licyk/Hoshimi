@@ -3,18 +3,18 @@ import { computed, ref, watch } from 'vue';
 import { useConversations } from '@/api/conversations';
 import type { ConversationSummary } from '@/api/types';
 import { useI18n } from '@/i18n';
-import { AppButton, AppIcon, AppMenu, EmptyState, IconButton, SearchField, Skeleton, icons } from '@/ui';
+import { AppIcon, AppMenu, EmptyState, IconButton, SearchField, Skeleton, icons } from '@/ui';
 
 export type ConversationAction = 'rename' | 'archive' | 'unarchive' | 'delete';
 
 /**
- * The Playground's chats, as in a chat app's sidebar: New chat, a search through the titles, and
- * the chats grouped by when they were last used (today, yesterday, the last week, the last month,
+ * The Playground's chats, as in a chat app's sidebar: a search through the titles, and the chats
+ * grouped by when they were last used (today, yesterday, the last week, the last month,
  * before). Each has a menu to rename, archive (or restore) and delete it; the page does those, so
  * the same dialogs serve the header's menu. The archive is a view of its own, at the foot.
  */
 const props = defineProps<{ current: string | null; refresh?: number }>();
-const emit = defineEmits<{ select: [id: string]; new: []; act: [action: ConversationAction, conversation: ConversationSummary] }>();
+const emit = defineEmits<{ select: [id: string]; act: [action: ConversationAction, conversation: ConversationSummary] }>();
 const { t } = useI18n();
 
 const archived = ref(false);
@@ -54,10 +54,6 @@ const titleOf = (c: ConversationSummary) => c.title || t('playground.untitled');
 
 <template>
   <nav class="chat-sidebar" :aria-label="t('playground.chats')">
-    <div class="top">
-      <AppButton variant="text" :icon="icons.SquarePen" class="new" @click="emit('new')">{{ t('playground.newChat') }}</AppButton>
-      <slot name="actions" />
-    </div>
     <SearchField v-if="!archived" v-model="query" compact class="search" :label="t('playground.searchChats')" :placeholder="t('playground.searchChats')" />
     <button v-else type="button" class="back state-layer type-label-large" @click="archived = false">
       <AppIcon :icon="icons.ArrowLeft" :size="18" />{{ t('playground.backToChats') }}
@@ -96,8 +92,6 @@ const titleOf = (c: ConversationSummary) => c.title || t('playground.untitled');
 
 <style scoped>
 .chat-sidebar { display: flex; flex-direction: column; gap: var(--app-space-2); min-width: 0; min-height: 0; height: 100%; }
-.top { display: flex; align-items: center; justify-content: space-between; gap: var(--app-space-1); }
-.new { margin-inline-start: calc(-1 * var(--app-space-3)); }
 .back, .archive-link {
   display: flex; align-items: center; gap: var(--app-space-2); height: 36px; padding: 0 var(--app-space-3); border: 0; border-radius: var(--md-sys-shape-corner-full);
   background: transparent; color: var(--md-sys-color-on-surface-variant); cursor: pointer; text-align: start;

@@ -6,7 +6,7 @@ import ReasoningSection from '@/components/chat/ReasoningSection.vue';
 import VersionSwitcher from '@/components/chat/VersionSwitcher.vue';
 import { useI18n } from '@/i18n';
 import type { Stage } from '@/stores/chat';
-import { AppButton, AppIcon, AppMenu, ComposerMenu, icons, type ComposerOption } from '@/ui';
+import { AppButton, AppIcon, AppMenu, icons } from '@/ui';
 // Not through '@/ui': markdown-it and highlight.js load with the Playground alone.
 import Markdown from '@/ui/Markdown.vue';
 
@@ -15,8 +15,8 @@ import Markdown from '@/ui/Markdown.vue';
  * model that shows its reasoning), the Markdown it said, what is happening while it has said nothing
  * yet (reading an image, waiting for the model), how it ended when it did not end
  * well, and what the reader should know about how it was made (an image described by another
- * model). Under it: Copy, Try again (or with another model), Branch in a new chat, the way between
- * its versions, and More (Copy as API request). The latest reply keeps its actions in view.
+ * model). Under it: Copy, Try again (with the model now in the composer), Branch in a new chat, the
+ * way between its versions, and More (Copy as API request). The latest reply keeps its actions in view.
  */
 const props = defineProps<{
   message: MessageView;
@@ -28,9 +28,8 @@ const props = defineProps<{
   stage: Stage;
   local: boolean;
   temporary: boolean;
-  models: ComposerOption[];
 }>();
-const emit = defineEmits<{ copy: []; retry: [model?: string]; branch: []; 'copy-request': []; previous: []; next: []; copied: []; 'copy-failed': [] }>();
+const emit = defineEmits<{ copy: []; retry: []; branch: []; 'copy-request': []; previous: []; next: []; copied: []; 'copy-failed': [] }>();
 const { t } = useI18n();
 
 const streaming = computed(() => props.message.status === 'streaming');
@@ -73,20 +72,6 @@ const failure = computed(() => [t('playground.replyFailed'), props.message.error
     <div v-if="!streaming" class="actions" :class="{ pinned: last || total > 1 }">
       <ActionButton v-if="message.content" :icon="icons.Copy" :label="t('playground.copyMessage')" @click="emit('copy')" />
       <ActionButton :icon="icons.RotateCcw" :label="t('playground.retry')" :disabled="busy || local" @click="emit('retry')" />
-      <ComposerMenu
-        v-if="models.length > 1 && !local"
-        class="retry-with"
-        :icon="icons.Layers"
-        :model-value="null"
-        :label="t('playground.retryWith')"
-        :options="models"
-        text=""
-        :disabled="busy"
-        :search-label="t('models.search')"
-        :search-from="8"
-        :no-matches="t('models.none')"
-        @update:model-value="(m) => m && emit('retry', m)"
-      />
       <ActionButton v-if="!temporary" :icon="icons.GitBranch" :label="t('playground.branch')" :disabled="busy || local" @click="emit('branch')" />
       <VersionSwitcher v-if="total > 1" :index="index" :total="total" :disabled="busy" @previous="emit('previous')" @next="emit('next')" />
       <AppMenu v-if="!local" :items="more" @select="emit('copy-request')">

@@ -96,7 +96,7 @@ function choose(id: string) {
 
 <style scoped>
 .menu {
-  /* Items stretch rather than take width: 100%, which overflows beside a floating scrollbar (see AppMenu). */
+  /* Items stretch as flex items to the menu's width, whatever sets it. */
   position: fixed; display: flex; flex-direction: column; min-width: 220px; max-width: min(var(--app-width-menu), calc(100vw - 16px)); padding: var(--app-space-2) 0;
   background: var(--md-sys-color-surface-container); border-radius: var(--md-sys-shape-corner-extra-small); box-shadow: var(--app-elevation-2);
 }

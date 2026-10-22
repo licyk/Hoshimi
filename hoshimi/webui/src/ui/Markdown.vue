@@ -6,8 +6,8 @@ import { highlight } from '@/ui/highlight';
  * One renderer for every reply. The text is a model's, so it is never trusted: raw HTML is shown as
  * text (``html: false``), and markdown-it already refuses ``javascript:``, ``vbscript:`` and most
  * ``data:`` links. Single newlines break the line, as they do in a chat. Links open beside the
- * app and give the page they open no hold on it. Code blocks and tables scroll sideways in a lane
- * of their own (``.app-scroll``) rather than widen the conversation.
+ * app and give the page they open no hold on it. Code blocks and tables scroll sideways on their
+ * own (``.app-scroll-x``) rather than widen the conversation.
  *
  * A code block is highlighted when its fence names a language this build knows (``highlight.ts``)
  * and carries a head with that name and a copy button. The button is plain HTML in the rendered
@@ -40,7 +40,7 @@ function codeBlock(code: string, info: string, env: Env): string {
     '<div class="code-block">' +
     `<div class="code-head"><span class="code-lang">${escape(language)}</span>` +
     `<button type="button" class="code-copy" data-copy aria-label="${label}" title="${label}">${COPY_ICONS}</button></div>` +
-    `<pre class="app-scroll app-scroll-auto"><code class="hljs${highlighted === null ? '' : ` language-${escape(language)}`}">${highlighted ?? escape(code)}</code></pre>` +
+    `<pre class="app-scroll app-scroll-x app-scroll-auto"><code class="hljs${highlighted === null ? '' : ` language-${escape(language)}`}">${highlighted ?? escape(code)}</code></pre>` +
     '</div>\n'
   );
 }
@@ -53,7 +53,7 @@ md.renderer.rules.link_open = (tokens, i, options, env, self) => {
 };
 md.renderer.rules.fence = (tokens, i, _options, env) => codeBlock(tokens[i].content, tokens[i].info, env);
 md.renderer.rules.code_block = (tokens, i, _options, env) => codeBlock(tokens[i].content, '', env);
-md.renderer.rules.table_open = () => '<div class="table app-scroll app-scroll-auto"><table>\n';
+md.renderer.rules.table_open = () => '<div class="table app-scroll app-scroll-x app-scroll-auto"><table>\n';
 md.renderer.rules.table_close = () => '</table></div>\n';
 
 export const renderMarkdown = (source: string, copyLabel = 'Copy'): string => md.render(source, { copyLabel } satisfies Env);

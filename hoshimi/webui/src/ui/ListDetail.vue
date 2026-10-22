@@ -81,6 +81,6 @@ watch(shownKey, () => void nextTick(() => detailPane.value?.scrollTo({ top: 0 })
 .wide .list-pane { display: flex; flex-direction: column; padding-inline-end: var(--app-space-1); }
 /* The detail pane's lane sits in the page's end padding rather than beside it, so the page is as far
    from the frame on either side. */
-.detail-pane { position: relative; overflow-x: clip; margin-inline-end: calc(-1 * var(--app-scroll-lane)); }
+.detail-pane { position: relative; margin-inline-end: calc(-1 * var(--app-scroll-lane)); }
 .detail-page { min-width: 0; }
 </style>

@@ -126,8 +126,7 @@ const toggle = () => (open.value = !open.value);
 <style scoped>
 .menu-root { display: inline-flex; }
 .menu {
-  /* Items stretch as flex items rather than taking width: 100%: where scrollbars float, an .app-scroll
-     area's children step back by the lane's width (tokens.css), and 100% plus that margin overflows. */
+  /* Items stretch as flex items to the menu's width, whatever sets it. */
   position: fixed; display: flex; flex-direction: column; padding: var(--app-space-2) 0;
   background: var(--md-sys-color-surface-container); border-radius: var(--md-sys-shape-corner-extra-small); box-shadow: var(--app-elevation-2);
 }

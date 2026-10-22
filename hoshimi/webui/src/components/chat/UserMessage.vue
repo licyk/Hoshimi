@@ -6,12 +6,14 @@ import AttachmentPreview from '@/components/chat/AttachmentPreview.vue';
 import VersionSwitcher from '@/components/chat/VersionSwitcher.vue';
 import { useI18n } from '@/i18n';
 import { AppButton, icons } from '@/ui';
+import { morphHeight } from '@/ui/motion/transitions';
 
 /**
  * A question as sent: what was attached, then the text in a bubble at the end of the line, with no
  * name beside it. Under it, on hover or focus, Copy, Edit and (once it has been edited) the way
- * between its versions. Editing happens in place; sending the edit adds a version beside this one
- * and the reply to it, while this one stays a version away.
+ * between its versions. Editing happens in place, the question easing into its editor and back
+ * (``morphHeight``); sending the edit adds a version beside this one and the reply to it, while
+ * this one stays a version away.
  */
 const props = defineProps<{ message: MessageView; index: number; total: number; editing: boolean; busy: boolean; local: boolean }>();
 const emit = defineEmits<{
@@ -27,18 +29,36 @@ const { t } = useI18n();
 const draft = ref('');
 const kept = ref<AttachmentView[]>([]);
 const box = ref<HTMLTextAreaElement | null>(null);
+const root = ref<HTMLElement | null>(null);
+/** What is shown, following ``editing`` once the box has been measured for the change. */
+const showEditor = ref(props.editing);
+/** Whether the content shown is new (and fades in), rather than there from the start. */
+const changed = ref(false);
 watch(
   () => props.editing,
   async (editing) => {
-    if (!editing) return;
-    draft.value = props.message.content;
-    kept.value = [...props.message.attachments];
-    await nextTick();
+    if (editing) {
+      draft.value = props.message.content;
+      kept.value = [...props.message.attachments];
+    }
+    changed.value = true;
+    // The editor's text box fits its text before the box is measured for the change.
+    await morphHeight(root.value, async () => {
+      showEditor.value = editing;
+      await nextTick();
+      if (editing) fit();
+    });
+    if (editing) box.value?.focus();
+  },
+);
+if (props.editing) {
+  draft.value = props.message.content;
+  kept.value = [...props.message.attachments];
+  void nextTick(() => {
     box.value?.focus();
     fit();
-  },
-  { immediate: true },
-);
+  });
+}
 function fit() {
   const el = box.value;
   if (!el) return;
@@ -61,8 +81,8 @@ function onKeydown(e: KeyboardEvent) {
 </script>
 
 <template>
-  <div class="user-message" :class="{ editing }">
-    <div v-if="editing" class="editor">
+  <div ref="root" class="user-message" :class="{ editing: showEditor }">
+    <div v-if="showEditor" class="editor" :class="{ 'morph-in': changed }">
       <div v-if="kept.length" class="attachments">
         <AttachmentPreview
           v-for="a in kept"
@@ -82,7 +102,7 @@ function onKeydown(e: KeyboardEvent) {
         <AppButton variant="filled" :disabled="busy || !draft.trim() && !kept.length" @click="submit">{{ t('playground.send') }}</AppButton>
       </div>
     </div>
-    <template v-else>
+    <div v-else class="view" :class="{ 'morph-in': changed }">
       <div v-if="message.attachments.length" class="attachments">
         <AttachmentPreview v-for="a in message.attachments" :key="a.id" :kind="a.kind" :name="a.name" :mime="a.mime" :bytes="a.size" :id="a.id" />
       </div>
@@ -92,12 +112,13 @@ function onKeydown(e: KeyboardEvent) {
         <ActionButton :icon="icons.Pencil" :label="t('playground.edit')" :disabled="busy || local" @click="emit('edit-start')" />
         <VersionSwitcher v-if="total > 1" :index="index" :total="total" :disabled="busy" @previous="emit('previous')" @next="emit('next')" />
       </div>
-    </template>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.user-message { display: flex; flex-direction: column; align-items: flex-end; gap: var(--app-space-1); min-width: 0; }
+.user-message { display: flex; flex-direction: column; align-items: flex-end; min-width: 0; }
+.view { display: flex; flex-direction: column; align-items: flex-end; align-self: stretch; gap: var(--app-space-1); min-width: 0; }
 .attachments { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--app-space-2); max-width: min(560px, 100%); }
 .bubble {
   max-width: min(560px, 85%); min-width: 0; padding: var(--app-space-2) var(--app-space-4); border-radius: var(--md-sys-shape-corner-extra-large);
@@ -105,7 +126,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 /* The actions show where the pointer or the focus is; a turn with versions keeps its way between them in view. */
 .actions { display: flex; align-items: center; gap: 2px; opacity: 0; transition: opacity var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard); }
-.user-message:hover .actions, .actions:focus-within, .actions.pinned { opacity: 1; }
+.view:hover .actions, .actions:focus-within, .actions.pinned { opacity: 1; }
 @media (hover: none) { .actions { opacity: 1; } }
 .editor {
   display: flex; flex-direction: column; gap: var(--app-space-2); width: min(100%, 640px); padding: var(--app-space-3);

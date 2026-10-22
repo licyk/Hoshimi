@@ -513,7 +513,6 @@ export default {
     copyMessage: 'コピー',
     edit: 'メッセージを編集',
     retry: 'もう一度試す',
-    retryWith: '別のモデルで試す…',
     branch: '新しいチャットで分岐',
     copyRequest: 'API リクエストとしてコピー',
     requestCopied: 'API リクエストをコピーしました',

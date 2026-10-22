@@ -13,16 +13,18 @@ import ChatSidebar, { type ConversationAction } from '@/components/chat/ChatSide
 import UserMessage from '@/components/chat/UserMessage.vue';
 import { useI18n } from '@/i18n';
 import { isLocal, useChatStore } from '@/stores/chat';
-import { AppButton, AppDialog, AppIcon, AppMenu, ChipButton, Composer, ComposerMenu, ConfirmDialog, EmptyState, IconButton, SideSheet, TextField, icons, useSnackbar } from '@/ui';
+import { AppButton, AppDialog, AppIcon, AppMenu, ChipButton, Composer, ComposerMenu, ConfirmDialog, EmptyState, IconButton, SideSheet, TRANSITIONS, TextField, icons, useSnackbar } from '@/ui';
 import { useElementWidth } from '@/ui/useElementWidth';
 
 /**
- * The Playground as a chat app: the chats in a sidebar (a drawer on a narrow page), and the open
- * one in a column with no names beside its messages — the questions in bubbles at the end of the
- * line, the replies across it. The model is picked at the top, a chat can be made temporary there,
- * and its menu renames, archives and deletes it. The composer takes text, photos and files (by its
- * + button, by dropping them on the page, or by pasting), and the effort. Everything said is kept on
- * the server, which also writes the titles and describes images for models that cannot read them.
+ * The Playground as a chat app: the chats in a list that slides out from the start (beside the chat
+ * where there is room, a drawer where there is not), and the open one in a column with no names
+ * beside its messages — the questions in bubbles at the end of the line, the replies across it.
+ * The header holds the list's button at its start and, at its end, the chat's menu and one button
+ * that starts what comes next: a new chat, or, on a new chat no one has written in yet, a temporary
+ * one. The composer takes text, photos and files (by its + button, by dropping them on the page,
+ * or by pasting), the model and its effort. Everything said is kept on the server, which also
+ * writes the titles and describes images for models that cannot read them.
  */
 const { t } = useI18n();
 const route = useRoute();
@@ -87,7 +89,9 @@ watch(sidebarOpen, (open) => {
   }
 });
 const drawerOpen = ref(false);
-const showSidebar = () => (wide.value ? (sidebarOpen.value = true) : (drawerOpen.value = true));
+/** The chat list: the panel beside the chat where there is room, the drawer where there is not. */
+const listOpen = computed(() => (wide.value ? sidebarOpen.value : drawerOpen.value));
+const toggleList = () => (wide.value ? (sidebarOpen.value = !sidebarOpen.value) : (drawerOpen.value = !drawerOpen.value));
 
 // -- the thread ------------------------------------------------------------------
 const scroller = ref<HTMLElement | null>(null);
@@ -216,10 +220,11 @@ async function submitEdit(m: MessageView, content: string, attachments: Attachme
     snackbar.error(error instanceof Error && error.message ? error.message : t('playground.sendFailed'));
   }
 }
-async function retry(m: MessageView, model?: string) {
+/** Another reply, from the model and level now in the composer: switch them first to try another. */
+async function retry(m: MessageView) {
   pinned = true;
   try {
-    await chat.retry(m.id, model);
+    await chat.retry(m.id, chat.model ?? undefined, chat.effort);
   } catch (error) {
     snackbar.error(error instanceof Error && error.message ? error.message : t('playground.failed'));
   }
@@ -261,7 +266,11 @@ function newChat(options: { temporary?: boolean } = {}) {
   drawerOpen.value = false;
   void nextTick(() => composer.value?.focus());
 }
-const toggleTemporary = () => newChat({ temporary: !chat.temporary });
+/**
+ * The header's one button for what comes next. On a new chat no one has written in, it offers a
+ * temporary chat instead; in a temporary chat, and in any chat with messages, it starts a new one.
+ */
+const offerTemporary = computed(() => !chat.temporary && !chat.path.length);
 async function select(id: string) {
   drawerOpen.value = false;
   editingId.value = null;
@@ -364,37 +373,38 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="root" class="playground" :class="{ empty, wide }">
-    <aside v-if="wide && sidebarOpen" class="sidebar">
-      <ChatSidebar :current="chat.conversation?.id ?? null" @select="select" @new="newChat()" @act="act">
-        <template #actions><IconButton :icon="icons.PanelLeft" :label="t('playground.closeSidebar')" @click="sidebarOpen = false" /></template>
-      </ChatSidebar>
-    </aside>
+    <Transition name="chat-sidebar">
+      <aside v-if="wide && sidebarOpen" class="sidebar">
+        <ChatSidebar :current="chat.conversation?.id ?? null" @select="select" @act="act" />
+      </aside>
+    </Transition>
 
     <div class="main" @dragenter.prevent="dragging = true" @dragover.prevent @dragleave.self="dragging = false" @drop.prevent="onDrop">
       <header class="chat-header">
-        <IconButton v-if="!wide || !sidebarOpen" :icon="icons.PanelLeft" :label="t('playground.openSidebar')" @click="showSidebar" />
-        <IconButton v-if="!wide || !sidebarOpen" :icon="icons.SquarePen" :label="t('playground.newChat')" @click="newChat()" />
-        <ComposerMenu
-          class="model"
-          :model-value="chat.model"
-          :label="t('playground.model')"
-          :options="modelOptions"
-          :placeholder="t('playground.model')"
-          :disabled="chat.busy || !modelOptions.length"
-          :loading="models.isFetching.value && !modelOptions.length"
-          :search-label="t('models.search')"
-          :search-from="8"
-          :no-matches="t('models.none')"
-          @update:model-value="(m) => chat.choose({ model: m, effort: '' })"
-        />
-        <span class="spacer" />
-        <button type="button" class="temporary state-layer type-label-large" :class="{ on: chat.temporary }" :aria-pressed="chat.temporary" :title="t('playground.temporaryChat')" @click="toggleTemporary">
-          <AppIcon :icon="icons.MessageCircleDashed" :size="20" />
-          <span class="label">{{ t('playground.temporaryChat') }}</span>
+        <button
+          type="button"
+          class="list-toggle state-layer"
+          :aria-expanded="listOpen"
+          :aria-label="listOpen ? t('playground.closeSidebar') : t('playground.openSidebar')"
+          :title="listOpen ? t('playground.closeSidebar') : t('playground.openSidebar')"
+          @click="toggleList"
+        >
+          <AppIcon :icon="icons.PanelLeft" :size="24" />
         </button>
+        <span class="spacer" />
         <AppMenu v-if="chat.conversation && !chat.conversation.temporary" :items="chatMenu" @select="(a) => act(a as ConversationAction, chat.conversation!)">
           <template #default="{ toggle }"><IconButton :icon="icons.MoreHorizontal" :label="t('playground.chatMenu')" @click="toggle" /></template>
         </AppMenu>
+        <Transition :name="TRANSITIONS.chip" mode="out-in">
+          <button v-if="offerTemporary" key="temporary" type="button" class="corner state-layer type-label-large" :title="t('playground.temporaryChat')" @click="newChat({ temporary: true })">
+            <AppIcon :icon="icons.MessageCircleDashed" :size="20" />
+            <span class="label">{{ t('playground.temporaryChat') }}</span>
+          </button>
+          <button v-else key="new" type="button" class="corner state-layer type-label-large" :title="t('playground.newChat')" @click="newChat()">
+            <AppIcon :icon="icons.SquarePen" :size="20" />
+            <span class="label">{{ t('playground.newChat') }}</span>
+          </button>
+        </Transition>
       </header>
       <CatalogStatus />
 
@@ -434,11 +444,10 @@ onBeforeUnmount(() => {
               :stage="chat.stage"
               :local="isLocal(m.id)"
               :temporary="chat.temporary"
-              :models="modelOptions"
               @copy="copy(m.content)"
               @copied="snackbar.show(t('common.copied'))"
               @copy-failed="snackbar.error(t('common.error'))"
-              @retry="(model) => retry(m, model)"
+              @retry="retry(m)"
               @branch="branch(m)"
               @copy-request="copyRequest(m)"
               @previous="step(m, -1)"
@@ -484,6 +493,19 @@ onBeforeUnmount(() => {
             <ChipButton :icon="icons.Plus" :label="t('playground.attach')" @click="fileInput?.click()" />
             <input ref="fileInput" class="file-input" type="file" multiple tabindex="-1" aria-hidden="true" @change="onPick" />
             <ComposerMenu
+              class="model"
+              :model-value="chat.model"
+              :label="t('playground.model')"
+              :options="modelOptions"
+              :placeholder="t('playground.model')"
+              :disabled="chat.busy || !modelOptions.length"
+              :loading="models.isFetching.value && !modelOptions.length"
+              :search-label="t('models.search')"
+              :search-from="8"
+              :no-matches="t('models.none')"
+              @update:model-value="(m) => chat.choose({ model: m, effort: '' })"
+            />
+            <ComposerMenu
               v-if="effortOptions.length > 1"
               :model-value="chat.effort"
               class="effort"
@@ -504,8 +526,8 @@ onBeforeUnmount(() => {
       <div v-if="dragging" class="drop type-title-medium" aria-hidden="true"><AppIcon :icon="icons.Paperclip" :size="24" />{{ t('playground.dropHere') }}</div>
     </div>
 
-    <SideSheet v-if="!wide" v-model:open="drawerOpen" :title="t('playground.chats')" :close-label="t('common.close')">
-      <ChatSidebar :current="chat.conversation?.id ?? null" @select="select" @new="newChat()" @act="act" />
+    <SideSheet v-if="!wide" v-model:open="drawerOpen" side="start" :title="t('playground.chats')" :close-label="t('common.close')">
+      <ChatSidebar :current="chat.conversation?.id ?? null" @select="select" @act="act" />
     </SideSheet>
     <AppDialog v-model:open="renameOpen" :title="t('playground.renameTitle')" width="small">
       <TextField v-model="renameText" :label="t('playground.titleLabel')" @enter="saveRename" />
@@ -536,18 +558,34 @@ onBeforeUnmount(() => {
 }
 /* Where there is room, the chats stand beside the open one and scroll on their own. */
 .sidebar {
-  display: flex; flex-direction: column; flex: none; width: clamp(240px, 22%, 300px); min-height: 0;
+  --width: clamp(240px, 22%, 300px);
+  display: flex; flex-direction: column; flex: none; width: var(--width); min-height: 0;
   padding-inline-end: var(--app-space-3); border-inline-end: 1px solid var(--md-sys-color-outline-variant);
 }
+/* It slides out from the start, and the chat makes room as it comes (its width and the gap after it
+   are taken back by the margin); it goes the same way. */
+.chat-sidebar-enter-active, .chat-sidebar-leave-active {
+  transition:
+    margin-inline-start var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized),
+    transform var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized),
+    opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
+}
+.chat-sidebar-leave-active { transition-duration: var(--md-sys-motion-duration-short4); }
+.chat-sidebar-enter-from, .chat-sidebar-leave-to { margin-inline-start: calc(-1 * (var(--width) + var(--app-space-4))); transform: translateX(-24px); opacity: 0; }
 .main { position: relative; display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
 .chat-header { display: flex; align-items: center; gap: var(--app-space-1); flex: none; min-width: 0; padding-bottom: var(--app-space-2); }
-.model { min-width: 0; max-width: 360px; }
 .spacer { flex: 1; }
-.temporary {
+.list-toggle {
+  display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: var(--md-sys-shape-corner-full);
+  background: transparent; color: var(--md-sys-color-on-surface-variant); cursor: pointer;
+}
+/* The one button for what comes next, in the header's end corner. */
+.corner {
   display: inline-flex; align-items: center; gap: var(--app-space-2); height: 36px; padding: 0 var(--app-space-3); border: 0;
   border-radius: var(--md-sys-shape-corner-full); background: transparent; color: var(--md-sys-color-on-surface-variant); cursor: pointer;
 }
-.temporary.on { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
+/* A long model id gives way first in the composer's row: the level is one short word. */
+.model { min-width: 0; max-width: 320px; }
 /* The thread reaches into the page's padding by its scrollbar's lane, so its column lines up with the
    composer's (never past the page's edge, where the page would scroll sideways). */
 .thread {
@@ -578,7 +616,7 @@ onBeforeUnmount(() => {
 @media (max-width: 599px) {
   .playground { --pad: var(--app-space-3); padding: var(--app-space-2) var(--pad); }
   .hint { display: none; }
-  .temporary .label { display: none; }
-  .temporary { width: 36px; padding: 0; justify-content: center; }
+  .corner .label { display: none; }
+  .corner { width: 40px; padding: 0; justify-content: center; }
 }
 </style>

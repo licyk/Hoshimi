@@ -66,6 +66,12 @@
 .sheet-leave-active { transition-timing-function: var(--md-sys-motion-easing-emphasized-accelerate); transition-duration: var(--md-sys-motion-duration-short4); }
 .sheet-enter-from,
 .sheet-leave-to { transform: translateX(100%); }
+/* What a box shows after morphHeight() changes it fades in as the box eases to its new height. */
+.morph-in { animation: morph-in var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard) both; }
+@keyframes morph-in { from { opacity: 0; } }
+/* A drawer at the start edge (a list of what can be opened) slides in from there. */
+.sheet-enter-from.start,
+.sheet-leave-to.start { transform: translateX(-100%); }
 
 .scrim-enter-active,
 .scrim-leave-active { transition: opacity var(--md-sys-motion-duration-medium3) var(--md-sys-motion-easing-standard); }

@@ -4,8 +4,11 @@ import IconButton from '@/ui/IconButton.vue';
 import { X } from '@/ui/icons';
 import { useLayer } from '@/ui/layers';
 
-/** A modal side sheet that slides in from the right edge (the ``sheet`` transition). */
-withDefaults(defineProps<{ title: string; closeLabel?: string }>(), { closeLabel: 'Close' });
+/**
+ * A modal side sheet that slides in from the end edge (the ``sheet`` transition): details beside
+ * the page. ``side="start"`` makes it a drawer from the start edge, for a list to choose from.
+ */
+withDefaults(defineProps<{ title: string; closeLabel?: string; side?: 'start' | 'end' }>(), { closeLabel: 'Close', side: 'end' });
 const open = defineModel<boolean>('open', { default: false });
 const sheet = ref<HTMLElement | null>(null);
 const { zIndex } = useLayer({ kind: 'sheet', modal: true, open: () => open.value, close: () => (open.value = false), elements: () => [sheet.value], initialFocus: () => sheet.value });
@@ -17,7 +20,7 @@ const { zIndex } = useLayer({ kind: 'sheet', modal: true, open: () => open.value
       <div v-if="open" class="scrim" :style="{ zIndex }" />
     </Transition>
     <Transition name="sheet">
-      <aside v-if="open" ref="sheet" class="sheet" role="dialog" aria-modal="true" :aria-label="title" tabindex="-1" :style="{ zIndex }">
+      <aside v-if="open" ref="sheet" class="sheet" :class="side" role="dialog" aria-modal="true" :aria-label="title" tabindex="-1" :style="{ zIndex }">
         <header class="head">
           <h2 class="type-title-large title">{{ title }}</h2>
           <slot name="header-actions" />
@@ -36,6 +39,7 @@ const { zIndex } = useLayer({ kind: 'sheet', modal: true, open: () => open.value
   background: var(--md-sys-color-surface-container-low); color: var(--md-sys-color-on-surface);
   border-radius: var(--md-sys-shape-corner-large) 0 0 var(--md-sys-shape-corner-large); box-shadow: var(--app-elevation-2);
 }
+.sheet.start { right: auto; left: 0; border-radius: 0 var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-large) 0; }
 .head { display: flex; align-items: center; gap: var(--app-space-1); padding: var(--app-space-3) var(--app-space-2) var(--app-space-2) var(--app-space-6); }
 .title { flex: 1; margin: 0; }
 .body { flex: 1; padding: 0 var(--app-space-4) var(--app-space-4); padding-inline-end: calc(var(--app-space-4) - var(--app-scroll-lane)); }

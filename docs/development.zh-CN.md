@@ -35,6 +35,19 @@ python scripts/dev.py wheel        # 构建前端及 wheel / sdist
 安装了 Claude Code 时，可按[客户端配置](anthropic-api.zh-CN.md#claude-code-配置)
 对网关进行实际接入验证。
 
+## 布局检查
+
+Web UI 中每个滚动区域只沿一个方向滚动：`.app-scroll` 纵向，`.app-scroll-x` 横向
+（代码块、表格、步骤条）。其他地方出现横向滚动条即为布局缺陷。`scripts/check_layout.py`
+在真实浏览器中查找此类问题：服务运行时（最好 Playground 中已有对话），它会在 Chromium
+和 Firefox 中以 320–1600 px 宽度遍历所有页面，打开 Playground 的对话列表、编辑器和菜单，
+发现内容宽于可见区域的区域即失败，并指出溢出的元素。它需要 Playwright（不是项目依赖）：
+
+```bash
+pip install playwright && playwright install chromium firefox
+python scripts/check_layout.py --url http://127.0.0.1:10600
+```
+
 ## CI 与发布
 
 自动工作流统一由 `ci.yml` 触发：覆盖 `main`、`hoshimi_main` 的推送、`v*` 标签及 PR。

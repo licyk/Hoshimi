@@ -226,8 +226,8 @@ export const useChatStore = defineStore('chat', () => {
     await submit(content, attachments, original.parent_id);
   }
 
-  /** Another reply beside ``messageId`` (or a first one to a question), with another model if one is named. */
-  async function retry(messageId: string, withModel?: string) {
+  /** Another reply beside ``messageId`` (or a first one to a question), from ``withModel`` and ``withEffort`` when given. */
+  async function retry(messageId: string, withModel?: string, withEffort?: string) {
     if (busy.value || !conversation.value) return;
     const target = messages.get(messageId);
     if (!target) return;
@@ -239,7 +239,8 @@ export const useChatStore = defineStore('chat', () => {
     messages.set(reply.id, reply);
     leaf.value = reply.id;
     const id = conversation.value.id;
-    await run((signal, onEvent) => conversationsApi.retry(id, messageId, withModel ? { model: withModel } : {}, onEvent, signal), { reply: reply.id }, before);
+    const body = { ...(withModel ? { model: withModel } : {}), ...(withEffort !== undefined ? { effort: withEffort } : {}) };
+    await run((signal, onEvent) => conversationsApi.retry(id, messageId, body, onEvent, signal), { reply: reply.id }, before);
   }
 
   function stop() {

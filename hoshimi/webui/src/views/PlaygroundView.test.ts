@@ -133,6 +133,8 @@ async function ask(wrapper: Wrapper, text: string) {
 const turns = (wrapper: Wrapper) =>
   wrapper.findAll('.user-message, .assistant-message').map((m) => `${m.classes('user-message') ? 'Q' : 'A'}: ${(m.find('.bubble, .content').exists() ? m.find('.bubble, .content').text() : '').trim()}`);
 const calls = (method: string, pattern: RegExp) => server.calls.filter((c) => c.method === method && pattern.test(c.path));
+/** The header's one button for what comes next: its name. */
+const corner = (wrapper: Wrapper) => wrapper.find('.chat-header .corner').attributes('title');
 
 describe('Playground chat', () => {
   beforeEach(() => {
@@ -163,6 +165,10 @@ describe('Playground chat', () => {
     expect(wrapper.find('.thread').text()).not.toMatch(/\bYou\b|\bAssistant\b/);
     expect(calls('POST', /\/title$/)).toHaveLength(1);
     expect(server.conversations.get('c1')!.title).toBe('A generated title');
+    // A chat with messages offers a new one; the model is picked in the composer, not the header.
+    expect(corner(wrapper)).toBe('New chat');
+    expect(wrapper.find('.composer').text()).toContain('test/model');
+    expect(wrapper.find('.chat-header').text()).not.toContain('test/model');
     wrapper.unmount();
   });
 
@@ -194,10 +200,20 @@ describe('Playground chat', () => {
     await answer('first reply');
     await wrapper.find('.assistant-message button[aria-label="Try again"]').trigger('click');
     await flushPromises();
-    expect(calls('POST', /\/retry$/)[0]).toMatchObject({ path: '/conversations/c1/messages/m3/retry', body: {} });
+    expect(calls('POST', /\/retry$/)[0]).toMatchObject({ path: '/conversations/c1/messages/m3/retry', body: { model: 'test/model', effort: '' } });
     await answer('second reply');
     expect(turns(wrapper)).toEqual(['Q: hello', 'A: second reply']);
     expect(wrapper.find('.assistant-message .versions').text()).toContain('2 / 2');
+    // No separate "Try again with…": switch the model in the composer, then Try again.
+    expect(wrapper.find('.assistant-message .retry-with').exists()).toBe(false);
+    await wrapper.find('.composer .model button').trigger('click');
+    await flushPromises();
+    [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find((o) => o.textContent?.includes('other/model'))!.click();
+    await flushPromises();
+    await wrapper.find('.assistant-message button[aria-label="Try again"]').trigger('click');
+    await flushPromises();
+    expect(calls('POST', /\/retry$/)[1].body).toEqual({ model: 'other/model', effort: '' });
+    await answer('third reply');
     wrapper.unmount();
   });
 
@@ -237,8 +253,11 @@ describe('Playground chat', () => {
 
   it('keeps a temporary chat off the record and deletes it when it is left', async () => {
     const { wrapper } = await openPlayground();
-    await wrapper.find('button.temporary').trigger('click');
-    expect(wrapper.find('button.temporary').attributes('aria-pressed')).toBe('true');
+    // A new chat no one has written in offers a temporary one; inside it, the button starts a new chat.
+    expect(corner(wrapper)).toBe('Temporary chat');
+    await wrapper.find('.chat-header .corner').trigger('click');
+    await flushPromises();
+    expect(corner(wrapper)).toBe('New chat');
     expect(wrapper.find('.temporary-note').exists()).toBe(true);
     await ask(wrapper, 'secret');
     expect(calls('POST', /^\/conversations$/)[0].body).toMatchObject({ temporary: true });
@@ -246,10 +265,12 @@ describe('Playground chat', () => {
     expect(calls('POST', /\/title$/)).toHaveLength(0);
     expect(server.session).toBeNull();
     expect(wrapper.find('.assistant-message button[aria-label="Branch in new chat"]').exists()).toBe(false);
-    await wrapper.find('button.temporary').trigger('click');
+    await wrapper.find('.chat-header .corner').trigger('click');
     await flushPromises();
     expect(calls('DELETE', /^\/conversations\/c1$/)).toHaveLength(1);
     expect(turns(wrapper)).toEqual([]);
+    expect(wrapper.find('.temporary-note').exists()).toBe(false);
+    expect(corner(wrapper)).toBe('Temporary chat');
     wrapper.unmount();
   });
 
@@ -328,7 +349,7 @@ describe('Playground chat', () => {
     server.session = 'old';
     const { wrapper } = await openPlayground();
     expect(turns(wrapper)).toEqual(['Q: before', 'A: a kept reply']);
-    expect(wrapper.find('.chat-header').text()).toContain('other/model');
+    expect(wrapper.find('.composer').text()).toContain('other/model');
     await ask(wrapper, 'more');
     expect(calls('POST', /\/messages$/)[0]).toMatchObject({ path: '/conversations/old/messages', body: { parent_id: 'o2', content: 'more', model: 'other/model' } });
     wrapper.unmount();
@@ -338,7 +359,7 @@ describe('Playground chat', () => {
     server.session = 'old';
     const { wrapper, router } = await openPlayground('/playground?model=other/model');
     expect(calls('GET', /^\/session/)).toHaveLength(0);
-    expect(wrapper.find('.chat-header').text()).toContain('other/model');
+    expect(wrapper.find('.composer').text()).toContain('other/model');
     expect(router.currentRoute.value.query).toEqual({});
     wrapper.unmount();
   });
@@ -362,17 +383,24 @@ describe('Playground chat', () => {
     wrapper.unmount();
   });
 
-  it('starts a new chat from the sidebar, and recalls the last question for editing', async () => {
+  it('starts a new chat from the header, opens and closes the chat list, and recalls the last question for editing', async () => {
     const { wrapper } = await openPlayground();
     await ask(wrapper, 'hello');
     await answer('hi');
     await wrapper.find('.composer textarea').trigger('keydown', { key: 'ArrowUp' });
     await flushPromises();
     expect(wrapper.find('.user-message .editor').exists()).toBe(true);
-    await wrapper.find('.chat-sidebar .new').trigger('click');
+    await wrapper.find('.chat-header .corner').trigger('click');
     await flushPromises();
     expect(turns(wrapper)).toEqual([]);
     expect(server.session).toBeNull();
+    const toggle = () => wrapper.find('.chat-header .list-toggle');
+    expect(wrapper.find('.sidebar').exists()).toBe(true);
+    expect(toggle().attributes()).toMatchObject({ 'aria-expanded': 'true', 'aria-label': 'Close sidebar' });
+    await toggle().trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.sidebar').exists()).toBe(false);
+    expect(toggle().attributes()).toMatchObject({ 'aria-expanded': 'false', 'aria-label': 'Open sidebar' });
     wrapper.unmount();
   });
 });

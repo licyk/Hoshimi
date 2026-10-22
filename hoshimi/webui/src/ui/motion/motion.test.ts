@@ -1,10 +1,10 @@
 import { mount } from '@vue/test-utils';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, h, nextTick, ref, Transition } from 'vue';
 import Collapse from '@/ui/Collapse.vue';
-import { prefersReducedMotion, sectionHooks, TRANSITIONS } from '@/ui/motion/transitions';
+import { milliseconds, morphHeight, prefersReducedMotion, sectionHooks, TRANSITIONS } from '@/ui/motion/transitions';
 
 const SRC = join(process.cwd(), 'src');
 
@@ -171,5 +171,47 @@ describe('motion', () => {
   it('gives reduced motion a short crossfade between destinations', () => {
     const css = readFileSync(join(SRC, 'ui/motion/motion.css'), 'utf8');
     expect(css).toContain(":root[data-motion='reduced']::view-transition-new(app-content)");
+  });
+});
+
+describe('morphHeight', () => {
+  afterEach(() => {
+    delete document.documentElement.dataset.motion;
+  });
+
+  it('reads a CSS time in either unit', () => {
+    expect(milliseconds('300ms')).toBe(300);
+    expect(milliseconds('.3s')).toBe(300);
+    expect(milliseconds(' 0.25s ')).toBe(250);
+    expect(milliseconds('')).toBeNaN();
+  });
+
+  it('eases the box from its old height to the one it has once the change has settled', async () => {
+    const el = document.createElement('div');
+    const heights = [196, 224];
+    el.getBoundingClientRect = () => ({ height: heights.shift() ?? 224 }) as DOMRect;
+    el.animate = vi.fn() as unknown as typeof el.animate;
+    const order: string[] = [];
+    await morphHeight(el, async () => {
+      order.push('change');
+      await Promise.resolve();
+      order.push('settled');
+    });
+    expect(order).toEqual(['change', 'settled']);
+    const [frames, options] = vi.mocked(el.animate).mock.calls[0] as [Keyframe[], KeyframeAnimationOptions];
+    expect(frames.map((f) => f.height)).toEqual(['196px', '224px']);
+    expect(options.duration).toBeGreaterThan(100);
+  });
+
+  it('does not animate under reduced motion, or when the height stays', async () => {
+    const el = document.createElement('div');
+    el.getBoundingClientRect = () => ({ height: 100 }) as DOMRect;
+    el.animate = vi.fn() as unknown as typeof el.animate;
+    await morphHeight(el, () => undefined);
+    document.documentElement.dataset.motion = 'reduced';
+    let h = 100;
+    el.getBoundingClientRect = () => ({ height: (h += 50) }) as DOMRect;
+    await morphHeight(el, () => undefined);
+    expect(el.animate).not.toHaveBeenCalled();
   });
 });

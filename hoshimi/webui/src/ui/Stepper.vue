@@ -15,7 +15,7 @@ const model = defineModel<T>({ required: true });
 </script>
 
 <template>
-  <ol class="stepper app-scroll app-scroll-auto" role="tablist">
+  <ol class="stepper app-scroll app-scroll-x app-scroll-auto" role="tablist">
     <li v-for="(step, i) in steps" :key="step.id" class="item">
       <button type="button" role="tab" class="step state-layer" :class="[step.state ?? 'pending', { current: model === step.id }]" :aria-selected="model === step.id" @click="model = step.id">
         <span class="dot">

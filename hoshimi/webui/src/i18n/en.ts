@@ -513,7 +513,6 @@ export default {
     copyMessage: 'Copy',
     edit: 'Edit message',
     retry: 'Try again',
-    retryWith: 'Try again with…',
     branch: 'Branch in new chat',
     copyRequest: 'Copy as API request',
     requestCopied: 'API request copied',

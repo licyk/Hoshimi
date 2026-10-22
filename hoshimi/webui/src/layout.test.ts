@@ -66,6 +66,32 @@ describe('lists that can grow without bound', () => {
 const VUE_FILES = (readdirSync(SRC, { recursive: true }) as string[]).filter((f) => f.endsWith('.vue'));
 const HIDDEN_SCROLLBAR = new Set(['ui/NavigationRail.vue']);
 describe('scrolling areas', () => {
+  /*
+   * A page, a list or a menu scrolls down and never sideways: a control that reaches past its box
+   * (a 48px touch target round a 40px button, a hover pill) would otherwise give it a horizontal
+   * scrollbar though everything fits. What is wide on purpose scrolls sideways on its own.
+   */
+  const tokens = readFileSync(join(SRC, 'theme/tokens.css'), 'utf8');
+  it('scroll down and clip sideways, unless they are made to scroll sideways', () => {
+    const own = /\n\.app-scroll\s*\{([^}]*)\}/.exec(tokens)![1];
+    expect(own).toMatch(/overflow-x:\s*hidden/);
+    expect(own).toMatch(/overflow-y:\s*auto/);
+    expect(/\n\.app-scroll\.app-scroll-x\s*\{([^}]*)\}/.exec(tokens)![1]).toMatch(/overflow-x:\s*auto;\s*overflow-y:\s*hidden/);
+  });
+  /*
+   * A rule that set margins on whatever an area held overrode the components' own, and each one it
+   * met in turn (a page, a menu item, the Playground's column) overflowed by the lane.
+   */
+  it('leave what they hold to its own component', () => {
+    expect(tokens).not.toMatch(/\.app-scroll[^{]*>[^{]*\{/);
+  });
+  it.each([
+    ['ui/Markdown.vue', '<pre class="app-scroll app-scroll-x'],
+    ['ui/Markdown.vue', '<div class="table app-scroll app-scroll-x'],
+    ['ui/Stepper.vue', 'class="stepper app-scroll app-scroll-x'],
+  ])('%s scrolls %s sideways on its own', (file, marker) => {
+    expect(readFileSync(join(SRC, file), 'utf8')).toContain(marker);
+  });
   it.each(VUE_FILES)('%s scrolls only through .app-scroll', (file) => {
     const source = readFileSync(join(SRC, file), 'utf8');
     const css = source.slice(source.indexOf('<style'));
@@ -74,21 +100,7 @@ describe('scrolling areas', () => {
   });
 });
 
-/**
- * A page is the scroller's only child and fills its width as a block. Where scrollbars float
- * (Firefox with overlay scrollbars), tokens.css gives that child a ``margin-inline-end`` the
- * lane's width; a page that also sets ``width: 100%`` is then wider than the scroller by that
- * margin, and a horizontal scrollbar appears though everything fits.
- */
 const PAGES = VUE_FILES.filter((f) => f.replace(/\\/g, '/').startsWith('views/'));
-describe('pages', () => {
-  it.each(PAGES)('%s fills the scroller without a width of its own', (file) => {
-    const source = readFileSync(join(SRC, file), 'utf8');
-    const root = /<template>\s*<\w+[^>]*\bclass="([\w-]+)/.exec(source)?.[1];
-    expect(root, `${file} has no root class`).toBeTruthy();
-    expect(rule(file, `.${root}`)).not.toMatch(/(^|[\s;])width:\s*100%/);
-  });
-});
 
 /**
  * A component a pane switch replaces (AxisPanes, FadeSwap, <Transition>) is moved by the motion
@@ -107,18 +119,6 @@ describe('components a pane switch moves', () => {
     const css = source.slice(source.indexOf('<style'));
     const own = new RegExp(String.raw`(?:^|\n)\s*\.${root}\s*\{([^}]*)\}`).exec(css)?.[1] ?? '';
     expect(own).not.toMatch(/(^|[\s;])transition(-property)?\s*:/);
-  });
-});
-
-/**
- * The same margin falls on a menu's items: an item with ``width: 100%`` is wider than the menu by
- * the lane, and a horizontal scrollbar appears under it. Menus stretch their items as flex items.
- */
-const MENUS = ['ui/AppMenu.vue', 'ui/ContextMenu.vue', 'ui/ComposerMenu.vue'];
-describe('menus', () => {
-  it.each(MENUS)('%s stretches its items without a width of their own', (file) => {
-    expect(rule(file, '.menu')).toMatch(/flex-direction:\s*column/);
-    expect(rule(file, '.item')).not.toMatch(/(^|[\s;])width:\s*100%/);
   });
 });
 
@@ -147,10 +147,6 @@ describe('scrollbar lanes', () => {
   });
   it('the detail pane reaches into the page padding by its lane', () => {
     expect(rule('ui/ListDetail.vue', '.detail-pane')).toMatch(/margin-inline-end:[^;]*var\(--app-scroll-lane\)/);
-  });
-  it('areas that give the lane up never step back where scrollbars float', () => {
-    const css = readFileSync(join(SRC, 'theme/tokens.css'), 'utf8');
-    expect(css).toMatch(/:root\[data-scrollbars='overlay'\] \.app-scroll:not\(\.app-scroll-auto\) >/);
   });
 });
 

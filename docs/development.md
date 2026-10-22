@@ -37,6 +37,22 @@ provider credentials are required. Heartbeat/cancellation tests separately check
 timing and complete SSE-frame boundaries. Real Claude Code can also be exercised
 against a configured gateway using the [client setup](anthropic-api.md#claude-code-configuration).
 
+## Layout check
+
+Every scrolling area in the web UI scrolls in one direction: `.app-scroll` down,
+`.app-scroll-x` sideways (code blocks, tables, the stepper). A sideways scrollbar
+anywhere else is a layout bug. `scripts/check_layout.py` looks for them in real
+browsers: with a server running (ideally with a conversation in the Playground),
+it walks every page in Chromium and Firefox at 320–1600 px, opens the Playground's
+chat list, editor and menus, and fails on any area that is wider inside than it
+shows, naming what sticks out. It needs Playwright, which is not a project
+dependency:
+
+```bash
+pip install playwright && playwright install chromium firefox
+python scripts/check_layout.py --url http://127.0.0.1:10600
+```
+
 ## CI and releases
 
 CI uses one automatic entry point, `ci.yml`, for pushes to `main` and `hoshimi_main`,

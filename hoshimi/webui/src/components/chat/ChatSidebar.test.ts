@@ -57,12 +57,10 @@ describe('ChatSidebar', () => {
     w.unmount();
   });
 
-  it('opens a chat, starts a new one, and hands its menu actions to the page', async () => {
+  it('opens a chat, and hands its menu actions to the page', async () => {
     const w = open();
     await w.findAll('.item .open')[1].trigger('click');
-    await w.find('.new').trigger('click');
     expect(w.emitted('select')).toEqual([['b']]);
-    expect(w.emitted('new')).toHaveLength(1);
     await w.findAll('.item md-icon-button')[0].trigger('click');
     await flushPromises();
     [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((e) => e.textContent?.trim() === 'Archive')!.click();

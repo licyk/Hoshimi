@@ -28,8 +28,8 @@ describe('Markdown', () => {
 
   it('puts code blocks and tables in a scrolling lane of their own', () => {
     const w = render('```\nplain\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |');
-    expect(w.find('.code-block > pre').classes()).toEqual(['app-scroll', 'app-scroll-auto']);
-    expect(w.find('.table.app-scroll > table td').text()).toBe('1');
+    expect(w.find('.code-block > pre').classes()).toEqual(['app-scroll', 'app-scroll-x', 'app-scroll-auto']);
+    expect(w.find('.table.app-scroll.app-scroll-x > table td').text()).toBe('1');
   });
 
   it('highlights a block in a language it knows, by name or alias, and leaves others as text', () => {

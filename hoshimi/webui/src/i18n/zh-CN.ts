@@ -513,7 +513,6 @@ export default {
     copyMessage: '复制',
     edit: '编辑消息',
     retry: '重试',
-    retryWith: '换个模型重试…',
     branch: '在新对话中分支',
     copyRequest: '复制为 API 请求',
     requestCopied: '已复制 API 请求',
