@@ -1,0 +1,111 @@
+---
+title: "Command line overview"
+description: "How the hoshimi command is organised, its global options, how commands read the configuration, output and --json, exit codes and logging, and common command sequences."
+icon: Terminal
+---
+
+The `hoshimi` command starts the server, and without a browser it can also check the configuration, list channels and models, sign into free stations and change settings. `python -m hoshimi` is exactly the same as `hoshimi`.
+
+This page covers the shared conventions; every command's arguments are in the [Command reference](/docs/cli-commands), environment variables in [Environment variables](/docs/cli-env).
+
+## Commands at a glance
+
+```text
+hoshimi
+├── serve                 start the server: API and Web UI
+├── check                 validate the configuration, report channels and accounts
+├── models                list the available models
+├── providers             list the configured channels and their accounts
+├── stations              list the preset stations an agg account can use
+├── login [provider]      sign into a station; the account lands in config.json
+├── version               versions of Hoshimi and its main components
+├── env                   the environment variables Hoshimi reads
+└── config                show and change config.json
+    ├── show              show the configuration
+    ├── get <key>         print one setting
+    ├── set <key> <value> change one setting and save it
+    └── path              print the path of the config file
+```
+
+Typing just `hoshimi` or `hoshimi config` shows that level's help (exit code 2). Help lists commands alphabetically.
+
+## Global options
+
+| Option | Where | What it does |
+| --- | --- | --- |
+| `--debug` | Any level, e.g. `hoshimi --debug check` or `hoshimi check --debug` | Print debug logs |
+| `--help` | Any level | Show the help and exit |
+| `--install-completion` | `hoshimi` only | Install shell completion for the current shell |
+| `--show-completion` | `hoshimi` only | Print the completion script for the current shell, to copy or install yourself |
+
+```bash
+hoshimi --install-completion     # reopen the terminal; Tab then completes commands and options
+```
+
+## How commands work
+
+- **Every command uses the same configuration.** Each command reads `config.json` in the data folder (its path is printed by `hoshimi config path`), whatever the working directory. The Web UI reads and writes the same file. `HOSHIMI_DATA_DIR` moves the data folder elsewhere, see [Environment variables](/docs/cli-env).
+- **The server does not need to be running.** `check`, `models`, `providers`, `login`, `config` and the rest build the channels from the configuration in their own process and exit when done; they do not talk to a running server.
+- **A running server needs a restart to see changes.** `hoshimi config set` and `hoshimi login` only write `config.json`; a running server does not reread the file. Restart the server after such changes, or make them in the Web UI's **Settings** and **Channels** pages instead, where they apply at once (except the listening address and port).
+- **`serve` options apply to that start only.** For example, `hoshimi serve --port 11000 --access-token …` writes nothing to the configuration file. Precedence: `serve` options, then `config.json`, then the defaults.
+
+## Output and `--json`
+
+Listing commands print tables by default; add `--json` for JSON to use in scripts. The commands that take `--json` are `check`, `models`, `providers`, `stations`, `version`, `env` and `config show`. `config get` always prints JSON.
+
+```bash
+hoshimi models --json | jq -r '.[].id'               # every model id
+hoshimi models --provider kilo --json                 # one channel only
+hoshimi check --json | jq .models                     # the number of models
+```
+
+Data goes to standard output and logs and errors to standard error, so a pipe receives only the data.
+
+Commands that read the configuration hide credentials: `config show` and `config get` print `server.access_token`, `server.model_api_key`, and API keys, tokens, secrets and proxy URLs in channel and network settings as `***`; `env` prints `***` for the value of any variable whose name contains `TOKEN` or `KEY`.
+
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success |
+| `1` | General failure: the command failed, was cancelled, a login failed or timed out, the configuration file could not be read |
+| `2` | Usage error or invalid value (unknown option, a `config set` value that fails the checks); `check` found no enabled channel; `login` named a station without an interactive login; help shown because no command was given |
+| `3` | `serve` found no free port (or, with `--strict-port`, the port was taken) |
+| `4` | Invalid input: `config get` named a key that does not exist; `serve` was asked to listen on a non-local address without a tool access key or allowed networks |
+| `5` | An upstream service failed |
+| `130` | Interrupted with <kbd>Ctrl</kbd>+<kbd>C</kbd> |
+
+While `serve` runs, <kbd>Ctrl</kbd>+<kbd>C</kbd> shuts the server down cleanly: it ends long-lived connections such as the live usage stream first, then exits.
+
+## Logging
+
+Logs go to standard error. The default level is `INFO`; `--debug` turns on debug logs, and the `HOSHIMI_LOG_LEVEL` environment variable accepts `DEBUG`, `INFO`, `WARNING` or `ERROR`:
+
+```bash
+HOSHIMI_LOG_LEVEL=WARNING hoshimi serve     # warnings and errors only
+hoshimi serve --debug                        # debug logs
+```
+
+## Common sequences
+
+```bash
+# First use: where the configuration lives, which channels are on
+hoshimi config path
+hoshimi check
+
+# Sign into a free station, then confirm the account was added
+hoshimi login cline
+hoshimi providers
+
+# Change the port and the key, then start
+hoshimi config set server.port 11000
+hoshimi config set server.access_token "a-long-random-string"
+hoshimi serve --no-open
+
+# Turn off one anonymous channel
+hoshimi config set providers.kilo.enabled false
+```
+
+## When the configuration file is broken
+
+When `config.json` cannot be parsed, every command that reads the configuration (including `serve`) refuses to run, and first copies the file to `config.json.corrupt-<timestamp>`; the error message gives the copy's path. Fix or delete `config.json` and try again. The file's location and format are in [Configuration](/docs/config).

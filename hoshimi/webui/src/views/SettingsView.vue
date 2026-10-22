@@ -119,6 +119,9 @@ const motions = computed(() => (['system', 'reduced'] as const).map((v) => ({ va
 
 // About
 const openDocs = () => window.open(`${BASE_URL}/docs`, '_blank', 'noopener');
+/** The documentation site: how to use and configure Hoshimi, beyond this page. */
+const DOCUMENTATION_URL = 'https://hoshimi.netlify.app/docs';
+const openDocumentation = () => window.open(DOCUMENTATION_URL, '_blank', 'noopener');
 async function copy(text: string) {
   try {
     await navigator.clipboard.writeText(text);
@@ -317,6 +320,7 @@ async function copy(text: string) {
           />
           <div class="buttons">
             <AppButton variant="tonal" :icon="icons.Copy" @click="copy(s.config_path)">{{ t('settings.copyConfigPath') }}</AppButton>
+            <AppButton variant="text" :icon="icons.BookOpen" @click="openDocumentation">{{ t('settings.documentation') }}</AppButton>
             <AppButton v-if="meta.data.value && !meta.data.value.auth_required" variant="text" :icon="icons.ExternalLink" @click="openDocs">{{ t('overview.apiDocs') }}</AppButton>
           </div>
         </PageSection>

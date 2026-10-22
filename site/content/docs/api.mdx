@@ -1,0 +1,130 @@
+---
+title: "API 概览"
+description: "Hoshimi 的 HTTP 接口全貌：模型接口、管理接口和 Playground 接口各在哪里、用哪把密钥，请求检查与错误格式，流式响应的约定，以及运行中服务器的 /docs 和 /openapi.json。"
+icon: Braces
+---
+
+Hoshimi 的服务器同时提供三组接口和网页界面，默认地址是 `http://127.0.0.1:10600`。本页说明它们共同的规则；每组接口的字段见各自的参考页。
+
+## 接口分组
+
+| 分组 | 路径 | 密钥 | 参考 |
+| --- | --- | --- | --- |
+| OpenAI 兼容模型接口 | `/v1/chat/completions`、`/v1/responses`、`/v1/models`、`/v1/classifiers`、`/v1/classify` | 模型 API 密钥 | [OpenAI 兼容接口](/docs/api-openai) |
+| Anthropic 兼容模型接口 | `/v1/messages`、`/v1/messages/count_tokens` | 模型 API 密钥 | [Anthropic 兼容接口](/docs/api-anthropic) |
+| 管理接口 | `/api/v1/*`（网页界面使用） | 工具访问密钥 | [管理 API](/docs/api-management) |
+| Playground 接口 | `/api/v1/playground/*` | 工具访问密钥 | [Playground API](/docs/api-playground) |
+| 接口文档 | `/docs`（Swagger UI）、`/openapi.json` | 工具访问密钥 | 见下文 |
+| 存活探针 | `/health`、`/api/v1/app/health` | 不需要 | 返回 `{"status": "ok"}` 等 |
+| 网页界面 | 其余路径 | 不需要（界面内的操作走管理接口） | [界面总览](/docs/guide) |
+
+## 认证
+
+| 密钥 | 配置键 | 适用路径 | 发送方式 | 缺少或错误时 |
+| --- | --- | --- | --- | --- |
+| 模型 API 密钥 | `server.model_api_key` | `/v1/*` | `Authorization: Bearer <密钥>`，或 `x-api-key: <密钥>` | `401`，代码 `model_api_key_required` |
+| 工具访问密钥 | `server.access_token` | `/api/*`、`/docs`、`/openapi.json` | `Authorization: Bearer <密钥>` | `401`，代码 `auth_required` |
+
+- 两把密钥互相独立，各管各的路径；哪把没有设置，对应的路径就不检查密钥。
+- `x-api-key` 只在 `/v1/*` 上有效，而且只在请求没有 `Authorization` 头时才被读取。
+- 浏览器的 CORS 预检请求（带 `Origin` 和 `Access-Control-Request-Method` 的 `OPTIONS`）不需要密钥，随后的真实请求照常检查。
+- 密钥用常数时间比较。设置方法见[访问控制](/docs/config-security)。
+
+```bash
+curl http://127.0.0.1:10600/v1/models -H "Authorization: Bearer <模型 API 密钥>"
+curl http://127.0.0.1:10600/api/v1/settings -H "Authorization: Bearer <工具访问密钥>"
+```
+
+## 请求检查
+
+每个请求在到达接口之前依次经过这些检查（顺序与代码一致），未通过时返回：
+
+| 检查 | 条件 | 状态码 | 代码 | 消息 |
+| --- | --- | --- | --- | --- |
+| 客户端地址 | 不是回环地址，且不在 `security.allow_cidrs` 中 | `403` | `remote_not_allowed` | `Remote address not allowed` |
+| Host | 服务器绑定在回环地址时，`Host` 不是 `localhost`、`127.0.0.1`、`::1` 或绑定地址 | `400` | `bad_host` | `Host not allowed` |
+| 来源 | 非 `GET`/`HEAD`/`OPTIONS` 请求带了 `Origin`，既不是本站也不在 `security.allow_origins` 中；或没有 `Origin` 但 `Sec-Fetch-Site` 表明跨站 | `403` | `bad_origin` | `Cross-origin request refused` / `Cross-site request refused` |
+| 密钥 | 见上文 | `401` | `model_api_key_required` / `auth_required` | `A model API key is required` / `A tool access key is required` |
+
+这些拒绝在 `/v1/messages` 上使用 Anthropic 的错误格式，其他路径（包括 `/v1/chat/completions`）使用管理接口的格式。各项设置的含义见[访问控制](/docs/config-security)。
+
+## 错误格式
+
+三组接口各用自己客户端熟悉的格式：
+
+<Tabs items={["OpenAI（/v1）", "Anthropic（Messages）", "管理（/api）"]}>
+<Tab value="OpenAI（/v1）">
+
+```json
+{"error": {"message": "Model 'nope' not found. Use `provider/model` or see /v1/models.", "type": "invalid_request_error", "code": "model_not_found"}}
+```
+
+</Tab>
+<Tab value="Anthropic（Messages）">
+
+```json
+{"type": "error", "error": {"type": "not_found_error", "message": "Model 'nope' not found. Use `provider/model` or see /v1/models."}}
+```
+
+`error.type` 由状态码决定：`400` 为 `invalid_request_error`，`401` 为 `authentication_error`，`403` 为 `permission_error`，`404` 为 `not_found_error`，`413` 为 `request_too_large`，`429` 为 `rate_limit_error`，`529` 为 `overloaded_error`，其余为 `api_error`。原生转发的上游错误保留上游自己的响应体和状态码。
+
+</Tab>
+<Tab value="管理（/api）">
+
+```json
+{"code": "not_found", "message": "No provider 'nope'.", "detail": {}}
+```
+
+</Tab>
+</Tabs>
+
+错误代码与状态码：
+
+| 代码 | 状态码 | OpenAI `type` | 含义 |
+| --- | --- | --- | --- |
+| `invalid_input` | `400` | `invalid_request_error` | 请求内容无效，消息中说明原因 |
+| `not_found` | `404` | `invalid_request_error` | 资源不存在 |
+| `model_not_found` | `404` | `invalid_request_error` | 模型名在任何渠道都找不到 |
+| `conflict` | `409` | `invalid_request_error` | 与现有状态冲突，如账号 id 重复 |
+| `upstream_error` | `502`，或上游返回的 4xx/5xx | `upstream_error` | 上游失败 |
+| `quota_exceeded` | 上游的状态码（通常 `429`） | `upstream_error` | 额度用尽或被限流，且没有其他账号可换 |
+| `auth_failed` | 上游的状态码 | `upstream_error` | 上游拒绝了账号凭据 |
+| `model_saturated` | 上游的状态码 | `upstream_error` | 模型本身过载，换账号无济于事 |
+| `model_gone` | 上游的 `404` / `410` | `upstream_error` | 渠道的每个账号都说没有这个模型 |
+| `model_unavailable` | `503` | `upstream_error` | 站点对这个模型的所有账号都回答了 404/410，暂时停用（10 分钟后再给一次机会，10 分钟内三次则一直停用到重启）；`POST /api/v1/models/unavailable/reset` 立即解除 |
+| `internal_error` | `500` | `server_error` | 服务器内部错误；OpenAI 格式中 `code` 为 `null` |
+
+请求体不符合接口的结构定义时，`/v1/messages` 返回 `400`（`Invalid Messages request body.`），其他接口返回框架默认的 `422` 和 `{"detail": [...]}`。
+
+## 流式响应
+
+流式响应都是 Server-Sent Events（`text/event-stream`）。响应头一旦发出，状态码就固定为 `200`，之后的失败只能在流里告知，不能只看状态码判断结果：
+
+| 接口 | 帧格式 | 结束 | 流中的错误 |
+| --- | --- | --- | --- |
+| Chat Completions | `data: <chat.completion.chunk>` | `data: [DONE]` | `data: {"error": {...}}`，随后结束，不发 `[DONE]` |
+| Responses | `data: <事件>`，事件带 `type` 和 `sequence_number` | `response.completed` 后 `data: [DONE]` | `response.failed` 事件，或 `data: {"error": {...}}` |
+| Messages | `event: <类型>` 加 `data: <事件>` | `message_stop` | `event: error`，Anthropic 错误格式 |
+| `/api/v1/stats/live` 等管理流 | `data: <json>` | 客户端断开 | — |
+
+Messages 流在发出响应头之前先打开上游，所以认证失败、限流等错误仍带着正确的状态码返回。等待上游时，Messages 流和用量实时流每 15 秒发送一个 `event: ping`（`data: {"type":"ping"}`），只插在完整的事件之间。
+
+## 接口文档：/docs 与 /openapi.json
+
+运行中的服务器自带 Swagger UI（`/docs`）和 OpenAPI 文档（`/openapi.json`），列出每个接口的全部字段，是最权威的参考。这里的文档讲用法，`/docs` 讲结构。
+
+- 没有设置工具访问密钥时，**概览** 页 **接口** 区块和 **设置** › **关于** 中有 **API 文档** 按钮，直接打开 `/docs`。
+- 设置了工具访问密钥后，这两个地址也需要密钥，浏览器直接打开会得到 `401`，按钮也不再显示。用请求头取回 OpenAPI 文档：
+
+```bash
+curl -H "Authorization: Bearer <工具访问密钥>" http://127.0.0.1:10600/openapi.json -o openapi.json
+```
+
+`/v1/chat/completions`、`/v1/responses` 和 `/v1/messages` 的请求体在 OpenAPI 中只描述为任意对象，字段以 [OpenAI 兼容接口](/docs/api-openai) 和 [Anthropic 兼容接口](/docs/api-anthropic) 为准。
+
+<Cards>
+  <Card title="OpenAI 兼容接口" href="/docs/api-openai" description="Chat Completions、Responses、模型列表、模型路由、推理强度和分类接口。" />
+  <Card title="Anthropic 兼容接口" href="/docs/api-anthropic" description="Messages 与 Token 计数：原生转发、协议转换、思考签名、流式与错误。" />
+  <Card title="管理 API" href="/docs/api-management" description="网页界面使用的 /api/v1 接口，逐一列出。" />
+  <Card title="Playground API" href="/docs/api-playground" description="对话、事件流、工具批准、补充说明、后台命令和附件。" />
+</Cards>

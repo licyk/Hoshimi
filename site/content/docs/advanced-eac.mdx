@@ -1,0 +1,135 @@
+---
+title: "EAC"
+description: "EAC 共付渠道：用内置中继和 GitHub 授权开通，worker 与 direct 两种中继模式，自定义中继的账号字段、请求签名，以及常见错误。"
+icon: KeyRound
+---
+
+EAC（界面中显示为 **EAC (co-paid)**）是一条通过中继访问的共付渠道：中继说 OpenAI Chat Completions 协议，只为完成了授权的安装提供服务。它没有匿名模式，配置了账号才会运行；在账号出现之前，`GET /api/v1/providers` 也会列出它并标注 `requires_authorization: true`，网页上据此提示它需要授权。
+
+## 用内置中继开通
+
+Hoshimi 内置了一个中继的地址和签名凭据，全新安装只需要完成 GitHub 授权：
+
+<Steps>
+<Step>
+
+### 发起登录
+
+在 **渠道** 页打开 EAC，点 **登录**；或在命令行运行：
+
+```bash
+hoshimi login eac
+```
+
+命令会打印并在浏览器中打开中继的 GitHub 授权链接（`--no-open` 只打印不打开）。
+
+</Step>
+<Step>
+
+### 在 GitHub 上授权
+
+在打开的页面中用 GitHub 账号授权。中继要求这个 GitHub 账号已经为上游仓库点过 Star，否则登录失败并提示 `the GitHub account has not starred the upstream repository`。
+
+</Step>
+<Step>
+
+### 完成
+
+授权成功后，Hoshimi 在 `config.json` 中创建账号 `eac-default`：
+
+```json
+{
+  "providers": {
+    "eac": {
+      "enabled": true,
+      "accounts": [{"id": "eac-default", "relay": "bundled", "user_token": "…", "user_login": "…", "user_avatar": "…"}]
+    }
+  }
+}
+```
+
+同时把授权令牌保存到数据目录的 `eac-user.json`（仅所有者可读写）。内置中继的签名凭据不会写进配置文件，每次请求时临时解出。
+
+</Step>
+</Steps>
+
+EAC 的模型在列表中以 `EAC` 开头显示，如 **EAC Kimi K3**。它们的 id 带有上游的组织前缀，例如 `moonshotai/kimi-k3`、`z-ai/glm-5.3`、`opencode/glm-5.3-flash-free`。中继的模型列表拿不到时，使用内置的后备列表。大部分模型有自己的推理档位，见[模型与账号行为](/docs/advanced-models)。
+
+## 两种中继模式
+
+账号的凭据决定模式：
+
+| 模式 | 账号字段 | 请求中带什么 |
+| --- | --- | --- |
+| worker | `base_url` + `signing_secret`（内置中继也是这种） | 不带任何密钥，只带时间戳和 HMAC 签名；再用 `x-ofm-user` 带上 GitHub 授权令牌 |
+| direct | `base_url` + `access_token` | `Authorization: Bearer <access_token>`，不带 GitHub 授权 |
+
+worker 模式下，泄露的单个请求里没有可以复用的密钥，中继可以随时撤销。
+
+### worker 模式的签名
+
+每个请求带两个头：
+
+- `x-ofm-timestamp`：毫秒时间戳；
+- `x-ofm-signature`：用 `signing_secret` 对下面的字符串做 HMAC-SHA256，十六进制表示。
+
+```text
+<时间戳>\n<大写的请求方法>\n<请求路径>\n<请求体的 SHA-256 十六进制>
+```
+
+签名覆盖请求体的哈希，所以请求体只序列化一次，签名和发送用的是同一串字节；任何在签名之后重新编码请求体的中间环节，都会让中继的校验失败。
+
+### GitHub 授权令牌的来源
+
+worker 模式的 `x-ofm-user` 取值规则：
+
+| 账号中的 `user_token` | 使用 |
+| --- | --- |
+| 没有这个字段 | 每次请求时读取 `eac-user.json` 中最新的令牌，所以重新登录后立即生效 |
+| 一个字符串 | 这个字符串 |
+| `null` 或空字符串 | 不带 `x-ofm-user`，即不使用本机的 GitHub 身份 |
+
+中继在没有授权时回答 `401 AuthorizationRequired`，网关会报告 `eac: the relay demands this install's GitHub authorization (set the account's user_token)`，并且不会因此去续期或换账号。
+
+## 自定义中继
+
+在 **渠道** 页为 EAC 添加账号时，可以选择内置中继（bundled）、自定义 worker 中继或 direct 中继。也可以直接写进配置：
+
+```json
+{
+  "providers": {
+    "eac": {
+      "accounts": [
+        {"id": "my-worker", "base_url": "https://relay.example.com/v1", "signing_secret": "<共享签名密钥>"},
+        {"id": "my-direct", "base_url": "https://relay.example.com/v1", "access_token": "<Bearer 凭据>"}
+      ]
+    }
+  }
+}
+```
+
+要求：
+
+- `base_url` 是以 `/v1` 结尾的 HTTP(S) 地址，不带用户名密码、查询参数或片段；
+- 自定义中继必须有 `signing_secret`（worker）或 `access_token`（direct）之一；
+- `relay: "bundled"` 的账号不能同时写 `base_url`、`signing_secret` 或 `access_token`；
+- GitHub 登录只适用于 worker 中继；direct 中继直接使用它的 Bearer 凭据。
+
+对已有的 worker 账号执行登录，会更新这个账号的授权，保留它的地址和签名密钥。登录时 Hoshimi 优先选择内置中继账号或带 `signing_secret` 的账号。
+
+## 常见错误
+
+| 信息 | 原因与处理 |
+| --- | --- |
+| `eac: the GitHub account has not starred the upstream repository` | 授权用的 GitHub 账号没有为上游仓库点 Star |
+| `eac: authorization expired, please start again` | 授权链接过期，重新登录 |
+| `eac: login timed out (last status: …)` | 在时限内没有完成授权 |
+| `eac: cannot reach the authorization service (…)` | 连不上中继，检查网络或代理，见[网络与代理](/docs/config-network) |
+| `eac: GitHub authorization requires a worker relay; direct relays use their existing Bearer token` | 对 direct 中继发起了 GitHub 登录 |
+| `eac: configure a worker relay with base_url and signing_secret, or use the bundled relay` | 账号既不是内置中继，也没有 `base_url` |
+| `eac: base_url must be an HTTP(S) relay URL ending in /v1, without credentials, query or fragment` | 中继地址格式不对 |
+| `eac: a custom relay needs signing_secret (worker) or access_token (direct)` | 自定义中继缺少凭据 |
+| `eac: a bundled relay reference cannot also specify a custom relay` | `relay: "bundled"` 的账号里又写了自定义字段 |
+| `eac: the bundled relay configuration is unavailable; configure your own worker relay or update Hoshimi` | 内置中继凭据无法使用，升级 Hoshimi 或改用自己的中继 |
+| `eac: failed to persist the per-install authorization; check data-dir permissions` | 无法写入 `eac-user.json`，检查数据目录的权限 |
+| `eac: the relay account changed or was removed during login; start again` | 登录过程中账号被修改或删除 |

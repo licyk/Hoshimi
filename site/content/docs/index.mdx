@@ -1,0 +1,44 @@
+---
+title: "Hoshimi"
+description: "Hoshimi 是一个兼容 OpenAI 与 Anthropic 的网关：把免费模型站点、云服务和本地模型接到同一套 API 和 Web UI 后面。本页介绍它能做什么，以及文档的组织方式。"
+icon: House
+---
+
+Hoshimi 是一个用 Python 编写的模型网关。它把免费模型站点（Cline、TRAE、ZCode、Qoder、MiniMax、Gemini、CodeBuddy、Kilo、OpenCode Zen 等）、云服务（Azure、Cloudflare、Vertex、Bedrock、NVIDIA NIM 等）和本地或自建的 OpenAI 兼容服务接到**同一个本地服务器**后面：客户端只需要一个 Base URL 和一份模型目录，就能通过 Chat Completions、Responses 或 Anthropic Messages 调用其中任何一个模型；一个多语言的 Web UI 用来管理渠道和账户、浏览模型、聊天和查看用量。
+
+安装后执行 `hoshimi serve`，打开 `http://127.0.0.1:10600` 即可使用。OpenCode Zen 和 Kilo 的匿名入口默认启用，不需要账户，也不需要配置文件。
+
+<Cards>
+  <Card title="快速开始" href="/docs/quick-start" description="安装、启动、在 Playground 里聊第一句，再发出第一个 API 请求。" />
+  <Card title="安装" href="/docs/installation" description="系统要求、pip / uv / pipx、可选依赖、升级、源码安装与后台运行。" />
+  <Card title="首次运行" href="/docs/first-run" description="第一次打开 Web UI 时看到什么：登录、默认的匿名渠道、各个页面在哪里。" />
+</Cards>
+
+## 能做什么
+
+| 功能 | 说明 | 详见 |
+| --- | --- | --- |
+| 统一接口 | 在 `/v1` 下提供 Chat Completions、Responses、Anthropic Messages 与 Token 计数，以及模型列表 | [接入客户端](/docs/clients) |
+| 渠道与账户 | API Key、浏览器或设备码登录、凭据自动续期、多账户轮换、余额与每日签到 | [渠道](/docs/guide-channels)、[渠道概念](/docs/providers) |
+| 模型目录 | 每个模型的能力（推理、视觉、工具调用）、思考强度选项和可用性探测 | [模型](/docs/guide-models)、[模型行为](/docs/advanced-models) |
+| 实时用量 | 进行中的调用、Token 与缓存明细、首字延迟和生成速度，可按小时查看任意一天，保存在本地 SQLite 数据库中 | [用量](/docs/guide-usage) |
+| Playground | 在浏览器里和任意模型聊天，可选内置工具（读写文件、运行命令、搜索网页），执行前征求同意 | [Playground](/docs/guide-playground)、[Playground 工具](/docs/guide-agent) |
+| 安全 | 管理界面与模型接口各自独立的密钥，允许的网段、主机名与来源 | [安全](/docs/config-security) |
+
+## 文档板块
+
+<Cards>
+  <Card title="开始" href="/docs/quick-start" description="安装、启动和第一次使用。" />
+  <Card title="使用教程" href="/docs/guide" description="Web UI 逐页讲解：概览、模型、渠道、Playground、用量与设置。" />
+  <Card title="接入客户端" href="/docs/clients" description="OpenAI 与 Anthropic SDK、curl、Claude Code、Codex 和 OpenCode 的配置。" />
+  <Card title="渠道" href="/docs/providers" description="免费站点、匿名入口、agg 聚合、云平台、NVIDIA 与本地模型。" />
+  <Card title="命令行" href="/docs/cli" description="hoshimi 命令、全部选项与环境变量。" />
+  <Card title="配置" href="/docs/config" description="config.json 的每个键、网络与代理、安全、数据目录。" />
+  <Card title="进阶" href="/docs/advanced-models" description="能力与探测、重试与账户轮换、用量记录、EAC、迁移与常见问题。" />
+  <Card title="API 参考" href="/docs/api" description="/v1 模型接口、/api/v1 管理接口和 Playground 接口。" />
+  <Card title="开发文档" href="/docs/development" description="仓库结构、架构、编写渠道适配器、Web UI、测试与发布。" />
+</Cards>
+
+## 许可证
+
+Hoshimi 采用 **GPL-3.0-only** 许可证，源码在 [GitHub](https://github.com/licyk/Hoshimi)，许可证全文见 [LICENSE](https://github.com/licyk/Hoshimi/blob/main/LICENSE)。

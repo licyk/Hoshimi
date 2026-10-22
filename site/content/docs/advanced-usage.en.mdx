@@ -1,0 +1,156 @@
+---
+title: "Usage statistics"
+description: "How the gateway records each call: which fields, where token and cache counts come from, how speed is measured, how long records are kept, how to query them, and the live event stream."
+icon: ChartLine
+---
+
+The gateway leaves one record for every request it handles. The charts, breakdowns and call list of the **Usage** page, and the **Live activity** in the top bar, all come from these records. This page describes the recording rules and the matching management API; using the page itself is covered in [Usage page](/docs/guide-usage).
+
+## What is recorded
+
+Each request produces exactly one record, tagged with where it came in (`origin`):
+
+| `origin` | Shown as | From |
+| --- | --- | --- |
+| `chat` | Chat Completions | `POST /v1/chat/completions` |
+| `responses` | Responses | `POST /v1/responses` |
+| `messages` | Anthropic Messages | `POST /v1/messages` |
+| `classify` | Classification | The classification API |
+| `playground` | Playground | Replies in the Playground |
+| `playground-title` | Playground titles | Naming a new conversation |
+| `playground-vision` | Playground image descriptions | Describing an image for a model that cannot read it |
+
+Each record holds:
+
+| Field | Meaning |
+| --- | --- |
+| `at` | Start time |
+| `model`, `provider`, `account` | The requested model, and the channel and account that actually answered |
+| `attempts` | How many accounts were asked until one answered (including retries after a back-off); 0 when none answered |
+| `effort` | The reasoning effort actually applied |
+| `stream` | Whether the response was streamed |
+| `ok` | Whether it succeeded |
+| `input`, `output`, `reasoning` | Input tokens, output tokens, and the reasoning part of the output |
+| `cache_read`, `cache_write` | Prompt-cache tokens read and written |
+| `ttft_ms` | Time to the first token |
+| `decode_ms`, `tps` | Generation time and generation speed (tokens/second) |
+| `elapsed_ms` | Total time |
+| `finish_reason` | Why it ended |
+| `error_code`, `error_message` | Error code and a short explanation on failure |
+| `no_usage` | The upstream reported no token usage |
+
+A few rules:
+
+- **Routing failures count as failures**: a request that ends before reaching upstream (model not found, every account failed and so on) is still recorded, as a failure.
+- **A client disconnecting is not a failure**: when the caller hangs up mid-answer, the gateway did serve the call, and the record counts as a success.
+- An error frame from the upstream inside a stream is recorded as a failure.
+- Records hold usage and metadata only; prompts and replies are not stored here (Playground conversations are stored separately).
+- Error explanations are kept to one line of at most 160 characters, with anything shaped like a key (`Bearer …`, `sk-…`, random strings of 32 characters or more, and so on) replaced with `***`. An upstream error that carries a status is recorded only as `upstream returned HTTP <status>`, without the upstream's body; error frames inside a stream keep their explanation, shortened and masked by the same rules.
+
+### Where tokens and cache counts come from
+
+Every channel's usage is first normalized to OpenAI's fields, then recorded:
+
+| Record field | Read from |
+| --- | --- |
+| `input` | `prompt_tokens` |
+| `output` | `completion_tokens` |
+| `reasoning` | `completion_tokens_details.reasoning_tokens` |
+| `cache_read` | `prompt_tokens_details.cached_tokens`; DeepSeek's `prompt_cache_hit_tokens` and Anthropic's `cache_read_input_tokens` are mapped here too |
+| `cache_write` | `prompt_tokens_details.cache_write_tokens` or `cache_creation_tokens`; Anthropic's `cache_creation_input_tokens` is mapped here too |
+
+### Time to first token and speed
+
+- `ttft_ms` runs from the start of the request to the first content (text, reasoning or a tool call).
+- Generation speed uses the time between the first content and the end. Reasoning tokens that were spent before the first frame, and never streamed, are subtracted from the count rather than credited to the answer's speed.
+- A generation window under 250 milliseconds, or a speed above 250 tokens a second, counts as unmeasurable: that call's `tps` is `null` and it is left out of averages, so a rate that could not be measured never looks fast.
+- Medians (p50) and p95 of time to first token and speed are computed from fixed-bucket histograms, which combine over any time range.
+
+## How long records are kept
+
+Records are kept in `hoshimi.db` in the data directory, in these forms:
+
+| Form | Used for | Kept for |
+| --- | --- | --- |
+| Each call | The call list and call details | `server.stats_keep_days` days (default 90) |
+| Hourly totals | The **24 hours** and single-day views | 120 days |
+| Daily totals | The **7 days**, **30 days** and **90 days** views | Forever |
+| Lifetime counters (per model, channel, account, origin) | All-time totals | Forever |
+
+- Hours and dates follow the server's local time.
+- New records go to memory first and are written in batches about once a second, and once more when the server stops; every query writes pending records first, so results are always complete.
+- Expired call records are pruned on a write, at most once a minute. A change to `server.stats_keep_days` applies from the next pruning.
+- An old `stats.json` from earlier versions is imported once, at the first start after upgrading; see [Data directory and migration](/docs/config-paths).
+
+## Querying
+
+All of these need the tool access key.
+
+### A report for a range
+
+```bash
+curl "http://127.0.0.1:10600/api/v1/stats?range=7d" -H "Authorization: Bearer <tool access key>"
+curl "http://127.0.0.1:10600/api/v1/stats?range=day&date=2026-10-20" -H "Authorization: Bearer <tool access key>"
+```
+
+`range` is `24h` (by the hour), `7d`, `30d`, `90d` (by the day), or `day` (one local calendar day by the hour, chosen with `date=YYYY-MM-DD`, today by default). The answer has:
+
+- totals, and the totals of the previous period of the same length (`day` compares with the day before; for today, only up to the same time of day);
+- a zero-filled time series;
+- average, p50 and p95 time to first token, and generation speed;
+- breakdowns by model, channel, account and origin;
+- lifetime request and failure counts.
+
+A future or malformed date is a 400. `GET /api/v1/stats/days` lists every date with usage, for marking a calendar.
+
+### The call list
+
+```bash
+curl "http://127.0.0.1:10600/api/v1/stats/calls?limit=50&ok=false" -H "Authorization: Bearer <tool access key>"
+```
+
+Newest first, paged, over the whole retention period. Parameters:
+
+| Parameter | Meaning |
+| --- | --- |
+| `limit` | Calls per page, 1–200, default 50 |
+| `before` | The previous page's `next`, for older calls |
+| `model`, `provider`, `origin` | Filter by field |
+| `account` | An account id, or `channel/account` |
+| `ok` | `true` for successes only, `false` for failures only |
+| `since`, `until` | ISO 8601 times; without an offset, server local time; `until` is exclusive |
+| `q` | Case-insensitive text in the model, channel, account, error code, error message or finish reason |
+
+Every record has a sequence number `seq` that never repeats, even after the statistics are cleared, so it is safe as a paging cursor.
+
+### Clearing
+
+**Reset statistics** on the Web UI's **Usage** page, or:
+
+```bash
+curl -X DELETE http://127.0.0.1:10600/api/v1/stats -H "Authorization: Bearer <tool access key>"
+```
+
+Every counter, chart and call record is cleared; this cannot be undone. Calls in flight are still recorded when they end.
+
+## The live view
+
+The **Live activity** panel in the top bar shows the calls in flight (**Waiting**, **Thinking**, **Answering**, **Calling tools**), today's totals and the calls that just finished. It reads a server-sent event stream:
+
+```bash
+curl -N http://127.0.0.1:10600/api/v1/stats/live -H "Authorization: Bearer <tool access key>"
+```
+
+Each frame is `data: <JSON>`, told apart by `type`:
+
+| `type` | Contents |
+| --- | --- |
+| `snapshot` | The first frame after connecting: server time, the calls in flight, today's totals, the latest finished calls |
+| `started` | A call started |
+| `progress` | A call's progress: phase, characters streamed so far, an estimated token count (characters ÷ 4), the current speed, accounts asked |
+| `finished` | A call ended, with its full record and the updated totals for today |
+| `ping` | A heartbeat every 15 seconds when nothing else happens |
+
+- Progress events go out at most 4 times a second per call; a phase change is always sent at once. With nobody subscribed, none of this costs anything.
+- Each subscriber may fall at most 1000 events behind. A connection that reads too slowly is closed; on reconnecting it gets a fresh `snapshot`, which replaces everything it missed.
+- When the server shuts down, this stream ends first so it never holds up the shutdown.

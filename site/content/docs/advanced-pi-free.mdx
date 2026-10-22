@@ -1,0 +1,110 @@
+---
+title: "pi-free 迁移与差异"
+description: "Hoshimi 与 pi-free 的关系：从 pi-free 搬过来时要做什么，哪些站点规则照搬了，哪些刻意没有照搬，以及运行时行为的差异。"
+icon: GitBranch
+---
+
+pi-free 是 Hoshimi 的重要参考：许多站点的接入方式、模型目录的过滤规则和免费标记都转录自它。但它不是运行时依赖，Hoshimi 也不读取 pi-free 的配置。pi 和 free-claude-code 同样只是迁移时的参考。本页说明从 pi-free 搬过来的步骤，以及两者行为上的差别。
+
+## 从 pi-free 搬过来
+
+<Steps>
+<Step>
+
+### 凭据要重新放进 Hoshimi
+
+pi-free 从环境变量（如 `ZENMUX_API_KEY`）读取站点密钥；Hoshimi **不会**自动读取这些变量，所有凭据都保存在 Hoshimi 自己的账号配置中。`hoshimi stations` 列出的 **Key env** 一列只是说明上游的惯例，方便你找到原来的密钥。
+
+```bash
+hoshimi stations
+```
+
+</Step>
+<Step>
+
+### 聚合站点：添加 agg 账号
+
+pi-free 中通过 API 密钥接入的站点，在 Hoshimi 中是 `agg` 渠道的账号。用 `preset` 指定站点，不用写地址：
+
+```json
+{
+  "providers": {
+    "agg": {
+      "accounts": [
+        {"id": "zenmux", "preset": "zenmux", "api_key": "<你的 ZenMux 密钥>"},
+        {"id": "llm7", "preset": "llm7", "api_key": "<你的 LLM7 密钥>"}
+      ]
+    }
+  }
+}
+```
+
+也可以在网页的 **渠道** 页打开 agg，点 **添加账号**，从 **站点** 列表中选择。全部 22 个预设见 [agg 聚合渠道](/docs/providers-agg)。
+
+</Step>
+<Step>
+
+### 需要登录的站点：重新登录
+
+Cline、Qoder、ZCode 等通过浏览器登录的站点，用 `hoshimi login <渠道>` 或网页上的 **登录** 重新登录一次，见[免费站点](/docs/providers-stations)。
+
+</Step>
+<Step>
+
+### 用原生的模型 id
+
+Hoshimi 保留各站点原生的渠道 id 和模型 id。客户端里用 `渠道/模型` 指定，或只写模型 id 由网关查找，见[模型与账号行为](/docs/advanced-models)。
+
+</Step>
+</Steps>
+
+各渠道的来源 id、端点、协议、凭据类型和覆盖情况记录在[渠道来源清单](/docs/providers-inventory)中。清单中的快照 id 描述的是当时参考的源码版本，不代表上游的最新版本，也不代表实际接入测试的结果。
+
+## 模型目录的过滤
+
+站点的 `/models` 列表里除了聊天模型，常常还有图像和视频生成、向量、重排序、语音转写等端点。`agg` 按站点逐行判断哪些是聊天模型：
+
+- **按地址识别站点**，而不是按预设名：账号写了 `preset: sambanova` 却把 `base_url` 指向别处，读到的就不是 SambaNova 的目录，不会套用它的规则。不在预设地址表中的地址（包括你自己的中继）不做过滤。
+- 10 个站点的过滤规则从 pi-free 转录：Agnes、B.AI、DeepInfra、FastRouter、Novita、OrcaRouter、Routeway、TokenRouter、XKiro、ZenMux。
+- **LLM7 用的是 Hoshimi 自己的规则**：按行中的 `model_type` 只保留 `chat`。只看输出是否为文本不够：`whisper-large-v3`（语音转写）和 `gpt-image-2`（同时输出文本和图片）都会被误收。
+- 行里缺少用来判断的字段时，保留这一行（Novita 例外，它的 `status` 和 `model_type` 是站点自己的约定）。这样上游改了格式时，不会悄悄丢掉整个目录。
+- pi-free 为 LLM7 本地构造的 `default`、`fast`、`pro` 路由选择器没有加入：它们不是站点真实的模型列表，而且当时的探测也没能证明它们可以匿名使用。这是设计上的历史原因，不是对端点现状的报告。
+
+## 免费标记
+
+Hoshimi 的 `free` 有三个值：`true`、`false` 和 `null`（站点没有说明），不知道和收费是两回事。22 个预设中有 9 个能给出答案：
+
+| 站点 | 依据 |
+| --- | --- |
+| B.AI、TokenRouter | 带 `:free` 后缀的 id；B.AI 另有价格页上列为免费的几个 id |
+| GMI | 行中的 `is_free` |
+| XKiro | 行中的 `access_tier`，其次是名称中的 free 和价格 |
+| AnyAPI、OrcaRouter | 行中的 `isFree`，其次是名称中的 free 和价格 |
+| OpenGateway | 行中的价格（优惠价优先） |
+| Agnes、CommandCode | 站点价格文档中列为免费的 id（列表本身不带价格） |
+
+刻意没有照搬的：
+
+- pi-free 在发现站点有任何一行带价格后，就把没有价格的行一律当作收费。Hoshimi 不这样做，没有价格就是 `null`。
+- Venice 把一些模型标为 0 价格，但它要求账户有正余额，未充值的密钥会收到 HTTP 402，所以不把 0 价格当作免费。
+- LLM7 为每一行都标价，那是标价而不是账户能否免费使用的说明。
+
+免费标记不保证有额度，也不保证每个密钥都能访问。站点的限时免费活动结束后，标记可能过时，但只会少一个标记，不会多出一个错误的承诺。
+
+## 能力与模型选择
+
+- CommandCode 自己的视觉、推理能力列表保留了下来，账号中的声明优先于它。它的收费价格表和默认输出上限没有导入。
+- models.dev 只为没有任何声明的模型补充视觉和推理两项；上下文长度、输出上限和推理档位必须描述实际使用的端点，不从那里取。
+- Artificial Analysis 的基准分数快照和按模型名模糊匹配的排名没有导入。Hoshimi 只路由调用方请求的模型；模型失败时记录下来，而不是悄悄换成排名更高的另一个模型。
+
+## 运行时的差异
+
+| 方面 | pi-free | Hoshimi |
+| --- | --- | --- |
+| 失败后换什么 | 模型选择器换一个模型 | 同一个模型换一个账号；模型由调用方决定 |
+| 状态码分类 | 可恢复 / 不可恢复的状态码表 | 同一张表，用来决定是否换账号 |
+| 模型失效记录 | 10 分钟窗口，3 次后拉黑 | 同样的 10 分钟和 3 次；只在内存中，重启或 `POST /api/v1/models/unavailable/reset` 清除 |
+| 目录缩水保护 | 新列表不到一半时不覆盖 | 同样的阈值；下一个周期仍然如此就接受 |
+| 被动额度 | 同样的响应头顺序，宽松的数字解析 | 同样的顺序，严格解析：`10 requests` 不会读成 10，而是记为一次表头无法解析 |
+
+完整的现行规则见[模型与账号行为](/docs/advanced-models)。

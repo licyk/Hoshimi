@@ -1,0 +1,73 @@
+---
+title: "开发文档"
+description: "面向贡献者的入口：Hoshimi 由哪几部分组成、以什么为准、全局约定，以及各开发页面分别讲什么。"
+icon: Code
+---
+
+这一部分写给想修改 Hoshimi 的人：修 bug、接入一个新渠道、给 Web UI 加一个页面、改一条 API，或者维护本文档站。它描述代码现在**是什么样**、遵守哪些规则以及为什么，而不是使用方法（使用方法见[使用教程](/docs/guide)、[命令行](/docs/cli)和 [API 参考](/docs/api)）。
+
+## 以什么为准
+
+- **代码和测试**：其他任何内容与它们冲突时，以它们为准。很多规则本身就是测试（分层规则、Web UI 的布局与配色规则、i18n 键一致），破坏规则的改动过不了 CI。
+- **本站**：本站取代了仓库原来的 `docs/` 目录，是 Hoshimi 唯一的文档。用户能看到的改动（命令、选项、配置键、端点、界面）要同时更新对应页面，中文和英文都要改，见[文档站](/docs/development-site)。
+- **参考项目**：协议和行为的来源是几个外部仓库的本地克隆，它们被 `.gitignore` 排除，不是运行时依赖，见下文[参考项目](#参考项目)。
+
+## 一个发行包，四层
+
+Hoshimi 是一个 Python 发行包 `hoshimi`，Web UI 的构建产物（`hoshimi/webui/dist/`）随 wheel 一起发布。包内分四层：
+
+| 目录 | 内容 | 依赖的框架 |
+| --- | --- | --- |
+| `hoshimi/core/` | 全部逻辑：配置、凭据、渠道适配器、路由、协议转换、用量统计、登录流程、Playground 的工具 | 不导入任何 Web 或命令行框架；只用 httpx 访问上游 |
+| `hoshimi/api/` | FastAPI 应用：中间件、路由（`/v1` 模型 API 与 `/api/v1` 管理 API）、Web UI 静态文件 | FastAPI、Starlette |
+| `hoshimi/cli/` | Typer 命令：`serve`、`check`、`models`、`providers`、`stations`、`login`、`version`、`env`、`config` | Typer、Rich |
+| `hoshimi/webui/` | Vue 3 + Vite 的界面；`dist/` 随包发布 | Bun 构建，不进入 Python 依赖 |
+
+API 和命令行都从同一个入口开始：`hoshimi.core.context.build_services()` 把所有服务构建一次，得到一个 `Services`。`core` 不知道自己被谁调用，`tests/core/test_architecture.py` 保证它不导入 FastAPI、Starlette、Typer、Click、Uvicorn、Rich，也不引用 `hoshimi.api` 或 `hoshimi.cli`。[整体架构](/docs/development-architecture)就从这条规则讲起。
+
+## 页面
+
+<Cards>
+  <Card title="开发环境" href="/docs/development-setup" description="仓库布局、Python 环境、bun、scripts/dev.py 的全部任务，以及同时运行 API 和 Vite 的开发模式。" />
+  <Card title="整体架构" href="/docs/development-architecture" description="core / api / cli / webui 的分层、Services 的组装、应用工厂、错误映射，以及一个请求的完整路径。" />
+  <Card title="渠道适配器" href="/docs/development-providers" description="Provider 契约、归一化的流式分片协议、错误与账号轮换、模型目录与能力，以及登录流程。" />
+  <Card title="Web UI" href="/docs/development-webui" description="Vue 应用的结构、由 OpenAPI 生成类型、i18n、主题与令牌、图层与动效，以及布局规则。" />
+  <Card title="测试" href="/docs/development-testing" description="pytest 的布局与共享夹具、Vitest 规则测试、生成类型的检查，以及在真实浏览器里查横向溢出的 check_layout.py。" />
+  <Card title="CI 与发布" href="/docs/development-release" description="CI 工作流、版本号、wheel 的构建与安装检查、发布到 PyPI 和 GitHub，以及文档站的部署。" />
+  <Card title="文档站" href="/docs/development-site" description="本站的结构、怎样写页面、本地预览与构建、部署、统计与评论。" />
+</Cards>
+
+## 几条贯穿全局的约定
+
+**Python**
+
+- 支持 Python 3.10 及以上；CI 在 Linux、Windows、macOS 上对 3.10–3.14 做类型检查，在 3.10、3.12、3.14 上运行测试。
+- Ruff 负责 lint 和格式化，行宽 180；只允许绝对导入（`ban-relative-imports = "all"`）。
+- ty 做类型检查，以 Python 3.10 为目标版本，CI 中警告也算失败。
+- `import hoshimi` 不加载 FastAPI 和 httpx：包的公开名字（`VERSION`、`Services`、`build_services`、`create_app`）是惰性导出的，`tests/test_package_api.py` 检查这一点。
+
+**Web UI**
+
+- 模块之间用 `@/` 别名导入，不写相对路径；`src/theme/` 之外不写十六进制颜色；每个可滚动区域都用 `.app-scroll`。这些都有测试，见 [Web UI](/docs/development-webui)。
+- 界面文字有英文、简体中文和日文三份，键和占位符必须一致。
+
+**接口契约**
+
+- Web UI 的 TypeScript 类型由服务器的 OpenAPI 文档生成（`src/api/schema.d.ts`），提交进仓库；CI 重新生成并在有差异时失败。改了管理 API 的模型，就要运行 `python scripts/dev.py typegen` 并提交结果。
+
+**文档**
+
+- 用户能看到的改动在同一次提交里更新本站页面，中英文都要改。
+
+## 参考项目
+
+下面这些仓库作为本地克隆放在仓库根目录，用于对照协议和行为。它们都在 `.gitignore` 里，不进入本仓库，也不是 Hoshimi 的依赖：
+
+| 克隆 | 用途 |
+| --- | --- |
+| `codex-api` | 服务器与安全方面的参考 |
+| `dsh-our-free-model` | 免费站点的协议参考；捆绑的 EAC 中继封印移植自它（MIT） |
+| `Hanaikada` | Hoshimi 采用的分层 Python + Vue 骨架，`scripts/dev.py` 也由它而来 |
+| `pi`、`pi-free`、`free-claude-code` | 渠道定义的来源，[渠道来源清单](/docs/providers-inventory)记录了它们的快照 |
+
+没有这些克隆也能开发、测试和构建：测试不读取它们（`tests/core/test_provider_definitions.py` 明确不依赖参考仓库的检出）。

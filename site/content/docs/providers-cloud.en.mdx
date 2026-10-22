@@ -1,0 +1,216 @@
+---
+title: "Cloud platforms"
+description: "Connect Azure OpenAI, Cloudflare Workers AI and AI Gateway, the Gemini Developer API, Vertex AI and Amazon Bedrock, plus the two special protocols Radius and TypeSafe: credentials, account fields, protocol selection and limits."
+icon: Cloud
+---
+
+Every channel on this page needs your own cloud account. Pick the channel ID that matches the upstream endpoint, protocol, credentials and plan; a similar model name does not make credentials interchangeable. For example, `gemini` is Code Assist (see [Free stations](/docs/providers-stations)), `google` is the Gemini Developer API and `google-vertex` is Vertex AI; `amazon-bedrock` and `bedrock-mantle` are two services configured separately.
+
+The JSON below are fragments of `providers` in the data folder's `config.json`, not files to place next to the program. Replace the placeholders and enable only the channels you use; restart after editing the file. **Add account** under **Channels** takes effect immediately, and its form lists the fields for each **Authentication method**.
+
+## Optional dependencies
+
+Vertex default credentials and service accounts need Google's auth library; Bedrock needs the AWS SDK:
+
+```bash
+python -m pip install -U "hoshimi[google]"            # Vertex ADC / service accounts
+python -m pip install -U "hoshimi[bedrock]"           # Bedrock (every auth method)
+python -m pip install -U "hoshimi[google,bedrock]"    # both
+```
+
+Vertex API-key mode and ordinary HTTP channels need neither. A missing dependency or credential produces a clear error; it never falls back to anonymous access.
+
+## Azure OpenAI (`azure`)
+
+Give the Azure resource name, the key, the public model IDs and the deployment mapping:
+
+```json
+{
+  "providers": {
+    "azure": {
+      "accounts": [{
+        "id": "azure-1", "resource": "your-resource", "api_key": "<Azure key>",
+        "models": ["public-model-id"],
+        "deployments": {"public-model-id": "your-deployment-name"}
+      }]
+    }
+  }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `resource` | The resource name; the default root is `https://<resource>.openai.azure.com/openai/v1`. |
+| `base_url` | Optional; replaces the address built from `resource`. |
+| `api_key` | Sent in the `api-key` header. |
+| `models` | The public model IDs (required in the Web UI form). |
+| `deployments` | Maps model IDs to deployment names. The upstream request's `model` becomes the deployment name, while capabilities and protocol are still looked up by the public ID. |
+| `protocol` | Responses by default; `"chat"` selects Chat Completions. |
+
+## Cloudflare (`cloudflare-workers-ai`, `cloudflare-ai-gateway`)
+
+Workers AI needs an account ID; AI Gateway also needs a gateway ID:
+
+```json
+{
+  "providers": {
+    "cloudflare-workers-ai": {
+      "accounts": [{"id": "workers-1", "account_id": "<account id>", "api_key": "<Cloudflare token>"}]
+    },
+    "cloudflare-ai-gateway": {
+      "accounts": [{"id": "gateway-1", "account_id": "<account id>", "gateway_id": "<gateway id>",
+                    "api_key": "<gateway token>", "models": ["openai/my-model"]}]
+    }
+  }
+}
+```
+
+- **Workers AI**: the address is `https://api.cloudflare.com/client/v4/accounts/<account_id>/ai/v1`. The catalogue comes from Cloudflare's native model search, keeping text-generation tasks only; `models` declared on the account replaces it.
+- **AI Gateway**: Chat requests go to `https://gateway.ai.cloudflare.com/v1/<account_id>/<gateway_id>/compat` with the key in the `cf-aig-authorization` header. The Messages protocol uses the gateway's `/anthropic/v1/messages` instead, and Responses uses `/openai/responses`.
+- Both accept `base_url` in place of the built address. Set `protocol` or `model_protocols` (see the end of this page) only for a protocol the upstream really supports.
+
+## Gemini Developer API (`google`)
+
+```json
+{
+  "providers": {
+    "google": {"accounts": [{"id": "google-1", "api_key": "<Gemini API key>", "protocol": "gemini"}]}
+  }
+}
+```
+
+- The default is native Gemini streaming (`generativelanguage.googleapis.com/v1beta`) with the key in `x-goog-api-key`. `protocol: "chat"` switches to Google's OpenAI-compatible Chat endpoint.
+- The catalogue is the native model list (paginated), keeping models that support `generateContent`; `models` can declare it instead.
+- The native translation keeps function calls and their opaque thought signatures, so multi-turn tool use replays correctly.
+- Thinking is set with `reasoning_effort`, or with Google's own `thinking_config` (not both at once).
+- This channel does not use the Code Assist sign-in of the `gemini` channel.
+
+## Google Vertex AI (`google-vertex`)
+
+Use one of three authentication methods: an API key, application default credentials (ADC), or a service-account file.
+
+```json
+{
+  "providers": {
+    "google-vertex": {
+      "accounts": [{
+        "id": "vertex-1", "auth": "adc", "project": "your-project",
+        "location": "global", "protocol": "gemini",
+        "models": ["your-model-id"]
+      }]
+    }
+  }
+}
+```
+
+| Authentication method | Account fields |
+| --- | --- |
+| **API key** | `api_key`; optional `project`, `location` |
+| **Google default credentials** | `auth: "adc"`, `project` (required), optional `location` |
+| **Google service account file** | `service_account_file` (a path on the server), `project` (required), optional `location` |
+
+- ADC and service accounts need `hoshimi[google]`, and the credentials must be visible to the process running Hoshimi. Missing or expired credentials are reported as an error; there is no silent switch to another method.
+- `location` defaults to `global`; a region name (such as `us-central1`) selects the regional endpoint.
+- The default is the native Gemini protocol; `protocol: "chat"` connects to Vertex's OpenAI-compatible endpoint, which requires `project`.
+- The catalogue comes from Google's publisher model list; the models your account is authorised for can be declared with `models` instead.
+
+## Amazon Bedrock (`amazon-bedrock`)
+
+Uses Bedrock ConverseStream. Every authentication method needs `hoshimi[bedrock]`.
+
+```json
+{
+  "providers": {
+    "amazon-bedrock": {
+      "accounts": [{
+        "id": "bedrock-1", "auth": "aws", "region": "us-east-1",
+        "models": ["your-model-or-inference-profile-id"]
+      }]
+    }
+  }
+}
+```
+
+| Authentication method | Account fields |
+| --- | --- |
+| **AWS default credentials** | `auth: "aws"`, using the AWS credential chain |
+| **AWS profile** | `profile` |
+| **AWS access keys** | `aws_access_key_id`, `aws_secret_access_key`, optional `aws_session_token` |
+| **API key** | `api_key` (a Bedrock bearer key); `models` is required |
+
+- `region` defaults to `us-east-1`. In bearer mode, `base_url` can replace `https://bedrock-runtime.<region>.amazonaws.com`.
+- SDK modes can list the text foundation models that support streaming; a bearer key is not authorised for the control-plane model listing, so declare `models`. Account-specific inference profile IDs or ARNs should also be declared explicitly.
+- The adapter translates messages, supported images, tool calls and results, usage and thinking signatures; a `thinking` object in the request body is passed upstream as an additional model field. Not every Bedrock model supports every feature, and model access is still decided by your AWS account.
+
+`bedrock-mantle` is another service: Bedrock's OpenAI-compatible endpoint, configured separately with a bearer key and its own address (default `https://bedrock-mantle.us-east-1.api.aws/v1`):
+
+```json
+{
+  "providers": {
+    "bedrock-mantle": {
+      "accounts": [{"id": "bedrock-mantle-1", "api_key": "<regional Bedrock bearer key>",
+                    "base_url": "https://bedrock-mantle.us-east-1.api.aws/v1"}]
+    }
+  }
+}
+```
+
+## Radius (`radius`)
+
+Radius uses a dedicated pi-messages protocol rather than a generic Chat endpoint.
+
+- **Adding an account**: `hoshimi login radius` (device-code sign-in, renewable token), or an API key in **Add account**.
+- **Models**: the inference address and model list are read from the gateway's `/v1/config`. The account's `gateway` field replaces the default gateway `https://radius.pi.dev`.
+
+```json
+{
+  "providers": {
+    "radius": {"accounts": [{"id": "radius-1", "api_key": "<Radius key>"}]}
+  }
+}
+```
+
+## TypeSafe (`typesafe`)
+
+TypeSafe is a classification service, not a chat model: its models do not appear in `/v1/models` and cannot be used for chat.
+
+```json
+{
+  "providers": {
+    "typesafe": {"accounts": [{"id": "typesafe-1", "api_key": "<TypeSafe key>", "classifiers": ["jev-latest"]}]}
+  }
+}
+```
+
+`classifiers` is optional and defaults to `["jev-latest"]`. `GET /v1/classifiers` lists the available classifiers, and classification requests go to `POST /v1/classify`:
+
+```http
+POST /v1/classify
+Content-Type: application/json
+
+{
+  "model": "typesafe/jev-latest",
+  "state": { ... },
+  "questions": {
+    "<key>": {"type": "bool", ...}
+  }
+}
+```
+
+- `model` comes from `/v1/classifiers`, in the form `typesafe/<classifier>`.
+- `state` is an object and `questions` a non-empty object; their contents are passed to TypeSafe as they are.
+- Each question's `type` is `bool`, `score` or `choice`. `bool` returns a probability; `score` and `choice` return a score or a choice with its confidence.
+- Image input is not supported. The full field definitions are in the running server's `/docs`.
+
+## Protocol selection
+
+Channels such as `azure` and `cloudflare-ai-gateway` speak several protocols. The protocol for a model is decided in this order:
+
+1. The protocol named for the model in the channel option `options.model_protocols`, for example `{"claude-sonnet": "messages"}`.
+2. The account's `protocol` field.
+3. Protocol information carried by the model's catalogue row.
+4. The channel's default protocol.
+
+The values are `chat`, `responses` and `messages`, with the aliases `openai-completions`, `openai-responses` and `anthropic-messages` also accepted. `google` and `google-vertex` use `gemini` or `chat`. Set these only for protocols the upstream really supports. More protocol-related options are in [Local and compatible endpoints](/docs/providers-local).
+
+Availability has to be confirmed with a real request from a configured account; this page describes the configuration behaviour that is implemented. The full service mapping is in the [provider inventory](/docs/providers-inventory).

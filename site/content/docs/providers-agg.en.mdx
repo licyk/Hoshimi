@@ -1,0 +1,159 @@
+---
+title: "The agg aggregator"
+description: "Use the agg channel for any OpenAI-compatible station: give its address or one of the 22 station presets, the account fields, several stations side by side, capability declarations and free marks."
+icon: Layers
+---
+
+`agg` is the generic compatible lane: one channel can hold many stations, and each account carries its own station address (`base_url`) and key. Services such as OpenRouter's free pool, SiliconFlow or SambaNova become a line of configuration rather than new code, as long as they speak OpenAI Chat Completions. The 22 most common stations are built in as presets, so you only give a name and a key.
+
+If the service has a native channel (for example `openrouter`, `groq`, `deepseek` or `siliconflow`), prefer that; see [Local and compatible endpoints](/docs/providers-local). Stations with native sign-in and renewal, such as Cline, Kilo, Qoder and OpenCode, are not presets: pointing agg at them would trade a renewable credential for a token that expires.
+
+## Adding an account
+
+<Tabs items={["Web UI", "config.json"]}>
+<Tab value="Web UI">
+
+1. Open **Channels** › **Aggregator** and click **Add account**.
+2. Search the **Station** list and pick a preset. For a station that is not listed, choose **Custom address…** and enter its OpenAI root in **Base URL** (the level where `/chat/completions` and `/models` live, usually ending in `/v1`).
+3. Enter the **API key**. Leave **Account ID (optional)** blank to let the gateway name the account, then click **Save account**.
+
+The form is validated before saving: an account with no address, an unknown preset or no key is not saved.
+
+</Tab>
+<Tab value="config.json">
+
+```json
+{
+  "providers": {
+    "agg": {
+      "accounts": [
+        {"id": "sambanova", "preset": "sambanova", "api_key": "<SambaNova key>"},
+        {"id": "my-service", "base_url": "https://example.com/v1", "api_key": "<key>", "models": ["your-model-id"]}
+      ]
+    }
+  }
+}
+```
+
+Restart after editing the file. An account with no address, an unknown preset or no key is logged at startup (`agg: dropping accounts without base_url or key`) and dropped; the other accounts keep working.
+
+</Tab>
+</Tabs>
+
+## Account fields
+
+| Field | Meaning |
+| --- | --- |
+| `id` | The account's name. |
+| `base_url` | The station's OpenAI root. When both are given, `base_url` wins over `preset`. |
+| `preset` | A preset station ID (see the table below), in place of `base_url`. |
+| `api_key` | The key, sent as `Authorization: Bearer`. `access_token` or `token` are also accepted. |
+| `models` | Optional. The model IDs this account offers; with it, the station's `/models` is not read. |
+| `headers` | Optional. Extra upstream request headers; they cannot replace `Authorization`. |
+| `options` | Optional. The account's capability declarations; see below. |
+
+## Station presets
+
+`hoshimi stations` lists every preset (`--json` prints JSON); the API is `GET /api/v1/stations`.
+
+| Preset | Name | Base URL | Upstream key variable | Catalogue without a key |
+| --- | --- | --- | --- | --- |
+| `zenmux` | ZenMux | `https://zenmux.ai/api/v1` | `ZENMUX_API_KEY` | Yes |
+| `llm7` | LLM7 | `https://api.llm7.io/v1` | `LLM7_API_KEY` | |
+| `deepinfra` | DeepInfra | `https://api.deepinfra.com/v1/openai` | `DEEPINFRA_TOKEN` | Yes |
+| `sambanova` | SambaNova | `https://api.sambanova.ai/v1` | `SAMBANOVA_API_KEY` | Yes |
+| `novita` | Novita | `https://api.novita.ai/openai/v1` | `NOVITA_API_KEY` | Yes |
+| `routeway` | Routeway | `https://api.routeway.ai/v1` | `ROUTEWAY_API_KEY` | Yes |
+| `opengateway` | OpenGateway | `https://opengateway.gitlawb.com/v1` | `OPENGATEWAY_API_KEY` | |
+| `tokenrouter` | TokenRouter | `https://api.tokenrouter.com/v1` | `TOKENROUTER_API_KEY` | |
+| `anyapi` | AnyAPI | `https://api.anyapi.ai/v1` | `ANYAPI_API_KEY` | |
+| `bai` | B.AI | `https://api.b.ai/v1` | `BAI_API_KEY` | |
+| `orcarouter` | OrcaRouter | `https://api.orcarouter.ai/v1` | `ORCAROUTER_API_KEY` | |
+| `xkiro` | XKiro | `https://api.xkiro.com/v1` | `XKIRO_API_KEY` | |
+| `fastrouter` | FastRouter | `https://api.fastrouter.ai/api/v1` | `FASTROUTER_API_KEY` | Yes |
+| `requesty` | Requesty | `https://router.requesty.ai/v1` | `REQUESTY_API_KEY` | |
+| `stepfun` | StepFun | `https://api.stepfun.ai/step_plan/v1` | `STEPFUN_API_KEY` | |
+| `gmi` | GMI Cloud | `https://api.gmi-serving.com/v1` | `GMI_API_KEY` | |
+| `agnes` | Agnes AI | `https://apihub.agnes-ai.com/v1` | `AGNES_API_KEY` | |
+| `venice` | Venice AI | `https://api.venice.ai/api/v1` | `VENICE_API_KEY` | |
+| `infron` | Infron | `https://llm.onerouter.pro/v1` | `INFRON_API_KEY` | |
+| `merge` | Merge Gateway | `https://api-gateway.merge.dev/v1/openai` | `MERGE_API_KEY` | |
+| `commandcode` | CommandCode | `https://api.commandcode.ai/provider/v1` | `COMMAND_CODE_API_KEY` | |
+| `ollama-cloud` | Ollama Cloud | `https://ollama.com/v1` | `OLLAMA_API_KEY` | |
+
+- "Upstream key variable" is the environment variable the station's own tools read their key from, for reference only. Hoshimi reads credentials from `config.json` only and never reads these variables.
+- "Catalogue without a key" only means the model list can be browsed; chat requests to these stations still need a key.
+- A preset supplies the address only, never a model list; models are always read live.
+
+## Several stations in one channel
+
+The same ID at two stations can be two different models at two different prices, so the gateway records which station each ID came from:
+
+- A request for an ID tries the accounts that declare it in `models` first, then accounts with no `models` declaration, then the rest.
+- With a single station you need no declarations. With several, use `models` to pin IDs to the right account, so a request does not land first on a station that does not know the ID.
+- Station rules (chat-model filters, free marks, capability tables) are matched by the `base_url` address, not the `preset` name: an account that says `preset: sambanova` but points `base_url` elsewhere does not get SambaNova's rules. A custom address gets no station rules at all.
+
+## Capability declarations
+
+A station's `/models` usually carries IDs and nothing more. Without declarations, agg treats a model as text-only and non-thinking, and forwards the caller's request unchanged. Declare more in `options` when you need it:
+
+```json
+{
+  "providers": {
+    "agg": {
+      "accounts": [
+        {
+          "id": "siliconflow",
+          "base_url": "https://api.siliconflow.cn/v1",
+          "api_key": "<SiliconFlow key>",
+          "options": {
+            "model_specs": {
+              "Qwen/Qwen3-8B": {"reasoning": true, "context_window": 131072},
+              "example/thinking-model": {
+                "reasoning": true,
+                "efforts": ["disabled", "low", "high"],
+                "effort_default": "high",
+                "effort_patch": {"reasoning_effort": "$effort"},
+                "effort_off_patch": {"reasoning_effort": "none"}
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `vision` | Whether the model accepts image input. |
+| `reasoning` | Whether it is a thinking model. |
+| `context_window` | Context length in tokens. |
+| `max_output` | Maximum output length in tokens. |
+| `efforts` | The thinking-level menu, in display order. Including `disabled` makes thinking switchable off. |
+| `effort_default` | The default level. |
+| `effort_patch` | JSON merged into the request body when a level is chosen; `"$effort"` inside it is replaced by the level's name. |
+| `effort_off_patch` | JSON merged into the request body when the off level is chosen. |
+| `region_sensitive` | Whether availability depends on the network exit's region. |
+| `model_specs` | Per-model-ID overrides of the keys above. |
+
+Precedence: account declarations outrank what the station's own listing says, which outranks the defaults; keys placed flat in `options` act as defaults, and the ID's `model_specs` entry is applied last. Flat keys apply to every ID in the channel, so when the channel holds several stations, put declarations in `model_specs`. For an undeclared ID, only two facts are filled in from models.dev, whether it thinks and whether it accepts images; context limits are never borrowed from another station. The same keys can also go in `providers.agg.options` as defaults for the whole channel. The full rules for capabilities and thinking levels are in [Model behaviour](/docs/advanced-models).
+
+## Free marks
+
+Each model's `free` field in `GET /v1/models` has three values: `true`, `false` and `null` (the station did not say). agg takes only what the station itself publishes:
+
+- Read from the listing rows: `anyapi`, `gmi`, `opengateway`, `orcarouter`, `tokenrouter`, `xkiro`, `bai` (IDs with `:free`), `merge` (a route whose input and output prices are both 0).
+- Fixed IDs recorded from the station's pricing page: `agnes`, `bai`, `commandcode`.
+- `venice` and `llm7` are deliberately left unmarked: Venice's zero-priced models still require a positive account balance, and LLM7's prices are list prices, not a statement about an account's balance.
+
+A free mark describes the station's price list; it does not promise that an account has allowance or that a call will succeed.
+
+## Station-specific handling
+
+- **Chat-model filters**: listings from known stations drop image, video, embedding, transcription and other non-chat rows, with a filter written per station; a row missing the relevant fields is kept, so a station's schema change does not empty its catalogue. LLM7 is filtered on its own `model_type` field.
+- **CommandCode**: models whose name starts with `claude-` go to Anthropic Messages (`<base_url>/messages`); the station's vision and reasoning tables act as defaults, and account declarations win.
+- **Request shape**: requests to known stations turn `max_completion_tokens` into `max_tokens` and `developer` messages into `system`; requests to custom addresses are not rewritten. A station that answers a streaming request with one complete JSON document is still read correctly.
+
+Most of these rules are ported from pi-free; the differences are in [Migrating from pi-free](/docs/advanced-pi-free).

@@ -1,0 +1,271 @@
+---
+title: "OpenAI SDK 与 curl"
+description: "用 OpenAI 的 Python、JavaScript SDK 和 curl 调用 Hoshimi 的 Chat Completions 与 Responses：非流式与流式、推理内容、推理强度、工具调用、图片和错误处理。"
+icon: Code
+---
+
+OpenAI 的官方 SDK 只要换掉 Base URL 就能直接调用 Hoshimi。本页的示例都在本机实测过；把 `<model-id>` 换成 `GET /v1/models` 返回的某个 `id`（见[接入客户端](/docs/clients)）。
+
+## 连接参数
+
+| 参数 | 值 |
+| --- | --- |
+| Base URL | `http://127.0.0.1:10600/v1` |
+| API Key | 网关的模型 API 密钥；没有设置时填任意非空字符串 |
+| 模型 | `/v1/models` 中的 `id`，或 `渠道/模型` |
+
+示例从环境变量读取密钥：
+
+```bash
+export HOSHIMI_API_KEY="你的模型 API 密钥"   # 没有设置模型 API 密钥时随便填
+```
+
+## Python
+
+```bash
+pip install openai
+```
+
+### 非流式
+
+```python
+import os
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:10600/v1", api_key=os.environ["HOSHIMI_API_KEY"])
+
+reply = client.chat.completions.create(
+    model="<model-id>",
+    messages=[{"role": "user", "content": "用一句话介绍你自己"}],
+    stream=False,
+)
+print(reply.choices[0].message.content)
+```
+
+<Callout type="warn" title="一定要写 stream=False">
+
+Hoshimi 在请求没有 `stream` 字段时默认流式返回。SDK 在不传 `stream` 时不会发送这个字段，`create()` 会返回一段 SSE 原文（`str`）而不是对象。Responses 的 `client.responses.create()` 也一样。
+
+</Callout>
+
+### 流式
+
+```python
+stream = client.chat.completions.create(
+    model="<model-id>",
+    messages=[{"role": "user", "content": "数到五"}],
+    stream=True,
+)
+for chunk in stream:
+    if chunk.choices and chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="", flush=True)
+```
+
+流中有一个 `choices` 为空、只带 `usage` 的块（上游报告了用量时），不需要设置 `stream_options`；所以循环里要先判断 `chunk.choices`。
+
+### 推理内容与推理强度
+
+推理模型的思考过程放在 `reasoning_content` 字段，SDK 把它作为附加属性保留：
+
+```python
+reply = client.chat.completions.create(
+    model="<model-id>",
+    reasoning_effort="high",
+    messages=[{"role": "user", "content": "91 是质数吗？一句话回答。"}],
+    stream=False,
+)
+message = reply.choices[0].message
+print("思考：", getattr(message, "reasoning_content", None))
+print("回答：", message.content)
+```
+
+流式时从 `chunk.choices[0].delta` 上用 `getattr(delta, "reasoning_content", None)` 读取。`reasoning_effort` 可以写 `minimal`、`low`、`medium`、`high`、`xhigh`、`max`，也可以写模型自己的级别名；各模型的级别见 **模型** 页，映射规则见 [OpenAI 兼容接口](/docs/api-openai)。
+
+### 工具调用
+
+```python
+import json
+
+tools = [{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "查询城市当前天气",
+        "parameters": {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+        },
+    },
+}]
+
+def get_weather(city: str) -> str:
+    return json.dumps({"city": city, "sky": "sunny", "celsius": 21})
+
+messages = [{"role": "user", "content": "巴黎现在天气怎么样？"}]
+while True:
+    reply = client.chat.completions.create(model="<model-id>", messages=messages, tools=tools, stream=False)
+    message = reply.choices[0].message
+    if not message.tool_calls:
+        print(message.content)
+        break
+    messages.append(message.model_dump(exclude_none=True))
+    for call in message.tool_calls:
+        result = get_weather(**json.loads(call.function.arguments))
+        messages.append({"role": "tool", "tool_call_id": call.id, "content": result})
+```
+
+`tool_choice` 可以是 `auto`、`none`、`required` 或指定某个函数。每一轮都要把完整的 `messages` 发回去，Hoshimi 不保存历史。
+
+### 图片
+
+图片作为 `image_url` 内容块发送，可以是 `data:` URL：
+
+```python
+import base64
+
+data = base64.b64encode(open("photo.png", "rb").read()).decode()
+reply = client.chat.completions.create(
+    model="<model-id>",
+    messages=[{"role": "user", "content": [
+        {"type": "text", "text": "图里有什么？"},
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{data}"}},
+    ]}],
+    stream=False,
+)
+```
+
+只有能看图的模型会理解图片，**模型** 页的 **视觉** 标记说明了这一点。
+
+### Responses
+
+```python
+response = client.responses.create(
+    model="<model-id>",
+    instructions="回答尽量简短。",
+    input="91 是质数吗？",
+    reasoning={"effort": "low"},
+    stream=False,
+)
+print(response.output_text)
+```
+
+流式时用 `stream=True` 逐个读取事件：
+
+```python
+events = client.responses.create(model="<model-id>", input="数到五", stream=True)
+for event in events:
+    if event.type == "response.output_text.delta":
+        print(event.delta, end="", flush=True)
+```
+
+<Callout type="info" title="不要用 responses.stream()">
+
+Hoshimi 的 Responses 事件流不发送 `response.content_part.added` 等内容分段事件，Python SDK 的 `client.responses.stream()` 辅助方法依赖这些事件，会抛出 `IndexError`。请改用上面的 `responses.create(..., stream=True)`。
+
+</Callout>
+
+Responses 的工具调用循环：把上一轮的全部 `output` 项和 `function_call_output` 一起放回 `input`：
+
+```python
+tools = [{
+    "type": "function",
+    "name": "get_weather",
+    "description": "查询城市当前天气",
+    "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
+}]
+
+items = [{"role": "user", "content": "巴黎现在天气怎么样？"}]
+while True:
+    response = client.responses.create(model="<model-id>", input=items, tools=tools, stream=False)
+    calls = [item for item in response.output if item.type == "function_call"]
+    if not calls:
+        print(response.output_text)
+        break
+    items += [item.model_dump(exclude_none=True) for item in response.output]
+    for call in calls:
+        result = get_weather(**json.loads(call.arguments))
+        items.append({"type": "function_call_output", "call_id": call.call_id, "output": result})
+```
+
+Responses 是无状态的：`previous_response_id` 和结构化输出 `text.format` 会被拒绝（`400`），只接受 `type: "function"` 的工具。完整的字段说明见 [OpenAI 兼容接口](/docs/api-openai)。
+
+## JavaScript / TypeScript
+
+```bash
+npm install openai
+```
+
+```ts
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  baseURL: "http://127.0.0.1:10600/v1",
+  apiKey: process.env.HOSHIMI_API_KEY,
+});
+
+// 非流式：同样必须写 stream: false
+const reply = await client.chat.completions.create({
+  model: "<model-id>",
+  messages: [{ role: "user", content: "用一句话介绍你自己" }],
+  stream: false,
+});
+console.log(reply.choices[0].message.content);
+
+// 流式
+const stream = await client.chat.completions.create({
+  model: "<model-id>",
+  messages: [{ role: "user", content: "数到五" }],
+  stream: true,
+});
+for await (const chunk of stream) {
+  process.stdout.write(chunk.choices[0]?.delta?.content ?? "");
+}
+```
+
+和 Python 一样，不写 `stream` 时 `create()` 返回的是 SSE 原文字符串。
+
+## curl
+
+非流式：
+
+```bash
+curl http://127.0.0.1:10600/v1/chat/completions \
+  -H "Authorization: Bearer $HOSHIMI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<model-id>","messages":[{"role":"user","content":"你好"}],"stream":false}'
+```
+
+流式（`-N` 关闭 curl 的缓冲）：
+
+```bash
+curl -N http://127.0.0.1:10600/v1/chat/completions \
+  -H "Authorization: Bearer $HOSHIMI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<model-id>","messages":[{"role":"user","content":"数到五"}]}'
+```
+
+每个事件是一行 `data: {...}`，最后是 `data: [DONE]`。
+
+Responses：
+
+```bash
+curl http://127.0.0.1:10600/v1/responses \
+  -H "Authorization: Bearer $HOSHIMI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<model-id>","input":"你好","reasoning":{"effort":"low"},"stream":false}'
+```
+
+没有设置模型 API 密钥时可以省略 `Authorization` 头，`x-api-key: <密钥>` 也可以代替它。
+
+在 Playground 里，回复的 **更多操作** 菜单中的 **复制为 API 请求** 会把这条回复背后的 Chat Completions 请求复制成一条 curl 命令，密钥从 `$HOSHIMI_API_KEY` 读取，可以直接作为起点。
+
+## 错误处理
+
+`/v1` 的错误使用 OpenAI 的格式，SDK 会抛出对应的异常（如 `openai.NotFoundError`、`openai.BadRequestError`）：
+
+```json
+{"error": {"message": "Model 'nope' not found. Use `provider/model` or see /v1/models.", "type": "invalid_request_error", "code": "model_not_found"}}
+```
+
+流式响应开始之后，上游的失败不能再改变 HTTP 状态码：Chat Completions 会发出一个 `data: {"error": {...}}` 事件并结束（没有 `data: [DONE]`），Responses 发出 `response.failed` 事件或同样的 `error` 事件。失败的调用会记录在 **用量** 页，可以在那里查看错误信息。错误码的完整列表见 [API 概览](/docs/api)。

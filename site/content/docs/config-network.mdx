@@ -1,0 +1,163 @@
+---
+title: "网络与代理"
+description: "Hoshimi 访问上游站点时走哪条线路：自动读取环境代理、直连或指定代理，按渠道覆盖，哪些请求受影响，以及如何读网络诊断。"
+icon: Network
+---
+
+Hoshimi 向上游发出的请求（拉取模型目录、推理、登录、刷新令牌、查余额、签到）都按一条网络策略选择线路：直连，或经过某个代理。全局有一条默认策略，每个渠道可以单独覆盖。本页说明这些策略怎么写、怎么生效，以及出问题时去哪里看。
+
+浏览器里打开的登录页面不受这些设置影响，它们使用浏览器自己的网络配置。
+
+## 三种模式
+
+| 模式 | 行为 |
+| --- | --- |
+| `auto`（默认） | 读取环境变量 `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY` 和 `NO_PROXY` 决定是否走代理；都没有设置时直连 |
+| `direct` | 始终直连，忽略环境变量 |
+| `proxy` | 始终经过 `proxy` 中的代理 |
+| `inherit`（仅渠道） | 使用全局策略，这是渠道的默认值 |
+
+两条规则不受模式影响：
+
+- 目标是本机（`localhost`、`*.localhost`、`127.0.0.0/8`、`::1`）的请求始终直连，所以本地模型服务不会被发到代理上。
+- 配置了代理却连不上时，请求直接失败，**不会**退回直连。
+
+## 设置全局策略
+
+在网页界面的 **设置** › **网络** 中选择 **自动（环境代理）**、**直连** 或 **指定代理**，填写 **代理地址** 后保存。也可以写在 `config.json` 里：
+
+```json
+{
+  "network": {"mode": "proxy", "proxy": "http://127.0.0.1:7890"}
+}
+```
+
+用命令行时，把整个对象一次写入（单独写 `network.mode proxy` 会因缺少代理地址被拒绝），然后重启服务器：
+
+```bash
+hoshimi config set network '{"mode": "proxy", "proxy": "socks5://127.0.0.1:1080"}'
+hoshimi config set network '{"mode": "direct"}'
+hoshimi config set network '{"mode": "auto"}'
+```
+
+代理地址的要求：
+
+- 协议是 `http`、`https`、`socks5` 或 `socks5h`；
+- 有主机名，不带路径、查询参数或片段（结尾的 `/` 可以）；
+- 可以包含用户名和密码，如 `http://user:pass@proxy.example.com:8080`。
+
+代理地址可能含有密码。它明文保存在本地的 `config.json` 中；设置接口只返回“是否已配置”，`hoshimi config show` 显示为 `***`，网页上显示 **已配置代理，保存可替换。** 在网页上清空代理地址并保存，会回到自动模式（渠道则回到继承）。
+
+## 环境变量（auto 模式）
+
+`auto` 模式按目标地址的协议选择代理：
+
+1. `https://` 目标用 `HTTPS_PROXY`，`http://` 目标用 `HTTP_PROXY`；
+2. 对应的变量为空时用 `ALL_PROXY`；
+3. 目标命中 `NO_PROXY` 时直连。
+
+每个变量都是小写形式优先（`https_proxy` 优先于 `HTTPS_PROXY`）。环境变量里的代理地址同样会被校验，写错时请求会报错，而不是被悄悄忽略。
+
+`NO_PROXY` 用逗号（或分号）分隔，每一项可以是：
+
+| 写法 | 匹配 |
+| --- | --- |
+| `example.com`、`.example.com`、`*.example.com` | 这个域名及其所有子域名 |
+| `example.com:8443` | 这个域名的指定端口 |
+| `10.0.0.0/8` | 落在这个网段里的 IP 地址目标 |
+| `*` | 所有目标 |
+| `<local>` | 不含点的主机名 |
+
+`NO_PROXY` 只影响自动选择；`proxy` 模式下明确配置的代理不看它。
+
+### Windows 系统代理
+
+`network.system_proxy` 设为 `true`（网页上的 **无环境代理时使用 Windows 系统代理**）后，在 Windows 上，`auto` 模式没有找到环境变量代理时会读取系统代理设置（包括其中的例外列表）。其他系统上这个选项没有作用。
+
+```json
+{"network": {"mode": "auto", "system_proxy": true}}
+```
+
+## 按渠道覆盖
+
+每个渠道可以有自己的线路。在 **渠道** 页打开一个渠道，在它的 **网络** 部分选择线路；选 **继承全局配置** 就跟随 **设置** › **网络**。对应的配置是 `providers.<id>.options.network`：
+
+```json
+{
+  "network": {"mode": "proxy", "proxy": "http://127.0.0.1:7890"},
+  "providers": {
+    "cline":  {"options": {"network": {"mode": "inherit"}}},
+    "ollama": {"options": {"network": {"mode": "direct"}}},
+    "gemini": {"options": {"network": {"mode": "proxy", "proxy": "socks5h://127.0.0.1:1080"}}}
+  }
+}
+```
+
+- 渠道没有写 `network`，或写了 `{"mode": "inherit"}`，就使用全局策略。
+- 渠道写了明确的策略，就**整体替换**全局策略，不会与之合并。例如渠道写 `{"mode": "auto"}`，它会读环境变量，即使全局是 `proxy`。
+- 渠道的 `network` 对象里省略 `mode` 时等同于 `inherit`。
+
+## 哪些请求受影响
+
+| 请求 | 使用的策略 |
+| --- | --- |
+| 模型目录、推理、令牌刷新与交换、余额、签到 | 所属渠道的策略 |
+| `hoshimi login` 和网页上的 **登录** 中，网关自己发出的请求（发起授权、轮询、换取令牌） | 所属渠道的策略 |
+| 可用性探测 | 所属渠道的策略 |
+| Vertex 的 Google 身份验证请求 | 所属渠道的策略 |
+| Bedrock 的 AWS SDK 服务调用 | 所属渠道选出的 HTTP(S) 代理；AWS 凭据的自动发现仍由 AWS SDK 自己处理。SOCKS 代理对 Bedrock SDK 无效 |
+| models.dev 能力元数据、PyPI 新版本检查 | 全局策略 |
+| Playground 的 `web_search`、`web_fetch` 工具 | 全局策略 |
+| 浏览器打开的登录页 | 浏览器自己的网络设置 |
+
+网关发出的普通请求不保留响应设置的 Cookie；每次登录使用自己独立的 Cookie 会话。Hoshimi 不提供自动通过浏览器验证（如 Cloudflare 质询）或 TLS 指纹模拟。
+
+## 修改何时生效
+
+在网页上保存后，新的请求立即使用新线路；正在进行的流式回复在原来的连接上完成。只改网络设置不会重建渠道的账号状态：暂停轮换的账号、需要重新登录的标记都会保留。用 `hoshimi config set` 或编辑文件修改的，要重启服务器。环境变量在每个请求时读取，但它们是服务器进程启动时继承来的，改了环境变量要重启服务器。
+
+## 网络诊断
+
+每个渠道记录每类操作最近一次的结果。在 **渠道** 页打开一个渠道，**网络** 部分会列出最近失败的操作、出错类别和 HTTP 状态码；把鼠标停在操作名上可以看到目标主机和线路。
+
+管理接口给出同样的数据：
+
+```bash
+curl -s http://127.0.0.1:10600/api/v1/network/diagnostics \
+  -H "Authorization: Bearer <工具访问密钥>"
+```
+
+```json
+[
+  {"provider": "kilo", "operation": "catalog", "kind": "ok", "status": 200,
+   "at": 1792684378.49, "host": "api.kilo.ai", "route": "direct"}
+]
+```
+
+记录里只有操作、主机、线路来源、时间、状态码和出错类别，不含请求路径、查询参数、请求头、请求体、Cookie 或代理地址。
+
+`operation` 的取值：`catalog`（模型目录）、`inference`（推理请求）、`token_refresh`（令牌刷新）、`token_exchange`（令牌交换）、`auth_start`（发起授权）、`auth_poll`（授权轮询）、`balance`（余额查询）、`checkin`（签到）、`request`（其他请求）。
+
+`route` 的取值：`direct`（直连）、`configured_proxy`（配置的代理）、`environment_proxy`（环境变量代理）、`system_proxy`（Windows 系统代理）。
+
+`kind` 的取值和含义：
+
+| `kind` | 界面显示 | 含义 |
+| --- | --- | --- |
+| `ok` | 成功 | 请求成功 |
+| `timeout` | 连接超时 | 连接或读取超时 |
+| `proxy_error` | 代理连接失败 | 连不上代理，或代理拒绝了连接 |
+| `connection_error` | 连接失败 | 其他连接错误（DNS、拒绝连接、TLS） |
+| `challenge` | 需要浏览器授权 | 上游返回了 Cloudflare 质询（`cf-mitigated: challenge`） |
+| `edge_rejected` | 请求被上游代理拦截 | 出错时返回的是 HTML 页面，通常是网关、CDN 或代理的拦截页 |
+| `invalid_response` | API 响应格式异常 | 期待 JSON 或事件流，却收到了 HTML |
+| `client_restricted` | 客户端兼容性限制 | 站点只允许自己的客户端使用免费额度 |
+| `region_restricted` | 地区限制 | 站点不服务当前出口所在的地区 |
+| `signature_rejected` | 请求签名被拒绝 | 站点拒绝了请求签名 |
+| `authentication` | 凭据被拒绝 | HTTP 401 |
+| `permission_denied` | 权限不足 | HTTP 403 |
+| `quota_exhausted` | 额度耗尽 | HTTP 402 |
+| `rate_limited` | 请求频率受限 | HTTP 429 |
+| `upstream_error` | 上游服务错误 | 其他错误状态码 |
+
+`challenge`、`edge_rejected`、`invalid_response`、`client_restricted`、`region_restricted` 和 `signature_rejected` 会在处理令牌之前被识别出来：它们不会让账号的刷新令牌作废，也不会触发换账号或标记模型失效。单纯的 HTTP 403 也不会被当作令牌过期。遇到这些情况，先检查线路（换代理或直连）、地区和站点状态。更多排查步骤见[故障排查](/docs/advanced-troubleshooting)。

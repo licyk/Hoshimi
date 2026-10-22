@@ -1,0 +1,174 @@
+---
+title: "Documentation site"
+description: "This site is Hoshimi's documentation: how it is organised, how to write and check a page, previewing and building locally, deploying to Netlify and GitHub Pages, and analytics and comments."
+icon: BookOpen
+---
+
+This site replaces the repository's old `docs/` folder and is Hoshimi's only documentation. **A change users can see** (a command, an option, a config key, an environment variable, an endpoint, the interface) updates the matching pages in the same commit, in Chinese and in English. This page covers how the site is organised, how to write pages, how to preview and build it locally, and how it is deployed.
+
+## How it is organised
+
+The site lives in the repository's `site/` folder, built with TanStack Start, Fumadocs (MDX) and Tailwind, and installed and run with bun.
+
+| Path | Contents |
+| --- | --- |
+| `site/content/docs/<slug>.mdx` | A Simplified Chinese page (the default language) |
+| `site/content/docs/<slug>.en.mdx` | The English version of the same page |
+| `site/content/docs/meta.json`, `meta.en.json` | The Chinese and English sidebars: page order and groups |
+| `site/src/` | Routes, layout, the home page and components; the MDX components available to pages are registered in `src/components/mdx.tsx` |
+| `site/scripts/prepare-static-output.mjs` | Checks after the build that the output is complete |
+| `site/public/` | Static files copied to the output as they are |
+
+Both languages share one address, `/docs/<slug>`: the site shows the version in the language the reader picked (kept in the browser), or, when none was picked, Chinese if the browser's first language is Chinese and English otherwise.
+
+## Previewing and building locally
+
+<Tabs items={["scripts/dev.py", "bun"]}>
+<Tab value="scripts/dev.py">
+
+```bash
+python scripts/dev.py site-install   # install the dependencies
+python scripts/dev.py site-dev       # preview locally, with hot reload
+python scripts/dev.py test-site      # tests and type-check
+python scripts/dev.py site           # build the static site
+```
+
+</Tab>
+<Tab value="bun">
+
+```bash
+cd site
+bun install
+bun run dev      # http://127.0.0.1:3000
+bun run check    # TypeScript type-check
+bun run test     # Vitest
+bun run build    # static site in site/.output/public
+```
+
+</Tab>
+</Tabs>
+
+The dev server is fixed at `http://127.0.0.1:3000` and fails when the port is taken rather than picking another. The build writes `site/.output/public`; the build script then runs `prepare-static-output.mjs`, which checks that every page listed in `meta.json` produced its HTML and copies `_shell.html` to `404.html`. A page in the sidebar with no file behind it therefore fails the build.
+
+## Writing a page
+
+<Steps>
+<Step>
+
+### Create two files
+
+In `site/content/docs/`, create `<slug>.mdx` (Chinese) and `<slug>.en.mdx` (English). Slugs are lowercase with hyphens, prefixed by their section (`guide-`, `clients-`, `providers-`, `cli-`, `config-`, `advanced-`, `api-`, `development-`). Both files have the same structure: the same sections in the same order, the same code blocks and links. The Chinese is natural Simplified Chinese, not a word-for-word translation; the English is plain and direct.
+
+</Step>
+<Step>
+
+### Write the frontmatter
+
+```mdx
+---
+title: "Quick start"
+description: "One or two sentences: what the page covers, what the reader can do after it."
+icon: Rocket
+---
+```
+
+| Field | Meaning |
+| --- | --- |
+| `title` | The page title; do not repeat it as a `#` heading in the body |
+| `description` | Shown under the title, and used for search and the page's metadata |
+| `icon` | A [Lucide](https://lucide.dev/icons/) icon name in PascalCase (such as `Rocket`, `Terminal`, `Settings`) |
+
+The body starts with a short paragraph, then `##` sections.
+
+</Step>
+<Step>
+
+### Add it to the sidebars
+
+Add the slug to `pages` in `meta.json` and `meta.en.json`, at the same position in both. Entries written `"---Title---"` are group headings, which each language words its own way; the list of page slugs and its order must be identical.
+
+</Step>
+<Step>
+
+### Check
+
+Run `bun run test` and `bun run build` (or `python scripts/dev.py test-site` and `site`), and read the page in both languages under `bun run dev`.
+
+</Step>
+</Steps>
+
+`site/src/lib/i18n-content.test.ts` checks two things: every Chinese page has an English version, and both sidebars list the same page slugs in the same order.
+
+### Components
+
+Pages can use these components directly, with no import:
+
+| Component | Used for |
+| --- | --- |
+| `<Callout type="info\|warn\|error" title="…">` | Notes and warnings; only where attention is needed, such as security or data loss |
+| `<Steps>` and `<Step>` | Procedures; each step starts with a `###` heading |
+| `<Tabs items={[...]}>` and `<Tab value="…">` | Several ways to do the same thing (pip / uv, bash / PowerShell) |
+| `<Cards>` and `<Card title href description />` | Cards pointing to other pages |
+| `<Accordions>` and `<Accordion title="…">` | Collapsible questions and answers |
+| `<Mermaid chart={...} />` | A Mermaid diagram that follows the site's light or dark theme |
+
+### Writing MDX
+
+- MDX is JSX: escape `{`, `}` and `<` in prose (write `\{`), or put them in inline code.
+- Leave a blank line before and after Markdown inside a component, or it is not parsed as Markdown.
+- Name the language of every code block: `bash`, `powershell`, `json`, `python`, `ts`, `http` and so on.
+- Keys are written `<kbd>Ctrl</kbd>`.
+
+### Links
+
+- Link other pages as `/docs/<slug>`, with no language prefix and no `.mdx`, written the same in both languages; add `#anchor` when needed. Anchors come from the heading text, so preferably link only to headings you wrote yourself.
+- Link source files as `https://github.com/licyk/Hoshimi/blob/main/<path>`.
+
+### The code is the reference
+
+Every statement must be backed by the code; when old documentation or memory disagrees with the code, the code wins. What cannot be confirmed is left out.
+
+| Page content | Backed by |
+| --- | --- |
+| Config keys and defaults | `hoshimi/core/config.py`, `hoshimi/core/paths.py`, `config.example.json` |
+| Commands and options | `hoshimi/cli/`; `hoshimi <command> --help` |
+| Environment variables | `hoshimi env` |
+| Endpoints | `hoshimi/api/routers/`; a running server's `/docs` and `/openapi.json` |
+| Provider registration and account fields | `hoshimi/core/providers/factory.py`, `hoshimi/core/provider_forms.py`, `hoshimi/core/provider_definitions.py` |
+| Web UI text | The labels in `hoshimi/webui/src/i18n/en.ts` on English pages and in `zh-CN.ts` on Chinese pages, in bold |
+
+To read command-line help, use a temporary data folder so the real one is untouched:
+
+```bash
+HOSHIMI_DATA_DIR=$(mktemp -d) python -m hoshimi serve --help
+```
+
+As for writing: be task-oriented; say what to do and why first, then the details. A reference page is complete (every command, key, endpoint); a guide walks through real tasks. Prefer examples the reader can copy: commands, JSON, curl.
+
+## The generated page
+
+The [Provider inventory](/docs/providers-inventory) (`providers-inventory.mdx` and `providers-inventory.en.mdx`) is generated by a script from `hoshimi/core/provider_sources.py`; do not edit it by hand:
+
+```bash
+python scripts/generate_provider_inventory.py
+```
+
+Both languages share one table; only the words around it differ. Run it again after changing `provider_sources.py`, and commit both generated files.
+
+## Deployment
+
+| Site | Address | How |
+| --- | --- | --- |
+| Main | [hoshimi.netlify.app](https://hoshimi.netlify.app) | Netlify builds `site/` on every push to `main`, configured by `netlify.toml` at the repository root; it skips builds when `site/` did not change |
+| Backup | [licyk.github.io/Hoshimi](https://licyk.github.io/Hoshimi/) | `.github/workflows/site.yml` builds with `VITE_BASE_PATH=/Hoshimi/` and publishes with GitHub's official Pages actions |
+
+The site can live under a sub-path: `VITE_BASE_PATH` sets Vite's `base`, and the routes and the search index follow it. Pages on the backup carry a canonical link to the Netlify site, so search engines treat the main site as the original. CI's shared checks also type-check, test and build the site.
+
+## Analytics and comments
+
+- **Analytics**: the site uses Umami, loaded in production builds only and counted on the two site domains alone; local previews are not counted.
+- **Comments**: every documentation page ends with Giscus comments, backed by this repository's GitHub Discussions in the "Comment" category. Each page has one discussion thread, matched by the page path `/docs/<slug>`, so a page's Chinese and English versions, on the main site and the backup alike, share one thread. The comments follow the site's theme and language. `giscus.json` at the repository root limits which sites may embed them.
+
+## The README
+
+The repository's `README.md` and `README.zh-CN.md` are also the project description on PyPI, so their links are full URLs (to this site or to GitHub), never paths relative to the repository.

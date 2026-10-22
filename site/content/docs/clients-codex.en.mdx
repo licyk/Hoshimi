@@ -1,0 +1,94 @@
+---
+title: "Codex"
+description: "Add Hoshimi as a model provider in the Codex CLI's config.toml and use any gateway model through the Responses API; covers reasoning effort, tool calls and common problems."
+icon: Terminal
+---
+
+The Codex CLI calls models over the OpenAI Responses protocol and lets you add your own model providers. With Hoshimi added, Codex can use any model in the gateway's catalogue: Hoshimi converts each Responses request to the upstream's own protocol.
+
+<Callout type="info" title="Not the codex provider">
+
+This page is about the Codex CLI as a client of Hoshimi. Hoshimi also has a provider called `codex`, which signs in with a ChatGPT account and offers Codex's models to the gateway; that is a different thing, see [Provider concepts](/docs/providers).
+
+</Callout>
+
+## Setup
+
+<Steps>
+<Step>
+
+### Find a model id
+
+Pick a model on the **Models** page or with `curl http://127.0.0.1:10600/v1/models`. Codex leans on tools heavily, so prefer models marked **Tools** on the **Models** page.
+
+</Step>
+<Step>
+
+### Edit config.toml
+
+Codex reads `~/.codex/config.toml` (or the one in `CODEX_HOME` when that is set). Add a provider and make it the default:
+
+```toml
+model = "<model-id>"
+model_provider = "hoshimi"
+
+[model_providers.hoshimi]
+name = "Hoshimi"
+base_url = "http://127.0.0.1:10600/v1"
+env_key = "HOSHIMI_API_KEY"
+wire_api = "responses"
+```
+
+- `base_url` includes `/v1`.
+- `env_key` names the environment variable holding the key; Codex sends its value as `Authorization: Bearer`.
+- `wire_api = "responses"` makes Codex call `/v1/responses`.
+
+</Step>
+<Step>
+
+### Set the key and run
+
+```bash
+export HOSHIMI_API_KEY="your-model-api-key"   # any non-empty value when no model API key is set
+codex
+```
+
+To switch models for one run:
+
+```bash
+codex -m "<another-model-id>"
+codex exec "Summarise the layout of this repository"
+```
+
+</Step>
+</Steps>
+
+## Reasoning effort
+
+Set it in `config.toml`, or override it on the command line with `-c`:
+
+```toml
+model_reasoning_effort = "low"
+```
+
+```bash
+codex -c model_reasoning_effort=high
+```
+
+Codex sends it as `reasoning.effort`, and Hoshimi maps it onto the model's own levels; the rules are in [OpenAI-compatible API](/docs/api-openai). The model's reasoning comes back as a `reasoning` item, which Codex shows as its thinking.
+
+## Tool calls
+
+Codex's tools for running commands and the like are `function` tools; Hoshimi converts them for the upstream and converts the model's calls back for Codex. The built-in tools Codex also sends, such as `web_search`, and tools of type `namespace` are not `function` tools, so Hoshimi drops them and the model never sees them.
+
+Codex sends the whole `input` every turn with `store: false`, which suits Hoshimi's stateless Responses endpoint.
+
+## Common problems
+
+| Symptom | Explanation |
+| --- | --- |
+| `Model metadata for '<id>' not found. Defaulting to fallback metadata` | A warning Codex prints for model names it does not know; requests go out as usual |
+| `stream disconnected before completion: stream closed before response.completed` | The upstream returned an error after the stream began, Hoshimi ended the stream with an error event, and Codex gave up after reconnecting a few times. Open the **Usage** page to read the call's error. In local tests the same tool-calling task finished on some models while others were refused by the upstream with `HTTP 400` on the second turn; another model usually works |
+| `401` | A model API key is set, but the variable named by `env_key` is empty or wrong |
+| `404`, `Model '…' not found` | `model` is not in the catalogue; `provider/model` names the provider |
+| `400`, `previous_response_id` | Does not happen with Codex's default configuration; Hoshimi keeps no responses, see [Connecting clients](/docs/clients) |

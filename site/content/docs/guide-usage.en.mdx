@@ -1,0 +1,132 @@
+---
+title: "Usage"
+description: "The Usage page: choose a range or a single day, read the headline tiles and the token and speed charts, break usage down by model, provider, account and API, and look at each call."
+icon: ChartLine
+---
+
+The **Usage** page records every call that goes through the gateway: how many tokens, how much was read from cache, time to first token and generation speed, which account of which channel answered, and whether it failed. The data is kept in `hoshimi.db` in the data folder and survives a restart. How usage is recorded and counted is in [Usage statistics](/docs/advanced-usage).
+
+Before any call, the page says **Nothing has been served yet**: send one request through the gateway (or say something in the Playground) and the data appears.
+
+## Ranges
+
+Choose a range at the left of the toolbar: **Day**, **24 hours**, **7 days** (the default), **30 days**, **90 days**. The range is part of the address (such as `#/usage?range=30d`), so a reload or a shared link opens the same one.
+
+With **Day**, a day navigator appears: the arrows step to the **Previous day** and **Next day**, and the button between them (**Today**, **Yesterday** or a date) opens a calendar. Days with usage are shaded by how many tokens they had; days after today, or before the first recorded day, cannot be chosen.
+
+| Range | Chart buckets | Compared with |
+| --- | --- | --- |
+| **Day** (today) | Hours | **Compared with yesterday up to this time** |
+| **Day** (a past day) | Hours | **Compared with the day before** |
+| **24 hours** | Hours | The 24 hours before |
+| **7 days**, **30 days**, **90 days** | Days | The span of the same length just before |
+
+Days follow the server's local time. At the right of the toolbar are the live connection's dot, a refresh button and a ⋮ menu ([Reset statistics](#reset-statistics)). When you change the range the page keeps the old numbers until the new ones arrive and then moves to them in one step, with a thin progress bar under the toolbar meanwhile.
+
+## Headline tiles
+
+Six tiles sum up the range. Each shows its value, the change from the previous span (hover to see what it is compared with) and a small trend line:
+
+| Tile | Value | The line under it |
+| --- | --- | --- |
+| **Total tokens** | Input + output tokens | The number of calls |
+| **Input tokens** | All input tokens | How many were uncached and how many written to cache |
+| **Output tokens** | All output tokens | How many of them were reasoning |
+| **Cache hit rate** | Input tokens read from cache, as a share of all input | Input tokens read from cache |
+| **Calls** | Requests | Failures and the failure rate |
+| **First token (median)** | The median time to first token | p95, and the median speed (tok/s) |
+
+While calls are running, **Running now (N)** appears under the tiles with a card per call, the same as [Live activity](/docs/guide) in the top bar.
+
+## Tokens over time
+
+A stacked bar chart shows tokens per hour or per day by kind: **Uncached input**, **Cache read**, **Cache write**, **Output** and **Reasoning** (output other than reasoning counts as **Output**). Hover a bar for each kind and the **Total**.
+
+- **24 hours** and **Day** are by the hour; hours of today still to come are drawn faint, not as a fall to zero.
+- **7 days**, **30 days** and **90 days** are by the day. Click a day's bar to open that day hour by hour (**Choose a day to see its hours**).
+- Hourly detail is kept for 120 days. An older day shows **Hour-by-hour detail is not kept for this day. The totals above still include it.**
+
+## Speed
+
+When there are measurements, two line charts appear: **Time to first token** and **Decode speed (tok/s)**, both averages per bucket; buckets without a measurement are left as gaps rather than drawn as zero.
+
+Calls whose decode took less than 250 ms, or ran faster than 250 tokens a second, are left out of the averages, so a rate that could not be measured does not pass for a fast one.
+
+## Breakdown
+
+**Breakdown** groups usage four ways, chosen by tab:
+
+| Tab | One row per |
+| --- | --- |
+| **Model** | Model id (the display name when there is one, with the id under it) |
+| **Provider** | Channel |
+| **Account** | Account of each channel |
+| **API** | The kind of API the call came through; see below |
+
+Each row shows **Calls**, **Tokens**, **Cache hit** (a bar split into uncached, cache read and cache write input, with the hit rate), **Output**, **TTFT p50**, **TTFT p95**, **tok/s** and **Failed**. Rows are sorted by tokens, most first; click a heading to sort by something else. Some columns are hidden on a narrow window.
+
+| API | Source |
+| --- | --- |
+| **Chat Completions** | `/v1/chat/completions` |
+| **Responses** | `/v1/responses` |
+| **Anthropic Messages** | `/v1/messages` |
+| **Classification** | `/v1/classify` (TypeSafe classifier models) |
+| **Playground** | Playground chats |
+| **Playground titles** | Naming new Playground chats |
+| **Playground image descriptions** | Describing images for models that cannot read them |
+
+**Click a row in the breakdown and the call list below shows only that row's calls**; a chip with its name appears above the list, and clicking it clears the filter.
+
+## Calls
+
+The **Calls** section lists every call in the range, newest first; scrolling down loads older ones. When the range runs to now, calls that finish join the top of the list.
+
+| Column | Contents |
+| --- | --- |
+| **Time** | The time for today's calls, the date for older ones; hover for the full time |
+| **Model** | The model, with the API and reasoning effort under it |
+| **Provider / account** | Which account of which channel answered |
+| **Tokens** | Input + output |
+| **Cached** | Input tokens read from cache |
+| **TTFT** | From receiving the request to the first token |
+| **Duration** | The whole call |
+| **tok/s** | Generation speed |
+| **Status** | **Served** or **Failed** |
+
+- **Search calls**: searches the model, provider, account, error code, error message and finish reason (case-insensitive).
+- **Failed only**: only calls that failed.
+
+Click a row to open **Call details**:
+
+- The model and status at the top; for a failure, the error code and a short error message.
+- **Time**, **Model**, **Provider**, **Account**, **API**, **Effort**, **Response** (**Streamed** or **Whole**), **Accounts tried** (how many accounts the rotation went through), **Finish reason**.
+- Tokens: an **Input by cache use** bar, then **Input tokens**, **Uncached input**, **Cache read** (with its share), **Cache write**, **Output tokens**, **Reasoning tokens**. **no usage reported** when the upstream did not report usage.
+- **Timing**: **TTFT**, **Decode**, **Duration**, **tok/s**.
+
+The arrows at the top right of the sheet (or the <kbd>↑</kbd> and <kbd>↓</kbd> keys) step to the **Newer call** and **Older call**.
+
+### What counts as a call, and as a failure
+
+- Each Chat Completions, Responses, Messages, classification and Playground request is one record, however many accounts it went through.
+- A request that errors is a failure, including a routing error that fails before reaching any upstream (such as an unknown model). A client that disconnects midway counts as served, not as a gateway failure.
+- Cache writes are read from `prompt_tokens_details.cache_write_tokens` (or `cache_creation_tokens`, or Anthropic's `cache_creation_input_tokens`); DeepSeek's `prompt_cache_hit_tokens` counts as a cache read.
+
+## How long data is kept
+
+| Data | Kept for |
+| --- | --- |
+| Each call's record | `server.stats_keep_days` days (default 90); change it in **Settings › General › Usage history** |
+| Hourly totals | 120 days |
+| Daily totals and lifetime counters | Forever |
+
+A new keep period applies from the next pruning, which runs with newly recorded calls at most once a minute. Statistics are written to the database about once a second, and on shutdown.
+
+## Reset statistics
+
+**Reset statistics** in the ⋮ menu clears every counter, chart and recorded call, after you confirm **Reset all usage statistics?**. **It cannot be undone.** Calls in flight at the time are still recorded when they end.
+
+<Callout type="warn" title="A reset cannot be undone">
+
+A reset deletes all usage data in `hoshimi.db`. To keep fewer records, lower **Keep calls for (days)** instead.
+
+</Callout>

@@ -1,0 +1,73 @@
+---
+title: "Development"
+description: "The way in for contributors: what Hoshimi is made of, what is authoritative, the conventions that apply everywhere, and what each development page covers."
+icon: Code
+---
+
+This section is for people who want to change Hoshimi: fix a bug, add a provider, add a page to the Web UI, change an API route, or maintain this documentation site. It describes what the code **is** today, the rules it keeps and why, not how to use it (for that, see the [Web UI guides](/docs/guide), the [command line](/docs/cli) and the [API reference](/docs/api)).
+
+## What is authoritative
+
+- **The code and its tests**: when anything else disagrees with them, they win. Many rules are tests themselves (the layering rule, the Web UI's layout and colour rules, matching i18n keys), so a change that breaks one does not pass CI.
+- **This site**: it replaces the repository's old `docs/` folder and is Hoshimi's only documentation. A change users can see (a command, an option, a config key, an endpoint, the interface) updates the matching pages, in Chinese and in English; see [Documentation site](/docs/development-site).
+- **Reference projects**: protocols and behaviour come from local clones of a few outside repositories. They are excluded by `.gitignore` and are not runtime dependencies; see [Reference projects](#reference-projects) below.
+
+## One distribution, four layers
+
+Hoshimi is one Python distribution, `hoshimi`; the built Web UI (`hoshimi/webui/dist/`) ships inside the wheel. The package has four layers:
+
+| Folder | Contents | Frameworks |
+| --- | --- | --- |
+| `hoshimi/core/` | All logic: configuration, credentials, provider adapters, routing, protocol translation, usage accounting, login flows, the Playground's tools | Imports no web or command-line framework; reaches upstreams with httpx only |
+| `hoshimi/api/` | The FastAPI app: middleware, routes (the `/v1` model API and the `/api/v1` management API), the Web UI's static files | FastAPI, Starlette |
+| `hoshimi/cli/` | Typer commands: `serve`, `check`, `models`, `providers`, `stations`, `login`, `version`, `env`, `config` | Typer, Rich |
+| `hoshimi/webui/` | The Vue 3 + Vite interface; `dist/` ships in the package | Built with Bun, not a Python dependency |
+
+The API and the command line start from the same place: `hoshimi.core.context.build_services()` builds every service once into a `Services`. `core` does not know who calls it: `tests/core/test_architecture.py` makes sure it imports none of FastAPI, Starlette, Typer, Click, Uvicorn or Rich, and never refers to `hoshimi.api` or `hoshimi.cli`. [Architecture](/docs/development-architecture) starts from that rule.
+
+## Pages
+
+<Cards>
+  <Card title="Development setup" href="/docs/development-setup" description="The repository layout, the Python environment, bun, every scripts/dev.py task, and the dev mode that runs the API and Vite together." />
+  <Card title="Architecture" href="/docs/development-architecture" description="The core / api / cli / webui layers, how Services is assembled, the app factory, error mapping, and one request end to end." />
+  <Card title="Provider adapters" href="/docs/development-providers" description="The Provider contract, the normalized chunk protocol, errors and account rotation, catalogues and capabilities, and login flows." />
+  <Card title="Web UI" href="/docs/development-webui" description="How the Vue app is laid out, types generated from OpenAPI, i18n, theme and tokens, layers and motion, and the layout rules." />
+  <Card title="Testing" href="/docs/development-testing" description="The pytest layout and shared fixtures, the Vitest rule tests, the generated-type check, and check_layout.py for sideways overflow in real browsers." />
+  <Card title="CI and releases" href="/docs/development-release" description="The CI workflows, the version, building and checking the wheel, publishing to PyPI and GitHub, and deploying the docs site." />
+  <Card title="Documentation site" href="/docs/development-site" description="How this site is organised, writing pages, previewing and building, deployment, analytics and comments." />
+</Cards>
+
+## Conventions that apply everywhere
+
+**Python**
+
+- Python 3.10 and newer; CI type-checks 3.10–3.14 on Linux, Windows and macOS and runs the tests on 3.10, 3.12 and 3.14.
+- Ruff lints and formats, with a line length of 180; only absolute imports are allowed (`ban-relative-imports = "all"`).
+- ty checks types, targeting Python 3.10; in CI a warning fails the check.
+- `import hoshimi` loads neither FastAPI nor httpx: the package's public names (`VERSION`, `Services`, `build_services`, `create_app`) are exported lazily, and `tests/test_package_api.py` checks it.
+
+**Web UI**
+
+- Modules import each other through the `@/` alias, never by a relative path; no hex colours outside `src/theme/`; every scrolling area uses `.app-scroll`. All of these are tested; see [Web UI](/docs/development-webui).
+- The interface text exists in English, Simplified Chinese and Japanese, with the same keys and placeholders.
+
+**The API contract**
+
+- The Web UI's TypeScript types are generated from the server's OpenAPI document (`src/api/schema.d.ts`) and committed; CI regenerates them and fails on a difference. A change to a management API model means running `python scripts/dev.py typegen` and committing the result.
+
+**Documentation**
+
+- A change users can see updates this site's pages in the same commit, in both languages.
+
+## Reference projects
+
+These repositories sit as local clones in the repository root, to compare protocols and behaviour against. They are all in `.gitignore`: they never enter this repository and Hoshimi does not depend on them.
+
+| Clone | Used for |
+| --- | --- |
+| `codex-api` | Reference for the server and its security |
+| `dsh-our-free-model` | Protocol reference for the free stations; the bundled EAC relay seal is ported from it (MIT) |
+| `Hanaikada` | The layered Python + Vue skeleton Hoshimi follows; `scripts/dev.py` comes from it too |
+| `pi`, `pi-free`, `free-claude-code` | Sources of the provider definitions; the [Provider inventory](/docs/providers-inventory) records their snapshots |
+
+Development, tests and builds work without these clones: the tests never read them (`tests/core/test_provider_definitions.py` deliberately does not depend on reference checkouts).

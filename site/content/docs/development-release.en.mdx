@@ -1,0 +1,151 @@
+---
+title: "CI and releases"
+description: "Where the version lives, how the wheel gets the built Web UI and is checked, what each of the four CI workflows does, how one push publishes a new version to PyPI and GitHub, and how the docs site is deployed."
+icon: Package
+---
+
+Hoshimi publishes one distribution: the `hoshimi` wheel and sdist, both containing the built Web UI. CI runs the same checks and build for every push and pull request; when a push to a release branch changes `hoshimi/version.py`, CI publishes to PyPI **the very files that run checked and built**. The documentation site is deployed separately from the distribution.
+
+## The version
+
+| File | Contents |
+| --- | --- |
+| `hoshimi/version.py` | `VERSION = "x.y.z"`, the only source: `pyproject.toml` reads it through `dynamic = ["version"]`, and `hoshimi version` shows it |
+| `hoshimi/webui/package.json` | `version` follows by hand, changed in the same release commit; nothing checks that the two agree |
+
+When a `v<version>` tag is pushed, the build job requires the tag to match `hoshimi/version.py` (`0.5.0` goes with `v0.5.0`) and fails otherwise.
+
+## Building the distribution: `scripts/build_wheel.py`
+
+setuptools packages only the files that exist when it runs, so the Web UI must be built first; a bare `python -m build` can produce a package with no interface. `build_wheel.py` does it in order:
+
+1. `bun install --frozen-lockfile` in `hoshimi/webui`;
+2. `bun run build` (with the vue-tsc type-check), or `bun run build:only` with `--ci` (CI type-checks and tests separately);
+3. `python -m build --outdir <folder>`, producing the wheel and the sdist;
+4. unless `--ci` or `--keep-web-dist`, removes `hoshimi/webui/dist`, leaving the checkout as it was.
+
+```bash
+python scripts/dev.py wheel                     # the same as python scripts/build_wheel.py
+python scripts/build_wheel.py --keep-web-dist   # keeps dist/, so hoshimi serve can use it afterwards
+```
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `--ci` | True when the `CI` environment variable is set | Skips the Web UI type-check and keeps the built interface |
+| `--keep-web-dist` | True when `KEEP_WEB_DIST` is set | Keeps `hoshimi/webui/dist` after the build |
+| `--outdir` | `dist/` | Where the wheel and sdist go |
+
+`pyproject.toml` sets `include-package-data = false` and declares only `dist/**/*` of `hoshimi.webui` as package data, so the distribution holds the built interface and none of its sources or `node_modules`.
+
+## Checking an installed distribution: `scripts/smoke_install.py`
+
+This script runs with **the installed distribution's interpreter**, in isolated mode (`python -I scripts/smoke_install.py`):
+
+- it makes sure the `hoshimi` it imported comes from the installation, not the checkout;
+- it runs `python -m hoshimi version`;
+- in a temporary data folder it builds the app and, through `TestClient`, requests `/health`, the home page (which must contain "Hoshimi"), every file under `assets/` and `/api/v1/providers`, and checks there is a favicon.
+
+## CI workflows
+
+There are four workflows in `.github/workflows/`:
+
+| Workflow | Triggered by | What it does |
+| --- | --- | --- |
+| `ci.yml` | Pushes to `main` or `hoshimi_main`, `v*` tags, pull requests, manual runs | The one automatic entry point: release plan, checks, build, and publishing when needed |
+| `checks.yml` | Called by `ci.yml` and `release.yml` | The shared checks: Ruff, ty, pytest, the Web UI and API contract; see [Testing](/docs/development-testing) |
+| `build.yml` | Called by `ci.yml` and `release.yml`; also manual | Builds and checks the wheel and sdist |
+| `release.yml` | Called by `ci.yml`; also manual | Publishes to PyPI; a tag also creates a GitHub release |
+
+### `ci.yml`
+
+Runs on the same ref queue up; only a new push to a pull request cancels the run in progress, so a newer push never interrupts a version that is being checked, built or published. The jobs:
+
+| Job | Needs | What it does |
+| --- | --- | --- |
+| Release plan | — | Checks out the full history, runs `python3 scripts/ci.py`, outputs `release=true` or `false` |
+| Checks | — | Calls `checks.yml` |
+| Distribution | Release plan, Checks | Calls `build.yml` |
+| Release | Release plan, Distribution | Only when `release` is true: calls `release.yml` with the version that was built |
+
+The release workflow has no push trigger of its own, so one push runs one copy of the checks and the build, and what gets published is what they produced.
+
+### The release plan: `scripts/ci.py`
+
+It decides whether this push publishes:
+
+- A pushed tag starting with `v`: publish.
+- A push to `main` or `hoshimi_main` that changed `hoshimi/version.py`: publish. The comparison uses the local Git history (`git diff <before> <after> -- hoshimi/version.py`), not GitHub's compare API.
+- The first push of a new branch (an all-zero `before`): compares against the parent of the oldest pushed commit; when the event carries no commit details, against the empty tree, so a first release is never missed.
+- Pull requests, manual runs, branch deletions and other branches: no.
+
+`tests/cli/test_ci.py` covers these cases, including a version changed and changed back, which is not a release.
+
+### `build.yml`
+
+On Ubuntu, with Python 3.11, uv, Node 24 and bun 1.4.2:
+
+1. Reads `hoshimi.version.VERSION`; on a tag push, checks that the tag matches it.
+2. `python scripts/build_wheel.py --ci`.
+3. `twine check --strict dist/*`, and checks that the wheel holds `hoshimi/webui/dist/index.html`, a favicon (`.svg`) under `assets/` and the interface's `.js`, and that the sdist holds `index.html` too.
+4. Installs the wheel in a separate virtual environment and runs `hoshimi version` and `smoke_install.py`.
+5. Rebuilds a wheel from the sdist, installs it in another virtual environment and runs `smoke_install.py` again.
+6. Uploads `dist/` as the `distributions` artifact, kept for 14 days.
+
+### `release.yml`
+
+| Job | When | What it does |
+| --- | --- | --- |
+| Checks, Distribution | Manual runs only | Runs `checks.yml` and `build.yml` first |
+| Publish to PyPI | The ref is `main`, `hoshimi_main` or a tag; on a manual run, also `publish` switched on and the checks and build succeeded | In the `pypi` environment, downloads the `distributions` artifact and runs `twine upload dist/* --skip-existing --non-interactive` |
+| GitHub release | Publishing succeeded and the ref is a tag | Creates a GitHub release named after the tag with these files attached and generated notes; if the release exists, re-uploads the files with `--clobber` |
+
+Releases queue in the `hoshimi-pypi-release` group and are never cancelled, so a version push and the tag push that follows never upload at the same time.
+
+## Releasing a version
+
+<Steps>
+<Step>
+
+### Change the version
+
+Change `VERSION` in `hoshimi/version.py`, and bring `version` in `hoshimi/webui/package.json` along. By convention the commit message is `chore: release x.y.z`.
+
+</Step>
+<Step>
+
+### Push to `main`
+
+CI checks, builds, checks the installed packages, then uploads those files to PyPI. The Release job shows in Actions; if the `pypi` environment requires approval, approve it there.
+
+</Step>
+<Step>
+
+### Push a tag (optional)
+
+```bash
+git tag v0.5.0
+git push origin v0.5.0
+```
+
+The tag runs CI once more: it checks the tag against the version, skips the files PyPI already has, then creates a GitHub release with the distributions and generated notes.
+
+</Step>
+</Steps>
+
+### A manual Release run
+
+A manual run of the **Release** workflow in Actions runs the same checks and build first. Its `publish` input is off by default, which produces checked files only (download the `distributions` artifact to look at them); switch it on and run it on `main`, `hoshimi_main` or a tag to publish.
+
+### Credentials
+
+Uploads use a PyPI API token: set `TWINE_PASSWORD` in the `pypi` environment or the repository's secrets (the user name is always `__token__`). Without it, the publish job reports an error and fails.
+
+## Deploying the documentation site
+
+This site (`site/`) is deployed separately from the distribution:
+
+- **Netlify** (the main site, [hoshimi.netlify.app](https://hoshimi.netlify.app)): builds `site/` on every push to `main`, configured by `netlify.toml` at the repository root; it skips the build when `site/` did not change.
+- **GitHub Pages** (the backup, [licyk.github.io/Hoshimi](https://licyk.github.io/Hoshimi/)): `.github/workflows/site.yml` builds the site with `VITE_BASE_PATH=/Hoshimi/` and publishes it with GitHub's official Pages actions. Pages on the backup carry a canonical link to the Netlify site.
+- CI's shared checks also type-check, test and build the documentation site, so a change that breaks the site's build does not pass CI.
+
+How the site is organised, written and built locally is in [Documentation site](/docs/development-site).

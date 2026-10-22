@@ -2,6 +2,8 @@
 
 [English](https://github.com/licyk/Hoshimi/blob/main/README.md) | [简体中文](https://github.com/licyk/Hoshimi/blob/main/README.zh-CN.md)
 
+**[官网](https://hoshimi.netlify.app)** · **[文档](https://hoshimi.netlify.app/docs)**
+
 探索星辰，连接不同的模型。
 
 Hoshimi 将免费模型站点、云服务和本地模型接入同一个网关，提供 OpenAI 与 Anthropic
@@ -36,8 +38,8 @@ hoshimi config path
 ```
 
 可选云依赖、CLI 参数、源码安装见
-[安装指南](https://github.com/licyk/Hoshimi/blob/main/docs/installation.zh-CN.md)，
-配置路径与旧版迁移见[配置说明](https://github.com/licyk/Hoshimi/blob/main/docs/configuration.zh-CN.md)。
+[安装指南](https://hoshimi.netlify.app/docs/installation)，
+配置路径与旧版迁移见[配置说明](https://hoshimi.netlify.app/docs/config)。
 
 ## 首次调用
 
@@ -56,8 +58,8 @@ Chat Completions 默认流式输出，传入 `"stream": false` 可返回 JSON。
 
 OpenAI 兼容客户端的 Base URL 通常设为 `http://127.0.0.1:10600/v1`；
 Anthropic 兼容 Agent 使用 `http://127.0.0.1:10600`，从同一目录选择模型。
-详细说明见 [API 接入](https://github.com/licyk/Hoshimi/blob/main/docs/api.zh-CN.md)和
-[Anthropic Agent](https://github.com/licyk/Hoshimi/blob/main/docs/anthropic-api.zh-CN.md)。
+详细说明见 [API 接入](https://hoshimi.netlify.app/docs/clients)和
+[Anthropic Agent](https://hoshimi.netlify.app/docs/clients-anthropic)。
 
 ## 访问密钥
 
@@ -68,22 +70,22 @@ Anthropic 兼容 Agent 使用 `http://127.0.0.1:10600`，从同一目录选择�
 
 供应商自身的凭据在渠道账户中单独配置。网关密钥留空仅关闭对应接口的鉴权。
 局域网访问需配置工具密钥和允许的客户端网段，见
-[鉴权说明](https://github.com/licyk/Hoshimi/blob/main/docs/authentication.zh-CN.md)。
+[鉴权说明](https://hoshimi.netlify.app/docs/config-security)。
 
 ## 文档
 
-[完整文档目录](https://github.com/licyk/Hoshimi/blob/main/docs/README.zh-CN.md)
+[完整文档目录](https://hoshimi.netlify.app/docs)
 
 | 用途 | 指南 |
 | --- | --- |
-| 安装、升级和使用 Web UI | [安装](https://github.com/licyk/Hoshimi/blob/main/docs/installation.zh-CN.md) |
-| 配置字段、路径和旧版迁移 | [配置](https://github.com/licyk/Hoshimi/blob/main/docs/configuration.zh-CN.md) |
-| 密钥、登录与 EAC | [鉴权](https://github.com/licyk/Hoshimi/blob/main/docs/authentication.zh-CN.md) |
-| 接入客户端和 Agent | [API](https://github.com/licyk/Hoshimi/blob/main/docs/api.zh-CN.md) · [Anthropic](https://github.com/licyk/Hoshimi/blob/main/docs/anthropic-api.zh-CN.md) |
-| 添加云服务与本地账户 | [供应商](https://github.com/licyk/Hoshimi/blob/main/docs/providers.zh-CN.md) · [云平台](https://github.com/licyk/Hoshimi/blob/main/docs/cloud-providers.zh-CN.md) · [NVIDIA](https://github.com/licyk/Hoshimi/blob/main/docs/nvidia.zh-CN.md) |
-| 了解能力、重试、配额和统计 | [模型与运行行为](https://github.com/licyk/Hoshimi/blob/main/docs/model-behavior.zh-CN.md) |
-| 开发、构建和发布 | [开发](https://github.com/licyk/Hoshimi/blob/main/docs/development.zh-CN.md) |
-| 查看移植覆盖和协议差异 | [供应商清单](https://github.com/licyk/Hoshimi/blob/main/docs/provider-inventory.md) · [OpenCode](https://github.com/licyk/Hoshimi/blob/main/docs/opencode-integration.zh-CN.md) · [pi-free](https://github.com/licyk/Hoshimi/blob/main/docs/pi-free.zh-CN.md) |
+| 安装、升级和使用 Web UI | [安装](https://hoshimi.netlify.app/docs/installation) |
+| 配置字段、路径和旧版迁移 | [配置](https://hoshimi.netlify.app/docs/config) |
+| 密钥、登录与 EAC | [鉴权](https://hoshimi.netlify.app/docs/config-security) |
+| 接入客户端和 Agent | [API](https://hoshimi.netlify.app/docs/clients) · [Anthropic](https://hoshimi.netlify.app/docs/clients-anthropic) |
+| 添加云服务与本地账户 | [供应商](https://hoshimi.netlify.app/docs/providers) · [云平台](https://hoshimi.netlify.app/docs/providers-cloud) · [NVIDIA](https://hoshimi.netlify.app/docs/providers-nvidia) |
+| 了解能力、重试、配额和统计 | [模型与运行行为](https://hoshimi.netlify.app/docs/advanced-models) |
+| 开发、构建和发布 | [开发](https://hoshimi.netlify.app/docs/development) |
+| 查看移植覆盖和协议差异 | [供应商清单](https://hoshimi.netlify.app/docs/providers-inventory) · [OpenCode](https://hoshimi.netlify.app/docs/clients-opencode) · [pi-free](https://hoshimi.netlify.app/docs/advanced-pi-free) |
 
 完整端点定义见运行中服务的 `/docs` 和 `/openapi.json`，已配置鉴权时使用工具访问密钥。
 

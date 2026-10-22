@@ -1,0 +1,151 @@
+---
+title: "CI 与发布"
+description: "版本号放在哪里、wheel 怎样带上 Web UI 构建并检查、CI 的四个工作流各做什么、一次推送怎样把新版本发布到 PyPI 和 GitHub，以及文档站怎样部署。"
+icon: Package
+---
+
+Hoshimi 发布一个发行包：`hoshimi` 的 wheel 和 sdist，二者都包含构建好的 Web UI。CI 对每次推送和拉取请求做同样的检查和构建；推送到发布分支时改动了 `hoshimi/version.py`，CI 就把**同一次运行中检查过、构建过**的文件发布到 PyPI。文档站与发行包分开部署。
+
+## 版本号
+
+| 文件 | 内容 |
+| --- | --- |
+| `hoshimi/version.py` | `VERSION = "x.y.z"`，唯一的来源：`pyproject.toml` 通过 `dynamic = ["version"]` 读取它，`hoshimi version` 显示它 |
+| `hoshimi/webui/package.json` | `version` 手动跟随，发布提交里一起修改；没有检查强制二者一致 |
+
+推送 `v<版本>` 标签时，构建作业要求标签与 `hoshimi/version.py` 一致（`0.5.0` 对应 `v0.5.0`），否则失败。
+
+## 构建发行包：`scripts/build_wheel.py`
+
+setuptools 只打包运行时已经存在的文件，所以必须先构建 Web UI；直接运行 `python -m build` 可能得到一个没有界面的包。`build_wheel.py` 按顺序完成：
+
+1. 在 `hoshimi/webui` 中 `bun install --frozen-lockfile`；
+2. `bun run build`（含 vue-tsc 类型检查），或 `--ci` 时 `bun run build:only`（CI 已单独做过类型检查和测试）；
+3. `python -m build --outdir <目录>`，产出 wheel 和 sdist；
+4. 不是 `--ci` 也没有 `--keep-web-dist` 时，删除 `hoshimi/webui/dist`，让源码目录恢复原样。
+
+```bash
+python scripts/dev.py wheel                     # 等同于 python scripts/build_wheel.py
+python scripts/build_wheel.py --keep-web-dist   # 保留 dist/，之后可以直接 hoshimi serve
+```
+
+| 选项 | 默认值 | 作用 |
+| --- | --- | --- |
+| `--ci` | 设置了 `CI` 环境变量时为真 | 跳过 Web UI 的类型检查，并保留构建好的界面 |
+| `--keep-web-dist` | 设置了 `KEEP_WEB_DIST` 时为真 | 构建后保留 `hoshimi/webui/dist` |
+| `--outdir` | `dist/` | wheel 和 sdist 的输出目录 |
+
+`pyproject.toml` 设置 `include-package-data = false`，只把 `hoshimi.webui` 的 `dist/**/*` 声明为包数据，所以发行包里只有构建好的界面，没有界面的源码和 `node_modules`。
+
+## 检查安装后的发行包：`scripts/smoke_install.py`
+
+这个脚本用**已安装发行包的解释器**以隔离模式运行（`python -I scripts/smoke_install.py`）：
+
+- 确认导入的 `hoshimi` 来自安装位置，而不是源码目录；
+- 运行 `python -m hoshimi version`；
+- 在一个临时数据目录中构建应用，用 `TestClient` 请求 `/health`、首页（必须含有 “Hoshimi”）、`assets/` 下的每个文件和 `/api/v1/providers`，并确认有 favicon。
+
+## CI 工作流
+
+`.github/workflows/` 下有四个工作流：
+
+| 工作流 | 触发 | 作用 |
+| --- | --- | --- |
+| `ci.yml` | 推送到 `main` 或 `hoshimi_main`、推送 `v*` 标签、拉取请求、手动触发 | 唯一的自动入口：发布计划、检查、构建，需要时发布 |
+| `checks.yml` | 由 `ci.yml` 和 `release.yml` 调用 | 共享的检查：Ruff、ty、pytest、Web UI 与 API 契约，见[测试](/docs/development-testing) |
+| `build.yml` | 由 `ci.yml` 和 `release.yml` 调用；也可手动触发 | 构建并检查 wheel 和 sdist |
+| `release.yml` | 由 `ci.yml` 调用；也可手动触发 | 发布到 PyPI；标签还会创建 GitHub 发布 |
+
+### `ci.yml`
+
+同一个引用上的运行排队执行；只有拉取请求的新推送会取消正在进行的运行，所以较新的推送不会打断正在检查、构建或发布的版本。作业：
+
+| 作业 | 依赖 | 内容 |
+| --- | --- | --- |
+| Release plan | — | 检出完整历史，运行 `python3 scripts/ci.py`，输出 `release=true` 或 `false` |
+| Checks | — | 调用 `checks.yml` |
+| Distribution | Release plan、Checks | 调用 `build.yml` |
+| Release | Release plan、Distribution | 仅当 `release` 为真：调用 `release.yml`，传入构建出的版本号 |
+
+发布工作流没有自己的推送触发，所以一次推送只会运行一份检查和构建，发布的正是它们产出的文件。
+
+### 发布计划：`scripts/ci.py`
+
+它决定这次推送是否发布：
+
+- 推送 `v` 开头的标签：发布。
+- 推送到 `main` 或 `hoshimi_main`，且这次推送改动了 `hoshimi/version.py`：发布。比较用的是本地的 Git 历史（`git diff <before> <after> -- hoshimi/version.py`），而不是 GitHub 的比较 API。
+- 新分支的第一次推送（`before` 全为零）：与最早推送的那个提交的父提交比较；事件里没有提交信息时与空树比较，这样第一次发布不会被漏掉。
+- 拉取请求、手动触发、删除分支或其他分支：不发布。
+
+`tests/cli/test_ci.py` 覆盖这些情形，包括“版本改了又改回来”不算发布。
+
+### `build.yml`
+
+在 Ubuntu 上，用 Python 3.11、uv、Node 24 和 bun 1.4.2：
+
+1. 读取 `hoshimi.version.VERSION`；标签推送时检查标签与之相符。
+2. `python scripts/build_wheel.py --ci`。
+3. `twine check --strict dist/*`，并确认 wheel 中有 `hoshimi/webui/dist/index.html`、`assets/` 下的 favicon（`.svg`）和界面的 `.js`，sdist 中也有 `index.html`。
+4. 在一个独立的虚拟环境中安装 wheel，运行 `hoshimi version` 和 `smoke_install.py`。
+5. 从 sdist 重新构建 wheel，安装到另一个虚拟环境，再运行 `smoke_install.py`。
+6. 把 `dist/` 上传为 `distributions` 产物，保留 14 天。
+
+### `release.yml`
+
+| 作业 | 条件 | 内容 |
+| --- | --- | --- |
+| Checks、Distribution | 仅手动触发 | 先运行 `checks.yml` 和 `build.yml` |
+| Publish to PyPI | 引用是 `main`、`hoshimi_main` 或标签；手动触发时还要求打开 `publish` 且检查和构建都成功 | 在 `pypi` 环境中下载 `distributions` 产物，`twine upload dist/* --skip-existing --non-interactive` |
+| GitHub release | 发布成功且引用是标签 | 以标签为名创建 GitHub 发布并附上这些文件，说明自动生成；发布已存在时用 `--clobber` 重新上传文件 |
+
+发布按 `hoshimi-pypi-release` 组排队，从不取消，所以一次版本推送和随后的标签推送不会同时上传。
+
+## 发布一个版本
+
+<Steps>
+<Step>
+
+### 改版本号
+
+修改 `hoshimi/version.py` 的 `VERSION`，并让 `hoshimi/webui/package.json` 的 `version` 跟上。按惯例，提交信息为 `chore: release x.y.z`。
+
+</Step>
+<Step>
+
+### 推送到 `main`
+
+CI 检查、构建、在安装后检查，然后把这些文件上传到 PyPI。在 Actions 中可以看到 Release 作业；`pypi` 环境若配置了审批，要在这里批准。
+
+</Step>
+<Step>
+
+### 推送标签（可选）
+
+```bash
+git tag v0.5.0
+git push origin v0.5.0
+```
+
+标签会再运行一次 CI：检查标签与版本号一致，上传时跳过 PyPI 上已有的文件，然后创建带有发行包和自动生成说明的 GitHub 发布。
+
+</Step>
+</Steps>
+
+### 手动运行 Release
+
+在 Actions 中手动运行 **Release** 工作流时，它先运行同样的检查和构建。输入 `publish` 默认关闭，此时只产出检查过的文件，可以下载 `distributions` 产物查看；打开它并在 `main`、`hoshimi_main` 或标签上运行，才会发布。
+
+### 凭据
+
+上传使用 PyPI API 令牌：在 `pypi` 环境或仓库的机密中设置 `TWINE_PASSWORD`（用户名固定为 `__token__`）。没有设置时，发布作业给出错误并失败。
+
+## 文档站的部署
+
+本站（`site/`）与发行包分开部署：
+
+- **Netlify**（主站，[hoshimi.netlify.app](https://hoshimi.netlify.app)）：每次推送到 `main` 都构建 `site/`，配置在仓库根目录的 `netlify.toml`；`site/` 没有改动时跳过构建。
+- **GitHub Pages**（备份，[licyk.github.io/Hoshimi](https://licyk.github.io/Hoshimi/)）：`.github/workflows/site.yml` 以 `VITE_BASE_PATH=/Hoshimi/` 构建站点，并用 GitHub 官方的 Pages actions 发布。备份站的页面带有指向 Netlify 站点的 canonical 链接。
+- CI 的共享检查也会对文档站做类型检查、测试和构建，所以一个让站点构建失败的改动过不了 CI。
+
+站点的结构、写法和本地构建见[文档站](/docs/development-site)。

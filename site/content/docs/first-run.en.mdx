@@ -1,0 +1,115 @@
+---
+title: "First run"
+description: "What you see after starting Hoshimi for the first time: what appears in the data folder, the layout of the interface, signing in when an access key is set, the two anonymous channels that are on by default, and where everything is."
+icon: Compass
+---
+
+This page walks through the interface after the first start. If Hoshimi is not installed yet, begin with the [Quick start](/docs/quick-start).
+
+## What happens at start
+
+```bash
+hoshimi serve
+```
+
+- **No configuration file is needed.** Without `config.json`, Hoshimi uses every default: it listens on `127.0.0.1:10600`, sets no key, and enables only the two anonymous channels. `config.json` is created the first time you save a setting, add an account or run `hoshimi config set`.
+- **The data folder.** The server creates `hoshimi.db` (usage, check-in records, probe verdicts and Playground conversations) and `server.json` (the running server's address and PID) in the data folder. Where that folder is, is covered in [Data folder](/docs/config-paths); it is also shown under **Settings › About**.
+- **Background timers.** Credential renewal (every 30 minutes) and daily check-in start with the server, each with a line in the log. The server also asks PyPI in the background whether a newer release exists. All three can be turned off, see [Configuration](/docs/config).
+- **The browser.** About a second later the browser opens `http://127.0.0.1:10600`, and the address becomes `http://127.0.0.1:10600/#/overview`. Page addresses all live after the `#` and can be bookmarked, such as `#/playground` or `#/settings?tab=access`.
+
+## Layout
+
+| Where | What |
+| --- | --- |
+| Navigation rail on the left | **Overview**, **Models**, **Channels**, **Usage**, **Playground**; **Settings** sits at the foot of the rail. In a narrow window the rail becomes a bar at the bottom. When channels need attention, **Channels** carries a count badge |
+| Top right | The **Live activity** button: shows how many calls are running, and opens today's tokens, calls and cache hit rate with the calls running now and just finished. Next to it, the theme button cycles **Light**, **Dark** and **System** |
+
+The interface language follows the system (English, Simplified Chinese and Japanese are available); pin one under **Settings › General › Language**. Theme, colour, contrast and motion are under **Settings › Appearance**. These preferences are kept in this browser only, not on the server.
+
+## Signing in (when a tool access key is set)
+
+By default there is no key and the interface opens straight away. The foot of the **Endpoints** section on the **Overview** page then says **No tool access key is set.**
+
+Once a tool access key (`server.access_token`) is set, a browser's first visit shows the **Tool access key required** dialog:
+
+1. Enter the key in **Tool access key**.
+2. Click **Sign in** (or press <kbd>Enter</kbd>). A wrong key shows **The tool access key is incorrect.**, and a previously saved key is kept.
+
+Once accepted, the key is saved in this browser's localStorage and not asked for again; another browser or device must sign in itself. When you change or clear the key under **Settings › Access › Keys**, the current browser updates on its own and other browsers must sign in again.
+
+Three ways to set the key:
+
+```bash
+hoshimi config set server.access_token "a-long-random-string"   # saved to the configuration, applies after a restart
+hoshimi serve --access-token "a-long-random-string"             # this start only
+```
+
+Or save it under **Settings › Access › Keys › Tool access key**, which applies at once.
+
+The tool access key protects the Web UI and the management API (`/api/v1/*`, `/docs`, `/openapi.json`); the model API `/v1/*` is protected by a separate, independent **Model API key**. The Playground goes through the management API, so it needs only the tool access key. The two keys and LAN access are covered in [Security](/docs/config-security).
+
+<Callout type="info" title="The API reference button">
+
+The **API reference** button on **Overview** and under **Settings › About** appears only while no tool access key is set: `/docs` is a plain page and cannot send the key saved in the browser. With a key set, fetch `/openapi.json` with `Authorization: Bearer <tool-access-key>`, see [API reference](/docs/api).
+
+</Callout>
+
+## The two default anonymous channels
+
+With no configuration at all, Hoshimi enables two channels that need no account:
+
+| Channel | ID | What it is |
+| --- | --- | --- |
+| OpenCode Zen | `opencode` | OpenCode's anonymous free entry point |
+| Kilo AI | `kilo` | Kilo's anonymous free entry point |
+
+On **Overview** and **Channels** they show as **Ready**, with **No account needed** where the account count would be; a channel's page says **This channel works without an account; add one for a larger allowance.** Which models they offer, and how much, depends on the upstream catalogue and service state at the time and can change without notice; adding an account of your own can also change the catalogue the upstream returns.
+
+To confirm from the command line:
+
+```bash
+$ hoshimi check
+ok: 2 provider(s), 0 account(s) — kilo:0 (keyless), opencode:0 (keyless)
+config: /home/you/.local/share/hoshimi/config.json
+```
+
+If you do not want them, switch off **Enabled** on the channel's page, or:
+
+```bash
+hoshimi config set providers.kilo.enabled false
+hoshimi config set providers.opencode.enabled false
+```
+
+(Command-line changes apply after the server restarts.) The two anonymous lanes are covered in [Anonymous channels](/docs/providers-anonymous).
+
+## The pages
+
+| Page | What you see the first time | Guide |
+| --- | --- | --- |
+| **Overview** | **Today** (tokens, calls, cache hit, running now, and a 24-hour trend); **Endpoints** (the base URL and each endpoint, with copy buttons); **Channels** (the channels that are set up, with their status); **Server** (version, latest version, default model) | [Overview](/docs/guide-overview) |
+| **Models** | The catalogue of the two anonymous channels. It loads channel by channel (**Loading providers: n/m**); search it, filter by **Provider** and **Availability**, and use **Probe** to check which models answer right now; each row can **Copy the model id** or **Open in the Playground** | [Models](/docs/guide-models) |
+| **Channels** | Every station and service you can connect. The filter above switches between **All**, **In use**, **Needs attention**, **Not set up** and **Off**; choose a channel and its accounts, today's usage, allowance and network settings open beside the list, with a **Sign in** or **Add account** button | [Channels](/docs/guide-channels) |
+| **Usage** | Until a request has gone through the gateway it says **Nothing has been served yet**. After that, tokens, cache, latency and every call by 24 hours, 7 days, 30 days, 90 days or a single day | [Usage](/docs/guide-usage) |
+| **Playground** | An empty chat (**What can I help with?**) with a model already chosen. The built-in tools are all off by default | [Playground](/docs/guide-playground) |
+| **Settings** | Eight tabs: **General**, **Tools**, **Access**, **Security**, **Network**, **Automation**, **Appearance**, **About**. Each change saves as soon as you make it | [Settings](/docs/guide-settings) |
+
+## Where things are
+
+| To… | Go to |
+| --- | --- |
+| Add an account or sign into a free station | **Channels** → choose the station → **Sign in** or **Add account** |
+| Copy the addresses for a client | **Overview › Endpoints** |
+| Set the tool access key and the model API key | **Settings › Access › Keys** |
+| Change the listening address and port | **Settings › Access › Listening address** (after a restart) |
+| Allow access from your LAN | **Settings › Security**, see [Security](/docs/config-security) |
+| Set a proxy | **Settings › Network**; for one channel, on that channel's page |
+| Choose the model for requests that name none | **Settings › General › Default model** |
+| Turn on the Playground's tools | **Settings › Tools**, see [Playground tools](/docs/guide-agent) |
+| Turn off automatic check-in or credential renewal | **Settings › Automation** |
+| Find the data folder and the configuration file | **Settings › About** (**Data directory**, **Config file**, **Database**, **Copy config path**), or `hoshimi config path` |
+
+## Next steps
+
+- Add your first account: [Channels](/docs/guide-channels).
+- Connect a client to Hoshimi: [Connecting clients](/docs/clients).
+- Do the same without a browser: [Command line](/docs/cli).

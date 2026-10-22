@@ -1,0 +1,207 @@
+---
+title: "整体架构"
+description: "core / api / cli / webui 的分层与分层规则、Services 的组装与热更新、应用工厂、错误映射，以及一个模型请求从进入到流出的完整路径。"
+icon: Layers
+---
+
+Hoshimi 的代码分四层，依赖只朝一个方向：`api` 和 `cli` 依赖 `core`，`core` 不依赖它们，也不导入任何框架。两个入口——服务器和命令行——都通过 `build_services()` 得到同一个 `Services`，再各自把它包装成 HTTP 路由或命令。本页先讲分层规则，再讲 `Services`、应用工厂和错误，最后跟随一个请求走完全程。
+
+## 分层规则
+
+| 层 | 可以导入 | 不可以导入 |
+| --- | --- | --- |
+| `hoshimi/core` | 标准库、httpx、pydantic、cryptography 及可选的云 SDK | `fastapi`、`starlette`、`typer`、`click`、`socketio`、`uvicorn`、`rich`；`hoshimi.api`、`hoshimi.cli` |
+| `hoshimi/api` | `core`、FastAPI、Starlette | `hoshimi.cli` |
+| `hoshimi/cli` | `core`、Typer、Rich；`serve` 命令启动 `api` 的应用 | — |
+| `hoshimi/webui` | 只通过 HTTP 访问服务器 | Python 代码 |
+
+两条规则由测试保证：
+
+- `tests/core/test_architecture.py` 解析 `hoshimi/core` 下每个文件的导入，发现上表禁止的框架就失败；它还检查这些文件里不出现 `hoshimi.api` 或 `hoshimi.cli`。httpx 是允许的，因为渠道适配器本身就是上游站点的 HTTP 客户端。
+- `tests/test_package_api.py` 在一个新进程里 `import hoshimi`，要求 `fastapi` 和 `httpx` 都没有被加载，并且惰性导出的 `Services`、`build_services`、`create_app` 就是实现模块里的那些对象。
+
+这样做的好处是：领域逻辑可以脱离服务器单独测试和复用；领域异常（`hoshimi/core/errors.py`）由 API 映射为 HTTP 响应、由命令行映射为退出码，`core` 自己不关心。
+
+## `core` 的模块
+
+| 领域 | 模块 |
+| --- | --- |
+| 组装 | `context.py`（`Services`、`build_services`）、`config.py`（`Settings`、读写 `config.json`）、`paths.py`（数据目录） |
+| 路由与渠道 | `registry.py`（模型名到渠道）、`providers/`（适配器）、`provider_definitions.py`（按数据定义的服务）、`provider_forms.py`（账号表单描述）、`presets.py`（agg 预设）、`credentials.py` |
+| 协议 | `chunks.py`（归一化分片与 Chat Completions / Responses 的输出）、`message_chunks.py`（Anthropic Messages 的输出）、`native_messages.py`（原生 Messages 透传）、`translate/`、`sse.py` |
+| 模型能力 | `catalog.py`（`ModelSpec` 与各站点的能力表）、`chat_catalog.py`、`modelsdev.py`、`free_marks.py`、`effort.py`（推理强度策略）、`probe.py`、`discovery.py` |
+| 失败与配额 | `failure.py`（失败分类、账号冷却、失效模型）、`quota.py` |
+| 账号维护 | `refresh.py`（凭据续期）、`expiry.py`、`credits.py`（签到与余额）、`login/`（交互式登录）、`eac_*.py` |
+| 记录 | `db.py`（`hoshimi.db`）、`stats.py`、`live.py`、`conversations.py`、`record.py`（跨 API 边界的记录基类） |
+| 网络 | `net/`（客户端、代理策略、端口绑定、`server.json`） |
+| 其他 | `security.py`（访问密钥、CIDR、Host、CORS 的检查）、`updates.py`（向 PyPI 查询新版本）、`agent/`（Playground 的工具） |
+
+## Services
+
+`hoshimi/core/context.py` 的 `Services` 是一个命令或一个请求处理函数需要的全部：
+
+| 字段 | 内容 |
+| --- | --- |
+| `settings` | 生效的配置（`config.json` 加上命令行覆盖） |
+| `registry` | 启用的渠道及其 HTTP 客户端，负责把模型名路由到渠道 |
+| `db` | 唯一的 `hoshimi.db` 连接，下面的存储共享它 |
+| `probe` | 每个模型最近一次可用性探测的结论 |
+| `stats` | 用量统计；`stats.live` 是正在进行的调用 |
+| `refresher` | 定时续期凭据 |
+| `credits` | 每日签到与余额 |
+| `login` | 交互式登录会话（`LoginManager`） |
+| `updates` | 在后台向 PyPI 查询是否有新版本 |
+| `conversations` | Playground 的对话 |
+| `agent` | Playground 工具的后台命令与审批 |
+
+`build_services(settings=None)` 在没有传入设置时读取数据目录里的 `config.json`，然后：从配置收集每个渠道的账号和选项（`pool_inputs`），用它们构建 `Registry`；在数据目录打开 `hoshimi.db`，各个存储共用这个连接；最后创建续期、签到、登录和更新检查的服务。登录管理器在一次浏览器登录写入新账号后，立即用新配置重建渠道池。
+
+直接构造的 `Services`（测试、嵌入）只需要 `settings` 和 `registry`，其余存储默认把数据放在内存里，定时器类服务为 `None`。
+
+### 运行中更新配置
+
+在 Web UI 保存设置会调用 `Services.apply_settings(new)`，不需要重启：
+
+- 只有**构建渠道池的输入**（每个渠道的账号、选项和禁用状态）变化时才重建池；只改端口之类的设置不会重建。重建时，配置没有变化的渠道原样保留，所以它们在内存里的状态（哪个账号的刷新令牌被拒绝、哪个账号正在冷却）不会丢；只有网络选项变化的渠道也保留，只更新路由。
+- 持有设置对象的每个服务（续期、签到、登录、更新检查、网络客户端）都改为指向新设置，免得某个服务稍后把旧配置写回文件。
+- `server.check_updates` 的开关立即启停更新检查的定时器。
+
+`Services.close()` 依次停止各个定时器、关闭 Playground 的后台命令和渠道的 HTTP 客户端，写入最后一批用量记录，然后关闭数据库。重复调用是安全的。
+
+## 应用工厂
+
+`hoshimi/api/app.py` 的 `create_app(services, ...)` 构建 FastAPI 应用：
+
+| 参数 | 作用 |
+| --- | --- |
+| `services` | 应用的全部服务，放在 `app.state.services`；路由通过依赖 `ServicesDep` 取得 |
+| `bound_host`、`bound_port`、`requested_port` | 实际绑定的地址与请求的端口，设置页据此显示“端口被占用而换了一个”或“需要重启” |
+| `extra_hosts` | 额外允许的 `Host` 头 |
+| `serve_ui` | 是否提供 Web UI（`hoshimi serve --no-ui` 和测试传 `False`） |
+| `api_prefix` | 把 API 和 Web UI 整体移到一个路径前缀下，便于挂进其他应用 |
+
+它做的事：
+
+1. 校验安全设置，有问题时抛出 `ValidationError`，服务器不启动。
+2. 生命周期：启动时按 `server.auto_refresh`、`server.auto_checkin`、`server.check_updates` 启动对应的定时器，并清理上次进程留下的临时对话；关闭时调用 `services.close()`。
+3. 路由：`/health`；管理路由加上 `/api` 前缀（它们自己带 `/v1`，所以是 `/api/v1/...`）；模型路由在 `/v1`（Chat Completions、Responses、模型列表、TypeSafe 分类、Anthropic Messages）。交互式文档在 `/docs`，OpenAPI 文档在 `/openapi.json`，ReDoc 关闭。
+4. 中间件：配置了 `security.allow_origins` 时加 CORS；4096 字节以上的响应 gzip 压缩；`SecurityMiddleware` 检查 `Host` 头、浏览器请求的来源、客户端地址是否在允许的 CIDR 内，以及访问密钥（管理 API 与文档）和模型 API 密钥（`/v1/`）。规则见[安全](/docs/config-security)。
+5. 最后挂载 Web UI（`SPAStaticFiles`）：只接收其他路由都不匹配的路径；`assets/` 下带哈希的文件缓存一年，`index.html` 不缓存；接受 HTML 的未知路径回落到 `index.html`，其他未知路径仍是 404。没有构建产物时记录警告，只提供 API。
+
+把 Hoshimi 嵌入另一个 ASGI 应用：
+
+```python
+from hoshimi import build_services, create_app
+
+app = create_app(build_services(), api_prefix="/gateway")
+```
+
+Web UI 从自身脚本的 URL 推导部署根路径，所以挂在前缀下无需改动。
+
+## 错误
+
+`hoshimi/core/errors.py` 定义领域异常，每个带一个代码、一个 HTTP 状态和一个命令行退出码：
+
+| 异常 | `code` | HTTP | 退出码 |
+| --- | --- | --- | --- |
+| `HoshimiError` | `internal_error` | 500 | 1 |
+| `NotFoundError` | `not_found` | 404 | 2 |
+| `ModelNotFoundError` | `model_not_found` | 404 | 2 |
+| `ConflictError` | `conflict` | 409 | 3 |
+| `ValidationError` | `invalid_input` | 400 | 4 |
+| `UpstreamError` | `upstream_error` | 502 | 5 |
+| `ModelUnavailableError` | `model_unavailable` | 503 | 5 |
+
+渠道的 `ProviderError`（见[渠道适配器](/docs/development-providers)）是 `UpstreamError` 的子类，带上游的状态码：上游返回 4xx 或 5xx 时，这个状态码原样传给客户端。
+
+`hoshimi/api/errors.py` 按路径选择错误的形状：
+
+- `/v1/messages` 与 `/v1/messages/count_tokens`：Anthropic 的 `{"type": "error", "error": {"type", "message"}}`；原生透传的上游错误原样返回上游的响应体和头。
+- 其他 `/v1/` 路径：OpenAI 的 `{"error": {"message", "type", "code"}}`。
+- 管理 API：`{"code", "message", "detail"}`。
+
+命令行的 `main()` 捕获 `HoshimiError`，记录它的消息并以它的退出码退出；<kbd>Ctrl</kbd>+<kbd>C</kbd> 退出码为 130，其他意外异常打印回溯后以 1 退出。
+
+## 一个请求的路径
+
+以 `POST /v1/chat/completions` 为例：
+
+<Mermaid
+  chart={`flowchart TD
+  A["客户端 POST /v1/chat/completions"] --> B["SecurityMiddleware"]
+  B --> C["routers/chat.py"]
+  C --> D["prepare_request"]
+  D --> E["tracked_chunks: stats.turn"]
+  E --> F["Registry.stream"]
+  F --> G["Provider.stream_using: 账号轮换"]
+  G --> H["stream_raw: 上游协议"]
+  H --> I["归一化分片"]
+  I --> J["emit_chat_chunks"]
+  J --> K["SSE 帧与 [DONE]"]`}
+/>
+
+<Steps>
+<Step>
+
+### 中间件与路由
+
+`SecurityMiddleware` 先检查 `Host`、来源、客户端地址和模型 API 密钥。路由函数很薄：解析请求体，调用 `core`，把结果变成响应。
+
+</Step>
+<Step>
+
+### 准备请求
+
+`hoshimi/api/inference.py` 的 `prepare_request` 在请求没有 `model` 时填入默认模型（`server.default_model`，或渠道池的默认模型），都没有时以 `ValidationError` 拒绝；它还为请求设置一个 `prompt_cache_key`（请求自己带了就不覆盖）。
+
+</Step>
+<Step>
+
+### 计入用量
+
+`tracked_chunks` 在调用渠道之前就打开一次用量记录（`stats.turn`），所以连路由失败的请求也会被记录。推理强度按请求实际携带的级别记录；回答请求的账号由渠道池在第一个分片到达时报告（`on_route`）。
+
+</Step>
+<Step>
+
+### 路由到渠道
+
+`Registry.resolve` 把模型名解析成渠道和上游模型名：
+
+1. `provider/model` 形式且前缀是一个启用的渠道：直接使用该渠道。
+2. 不带前缀的模型名：按渠道顺序（`PROVIDER_ORDER`）找第一个目录里有它的渠道。
+3. 没有任何目录包含它、但只启用了一个渠道：原样转给这个渠道。
+4. 否则返回 `model_not_found`。
+
+`Registry.stream` 随后应用推理强度策略（把级别换成该模型在线路上的写法），并检查失效模型记录：某个模型被所有账号回答 404/410 后会被暂时记下，在此期间请求直接以 `model_unavailable`（503）拒绝，而不是再问一次上游。
+
+</Step>
+<Step>
+
+### 账号轮换与上游协议
+
+`Provider.stream_using` 依次尝试渠道的账号：认证失败先续期再换账号，额度用尽的账号冷却一段时间，模型过载时立即停止。选中的账号通过 `stream_raw` 用上游自己的协议发出请求，并把上游的流转换成**归一化分片**。细节见[渠道适配器](/docs/development-providers)。
+
+</Step>
+<Step>
+
+### 输出公开协议
+
+`emit_chat_chunks` 把归一化分片变成 `chat.completion.chunk`，路由把它们写成 SSE 帧，最后发送 `data: [DONE]`。响应头发出之后的失败变成一个错误帧，而不是 500。`stream: false` 时，`aggregate_chat` 把同样的分片折叠成一个 `chat.completion`。
+
+</Step>
+</Steps>
+
+其他协议共用这条路径，只有两端不同：
+
+| 端点 | 进入时 | 输出时 |
+| --- | --- | --- |
+| `/v1/chat/completions` | 原样 | `emit_chat_chunks` / `aggregate_chat` |
+| `/v1/responses` | `responses_to_chat` 转成 Chat 请求 | `emit_responses_events` / `aggregate_responses` |
+| `/v1/messages` | 渠道有原生 Messages 端点时整体透传（`Registry.native_messages`）；否则 `messages_to_chat` | 透传，或 `emit_messages_events` / `aggregate_messages` |
+
+Messages 的流式响应在上游思考期间每 15 秒发送一次 `event: ping`，客户端断开时关闭上游连接（`hoshimi/api/heartbeat.py`）。Playground 的对话走的也是同一条路由和计量路径，只是用量记录的来源不同。
+
+## 命令行
+
+`hoshimi/cli/app.py` 的 `get_app()` 是注册命令的唯一位置；每个命令的实现在 `hoshimi/cli/commands/`。Typer 的私有导入（`typer._click`）只出现在 `hoshimi/cli/factory.py`，Typer 的版本变化先在这里、在命令行测试里暴露。所有命令都有 `--debug` 选项，打开调试日志。`python -m hoshimi` 与 `hoshimi` 命令等价。

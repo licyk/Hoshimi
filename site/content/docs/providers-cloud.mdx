@@ -1,0 +1,216 @@
+---
+title: "云平台"
+description: "接入 Azure OpenAI、Cloudflare Workers AI 与 AI Gateway、Gemini Developer API、Vertex AI、Amazon Bedrock，以及 Radius 和 TypeSafe 这两个特殊协议：凭据、账号字段、协议选择和限制。"
+icon: Cloud
+---
+
+本页的渠道都需要你自己的云平台账号。按上游端点、协议、凭据和套餐选择对应的渠道 ID；模型名相似不代表凭据通用。例如 `gemini` 是 Code Assist（见[免费站点](/docs/providers-stations)），`google` 是 Gemini Developer API，`google-vertex` 是 Vertex AI；`amazon-bedrock` 和 `bedrock-mantle` 是两个分别配置的服务。
+
+下面的 JSON 都是数据目录 `config.json` 中 `providers` 下的片段，不是放在程序旁边的文件。替换占位符，只开启用到的渠道；编辑文件后重启。在 **渠道** 中 **添加账号** 会立即生效，表单按 **鉴权方式** 分别给出需要填写的字段。
+
+## 可选依赖
+
+Vertex 的默认凭据和服务账号需要 Google 认证库，Bedrock 需要 AWS SDK：
+
+```bash
+python -m pip install -U "hoshimi[google]"            # Vertex ADC / 服务账号
+python -m pip install -U "hoshimi[bedrock]"           # Bedrock（所有鉴权方式）
+python -m pip install -U "hoshimi[google,bedrock]"    # 两者都装
+```
+
+Vertex 的 API 密钥模式和普通 HTTP 渠道不需要这些依赖。缺少依赖或凭据时，请求返回明确的错误，不会退回匿名访问。
+
+## Azure OpenAI（`azure`）
+
+填写 Azure 资源名、密钥、对外的模型 ID 和部署名映射：
+
+```json
+{
+  "providers": {
+    "azure": {
+      "accounts": [{
+        "id": "azure-1", "resource": "your-resource", "api_key": "<Azure key>",
+        "models": ["public-model-id"],
+        "deployments": {"public-model-id": "your-deployment-name"}
+      }]
+    }
+  }
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `resource` | 资源名，默认根地址为 `https://<resource>.openai.azure.com/openai/v1`。 |
+| `base_url` | 可选，替代由 `resource` 生成的地址。 |
+| `api_key` | 以 `api-key` 头发送。 |
+| `models` | 对外公布的模型 ID（网页表单中必填）。 |
+| `deployments` | 模型 ID 到部署名的映射。上游请求中的 `model` 换成部署名，能力和协议仍按对外的 ID 查找。 |
+| `protocol` | 默认使用 Responses；设为 `"chat"` 使用 Chat Completions。 |
+
+## Cloudflare（`cloudflare-workers-ai`、`cloudflare-ai-gateway`）
+
+Workers AI 需要账户 ID；AI Gateway 还需要网关 ID：
+
+```json
+{
+  "providers": {
+    "cloudflare-workers-ai": {
+      "accounts": [{"id": "workers-1", "account_id": "<account id>", "api_key": "<Cloudflare token>"}]
+    },
+    "cloudflare-ai-gateway": {
+      "accounts": [{"id": "gateway-1", "account_id": "<account id>", "gateway_id": "<gateway id>",
+                    "api_key": "<gateway token>", "models": ["openai/my-model"]}]
+    }
+  }
+}
+```
+
+- **Workers AI**：地址为 `https://api.cloudflare.com/client/v4/accounts/<account_id>/ai/v1`。模型目录读取 Cloudflare 原生的模型搜索接口，只保留文本生成任务；账号中声明 `models` 时以声明为准。
+- **AI Gateway**：Chat 请求发往 `https://gateway.ai.cloudflare.com/v1/<account_id>/<gateway_id>/compat`，密钥以 `cf-aig-authorization` 头发送。选择 Messages 协议时改走网关的 `/anthropic/v1/messages`，Responses 协议走 `/openai/responses`。
+- 两者都可以用 `base_url` 替换生成的地址。只为上游确实支持的协议设置 `protocol` 或 `model_protocols`（见本页末尾）。
+
+## Gemini Developer API（`google`）
+
+```json
+{
+  "providers": {
+    "google": {"accounts": [{"id": "google-1", "api_key": "<Gemini API key>", "protocol": "gemini"}]}
+  }
+}
+```
+
+- 默认使用原生 Gemini 流式接口（`generativelanguage.googleapis.com/v1beta`），密钥以 `x-goog-api-key` 发送。`protocol: "chat"` 改用 Google 的 OpenAI 兼容 Chat 端点。
+- 模型目录读取原生模型列表（分页），只保留支持 `generateContent` 的模型；也可以用 `models` 声明。
+- 原生转换保留函数调用及其不透明的思考签名，多轮工具调用可以正确回放。
+- 思考级别通过 `reasoning_effort` 设置，也可以直接传 Google 的 `thinking_config`（两者不能同时使用）。
+- 这个渠道不使用 `gemini` 渠道的 Code Assist 登录账号。
+
+## Google Vertex AI（`google-vertex`）
+
+三种鉴权方式任选其一：API 密钥、应用默认凭据（ADC）或服务账号文件。
+
+```json
+{
+  "providers": {
+    "google-vertex": {
+      "accounts": [{
+        "id": "vertex-1", "auth": "adc", "project": "your-project",
+        "location": "global", "protocol": "gemini",
+        "models": ["your-model-id"]
+      }]
+    }
+  }
+}
+```
+
+| 鉴权方式 | 账号字段 |
+| --- | --- |
+| **API 密钥** | `api_key`，可选 `project`、`location` |
+| **Google 默认凭据** | `auth: "adc"`、`project`（必填）、可选 `location` |
+| **Google 服务账号文件** | `service_account_file`（服务器上的路径）、`project`（必填）、可选 `location` |
+
+- ADC 和服务账号需要安装 `hoshimi[google]`，凭据要对运行 Hoshimi 的进程可见。凭据缺失或过期时报告错误，不会切换到别的方式。
+- `location` 默认 `global`，填区域名（如 `us-central1`）则使用区域端点。
+- 默认使用原生 Gemini 协议；`protocol: "chat"` 连接 Vertex 的 OpenAI 兼容端点，此时必须提供 `project`。
+- 模型目录读取 Google 发布者模型列表；账号授权的模型可以用 `models` 声明来代替。
+
+## Amazon Bedrock（`amazon-bedrock`）
+
+使用 Bedrock ConverseStream。所有鉴权方式都需要安装 `hoshimi[bedrock]`。
+
+```json
+{
+  "providers": {
+    "amazon-bedrock": {
+      "accounts": [{
+        "id": "bedrock-1", "auth": "aws", "region": "us-east-1",
+        "models": ["your-model-or-inference-profile-id"]
+      }]
+    }
+  }
+}
+```
+
+| 鉴权方式 | 账号字段 |
+| --- | --- |
+| **AWS 默认凭据** | `auth: "aws"`，使用 AWS 凭据链 |
+| **AWS 配置档案** | `profile` |
+| **AWS 访问密钥** | `aws_access_key_id`、`aws_secret_access_key`，可选 `aws_session_token` |
+| **API 密钥** | `api_key`（Bedrock Bearer 密钥），必须声明 `models` |
+
+- `region` 默认 `us-east-1`。Bearer 模式可以用 `base_url` 替换 `https://bedrock-runtime.<region>.amazonaws.com`。
+- SDK 模式可以列出支持流式输出的文本基础模型；Bearer 密钥无权调用控制面的模型列表，所以要声明 `models`。账号专属的推理配置文件 ID 或 ARN 也应显式声明。
+- 适配器转换消息、支持的图片、工具调用与结果、用量和思考签名；请求体中的 `thinking` 对象作为附加模型参数传给上游。不是每个 Bedrock 模型都支持全部功能，模型授权仍由 AWS 账号决定。
+
+`bedrock-mantle` 是另一个服务：Bedrock 的 OpenAI 兼容端点，用 Bearer 密钥和自己的地址（默认 `https://bedrock-mantle.us-east-1.api.aws/v1`）单独配置：
+
+```json
+{
+  "providers": {
+    "bedrock-mantle": {
+      "accounts": [{"id": "bedrock-mantle-1", "api_key": "<regional Bedrock bearer key>",
+                    "base_url": "https://bedrock-mantle.us-east-1.api.aws/v1"}]
+    }
+  }
+}
+```
+
+## Radius（`radius`）
+
+Radius 使用专用的 pi-messages 协议，而不是通用的 Chat 端点。
+
+- **添加账号**：`hoshimi login radius`（设备码登录，令牌可续期），或在 **添加账号** 中填 API 密钥。
+- **模型**：从网关的 `/v1/config` 读取推理地址和模型列表。账号的 `gateway` 字段可以替换默认网关 `https://radius.pi.dev`。
+
+```json
+{
+  "providers": {
+    "radius": {"accounts": [{"id": "radius-1", "api_key": "<Radius key>"}]}
+  }
+}
+```
+
+## TypeSafe（`typesafe`）
+
+TypeSafe 是分类服务，不是聊天模型：它的模型不出现在 `/v1/models` 中，也不能用于聊天。
+
+```json
+{
+  "providers": {
+    "typesafe": {"accounts": [{"id": "typesafe-1", "api_key": "<TypeSafe key>", "classifiers": ["jev-latest"]}]}
+  }
+}
+```
+
+`classifiers` 可选，默认 `["jev-latest"]`。可用的分类模型通过 `GET /v1/classifiers` 列出，分类请求发往 `POST /v1/classify`：
+
+```http
+POST /v1/classify
+Content-Type: application/json
+
+{
+  "model": "typesafe/jev-latest",
+  "state": { ... },
+  "questions": {
+    "<key>": {"type": "bool", ...}
+  }
+}
+```
+
+- `model` 取自 `/v1/classifiers`，形如 `typesafe/<classifier>`。
+- `state` 是一个对象，`questions` 是非空对象；两者的内容原样交给 TypeSafe。
+- 每个问题的 `type` 为 `bool`、`score` 或 `choice`。`bool` 返回概率，`score` 和 `choice` 返回分数或选项及置信度。
+- 不支持图片输入。各字段的完整定义见运行中服务器的 `/docs`。
+
+## 协议选择
+
+`azure`、`cloudflare-ai-gateway` 等渠道能讲多种协议。按以下顺序决定一个模型走哪种协议：
+
+1. 渠道选项 `options.model_protocols` 中为该模型指定的协议，例如 `{"claude-sonnet": "messages"}`。
+2. 账号的 `protocol` 字段。
+3. 目录中该模型自带的协议信息。
+4. 渠道的默认协议。
+
+可用的值为 `chat`、`responses`、`messages`，也接受别名 `openai-completions`、`openai-responses`、`anthropic-messages`。`google` 和 `google-vertex` 使用 `gemini` 或 `chat`。只为上游确实支持的协议设置这些值。更多协议相关选项见[本地与兼容端点](/docs/providers-local)。
+
+可用性需要用配置好的账号实际请求来确认；本页描述的是已实现的配置行为。完整的服务对照见[渠道清单](/docs/providers-inventory)。

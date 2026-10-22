@@ -1,0 +1,130 @@
+---
+title: "Testing"
+description: "Every kind of check in Hoshimi: the pytest layout and shared fixtures, how provider and route tests are written, the Web UI's Vitest rule tests, the generated-type check, check_layout.py for sideways overflow in real browsers, and how CI runs them."
+icon: TestTube
+---
+
+Hoshimi's tests never touch the network and need no real provider credentials: upstreams are replaced by a fake provider or by `httpx.MockTransport`, and every test gets a temporary data folder of its own. Run `python scripts/dev.py check` once before committing: it covers CI's Python and Web UI checks.
+
+## At a glance
+
+| Check | Command | What it covers |
+| --- | --- | --- |
+| Lint | `python scripts/dev.py lint` | Ruff over `hoshimi`, `tests`, `scripts` |
+| Python types | `python scripts/dev.py typecheck-py` | ty |
+| Python tests | `python scripts/dev.py test-py` | pytest under `tests/` |
+| Web UI tests | `python scripts/dev.py test-web` | Vitest, then the vue-tsc type-check |
+| Generated types | `python scripts/dev.py typegen-check` | `schema.d.ts` matches the current OpenAPI document |
+| Layout in browsers | `python scripts/check_layout.py` | Sideways overflow in Chromium and Firefox (optional, needs Playwright) |
+| Documentation site | `python scripts/dev.py test-site` | The docs site's tests and type-check; see [Documentation site](/docs/development-site) |
+
+## Python tests
+
+### Layout
+
+pytest is configured in `pyproject.toml`: `testpaths = ["tests"]`, skipping `tests/_pytest_tmp` and `tests/_tmp`, which sandboxed runs leave behind.
+
+| Path | Contents |
+| --- | --- |
+| `tests/core/` | Domain logic without HTTP: every provider adapter, normalized chunks, routing, protocol translation, reasoning effort, failure classification and backoff, catalogues, usage and the database, renewal, logins, the Playground's tools and patches, and the layering rule (`test_architecture.py`) |
+| `tests/api/` | Routes through `TestClient`: Chat Completions, Responses, Messages (including the official Anthropic SDK), heartbeats, the management API, auth boundaries, network settings, the Playground and its tools |
+| `tests/cli/` | The command line (a command-tree snapshot, `--debug` on every command, reading and writing `config`), `scripts/dev.py` and `build_wheel.py`, the release plan in `scripts/ci.py` |
+| `tests/test_package_api.py` | `import hoshimi` loads no server dependency; the lazily exported objects are the implementation's own |
+| `tests/fixtures/apply_patch/` | `apply_patch` scenarios from Codex (codex-rs/apply-patch, Apache-2.0), one folder each |
+
+To run part of the suite, call pytest directly (`test-py` takes no options):
+
+```bash
+python -m pytest tests/core/test_registry.py
+python -m pytest tests/api -k messages
+python -m pytest -x -q
+```
+
+### Shared fixtures
+
+`tests/conftest.py` provides a provider that never touches the network, and services and an app built on it:
+
+| Name | Kind | What it does |
+| --- | --- | --- |
+| `isolated_data_dir` | Autouse fixture | Points `HOSHIMI_DATA_DIR` at the test's own `tmp_path`, so configuration and data never reach the real data folder |
+| `FakeProvider` | `Provider` subclass, ID `fake` | Echoes the model and the message count: yields `text_delta` `echo:<model>:`, the count, `usage`, `finish`; its models are `fake-1` (marked free) and `fake-2`; `provider.seen` records the bodies it received |
+| `make_services(*extra, **settings)` | Function | A `Services` whose `fake` provider is declared in the configuration, so a settings save rebuilds the pool as it was; providers in `extra` join the pool as `fake0`, `fake1` |
+| `services` | Fixture | `make_services()` |
+| `client` | Fixture | `TestClient(create_app(services, serve_ui=False), base_url="http://localhost")` |
+
+`FakeProvider` is registered in `PROVIDER_CLASSES["fake"]`; without that, the rebuild after a settings save would drop `fake` as an unknown provider.
+
+A route test looks like this:
+
+```python
+def test_messages_defaults_to_json_and_counts_one_turn(client, services):
+    response = client.post("/v1/messages", json=body(), headers={"anthropic-version": "2023-06-01"})
+    assert response.status_code == 200
+    message = response.json()
+    assert message["id"].startswith("msg_")
+    assert message["content"] == [{"type": "text", "text": "echo:fake-1:1"}]
+```
+
+### Common patterns
+
+- **Provider adapters**: build the adapter's client on `httpx.MockTransport` and check the request's address, headers and body, and the chunk types `stream_raw` yields. There is an example in [Provider adapters](/docs/development-providers).
+- **Anthropic Messages**: `tests/api/test_native_messages.py` drives the gateway with the official Anthropic SDK's JSON and stream helpers (the SDK is in the `dev` extra), against a local mock transport, so no real credentials are needed. `tests/api/test_messages_heartbeat.py` separately checks the heartbeat timing, that heartbeats never split a whole SSE frame, and that the upstream is released when the client goes away. To try a configured gateway with real Claude Code, see [Claude Code](/docs/clients-claude-code).
+- **POSIX-only tests**: the Playground's shell and background-command tests skip on Windows (`pytest.mark.skipif(os.name == "nt", ...)`); usage tests that switch the local time zone skip where `time.tzset` is missing.
+- **Your own Services**: call `make_services(default_model=..., ...)` for particular settings; pass extra `FakeProvider`s or subclasses for several providers.
+
+## Web UI tests
+
+In `hoshimi/webui`, `bun run test` runs Vitest and `bun run typecheck` runs vue-tsc; `python scripts/dev.py test-web` runs both in turn. The environment is happy-dom; `src/test/setup.ts` supplies the `ElementInternals` that `@material/web` asks for, and `src/test/motion-zero.css` sets every motion duration to zero, so a test never waits on a transition. Vitest uses the `vmThreads` pool (worker threads race each other creating their temporary folder on Windows).
+
+Tests sit next to the files they test (`*.test.ts`). Besides the component, store and query tests, a few suites check rules that apply everywhere:
+
+| Test | Rule |
+| --- | --- |
+| `src/layout.test.ts` | The layout rules: rows that can shrink, bounded lists, scrolling only through `.app-scroll`, scrollbar lanes, the bottom navigation, unstretched charts; see [Web UI](/docs/development-webui) |
+| `src/tokens.test.ts` | No hex colours in `.vue` and `.css` outside `src/theme/` |
+| `src/imports.test.ts` | Modules import each other through the `@/` alias, with no relative path |
+| `src/i18n/i18n.test.ts` | English, Simplified Chinese and Japanese have the same keys and placeholders; system language detection |
+| `src/devProxy.test.ts` | The dev proxy shortens only the "API is not up" kind of error to one line; anything else is still printed in full |
+| `src/ui/layers.test.ts`, `src/ui/motion/motion.test.ts` and others | Layer stacking and focus, the motion helpers |
+
+## The generated-type check
+
+`python scripts/dev.py typegen-check` regenerates `hoshimi/webui/src/api/schema.d.ts` from the current code and compares it with `git diff --exit-code`. A failure means a management API model changed without the types being regenerated: run `python scripts/dev.py typegen` and commit `schema.d.ts`.
+
+## Checking the layout in browsers: `check_layout.py`
+
+Every scrolling area in the Web UI scrolls in one direction (`.app-scroll` down, `.app-scroll-x` sideways, such as code blocks, tables and the stepper), so a sideways scrollbar anywhere else is a layout bug. The unit tests can only read the source; `scripts/check_layout.py` finds these bugs in real browsers.
+
+```bash
+pip install playwright && playwright install chromium firefox
+python scripts/check_layout.py --url http://127.0.0.1:10600
+```
+
+Start a server first (`hoshimi serve` or `python scripts/dev.py dev`), ideally with a conversation in the Playground, so the chat list, the editor and the menus have something to open. The script:
+
+- opens `/overview`, `/models`, `/channels`, `/usage`, `/playground` and `/settings` in turn;
+- checks them in Chromium (with its scrollbars shown, as on a desktop) and Firefox (whose scrollbars float), at window widths of 320, 360, 600, 900, 1280 and 1600 pixels;
+- checks each page as it opens, then with its first menu open; on the Playground it also toggles the chat list and opens the message editor and the chat menu;
+- reports every area that is wider inside than it shows, with the elements that stick out and by how many pixels.
+
+| Option | Default | What it sets |
+| --- | --- | --- |
+| `--url` | `http://127.0.0.1:10600` | The server's address |
+| `--engine` | Both | `chromium` or `firefox`; repeatable |
+| `--width` | The six widths from 320 to 1600 | One window width; repeatable |
+
+It exits with 0 when it finds no overflow, 1 when it finds some, and 2 when Playwright is not installed, so it can gate a release. Playwright is not a project dependency, and CI does not run the script.
+
+## Checks in CI
+
+CI's shared checks (`.github/workflows/checks.yml`) run:
+
+| Job | Environment | What it runs |
+| --- | --- | --- |
+| Ruff | Ubuntu, Python 3.11 | `python scripts/dev.py lint` |
+| ty | Ubuntu, Windows, macOS × Python 3.10–3.14 | `typecheck-py` with the matching Python version and platform; warnings fail it |
+| pytest | Ubuntu, Python 3.10, 3.12, 3.14 | `python scripts/dev.py test-py` |
+| Web UI and API contract | Ubuntu, Python 3.11, Node 24, bun 1.4.2 | `bun install --frozen-lockfile`, `test-web`, `typegen-check` |
+| CI passed | — | Fails when any job above failed, was cancelled or was skipped; releases wait for it |
+
+Dependencies are installed with uv: the ty and pytest jobs install `.[dev,google,bedrock]`. The shared checks also type-check, test and build the documentation site. The release flow is in [CI and releases](/docs/development-release).

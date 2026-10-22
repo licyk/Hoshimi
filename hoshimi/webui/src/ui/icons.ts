@@ -129,6 +129,7 @@ export {
   ZoomIn,
   ZoomOut,
   // The Playground's tools.
+  BookOpen,
   FilePen,
   ShieldAlert,
   ShieldOff,

@@ -1,0 +1,327 @@
+---
+title: "Playground API"
+description: "/api/v1/playground 接口参考：以消息树保存的对话，通过 Server-Sent Events 流式发送和重试，工具步骤、批准、补充说明、后台命令、附件、标题、分支和会话。"
+icon: Braces
+---
+
+网页界面的 [Playground](/docs/guide-playground) 完全通过这些接口工作，脚本也可以用它们做同样的事：保存对话、流式获取回复、运行[工具](/docs/guide-agent)并答复批准请求。发给模型的所有内容（系统提示词、文件文字、图片描述、之前的工具调用）都在服务端组装，客户端只需说明要添加什么、加在哪里。
+
+这些接口属于管理 API（见[管理 API](/docs/api-management)）：
+
+- 基础地址：`http://127.0.0.1:10600/api/v1/playground`。
+- 认证：设置了 `server.access_token` 时使用 `Authorization: Bearer <工具访问密钥>`（见[访问与安全](/docs/config-security)），不是模型 API 密钥。
+- 错误：JSON 响应体 `{"code": "...", "message": "...", "detail": {}}`，状态码为 `400`（`invalid_input`）、`404`（`not_found`）或 `409`（`conflict`）。
+- 运行中服务的 `/docs` 和 `/openapi.json` 列出了全部字段（见 [API 概览](/docs/api)）。
+
+示例中用 `ACCESS_KEY` 表示工具访问密钥：
+
+```bash
+export ACCESS_KEY=your-tool-access-key
+BASE=http://127.0.0.1:10600/api/v1/playground
+```
+
+## 接口一览
+
+| 方法与路径 | 响应 | 用途 |
+| --- | --- | --- |
+| `GET /conversations` | `200` 列表 | 保存的对话，最近使用的在前；`?archived=true` 列出归档 |
+| `POST /conversations` | `201` 对话 | 创建对话 |
+| `GET /conversations/{id}` | `200` 对话 | 一个对话及其消息树中的全部消息 |
+| `PATCH /conversations/{id}` | `200` 摘要 | 修改标题、模型、推理强度、归档、显示的版本、工具、审批模式 |
+| `DELETE /conversations/{id}` | `204` | 删除对话、其消息和只属于它的附件，并停止它的后台命令 |
+| `POST /conversations/{id}/messages` | `200` SSE | 添加问题并流式返回回复 |
+| `POST /conversations/{id}/messages/{message_id}/retry` | `200` SSE | 为同一个问题流式生成另一条回复 |
+| `GET /conversations/{id}/messages/{message_id}/request` | `200` JSON | 某条回复对应的 Chat Completions 请求 |
+| `POST /conversations/{id}/approvals/{call_id}` | `204` | 答复等待批准的工具调用 |
+| `POST /conversations/{id}/steer` | `202` `{"id"}` | 向正在进行的回复发送消息 |
+| `GET /conversations/{id}/terminals` | `200` 列表 | 该对话的工具启动的后台命令 |
+| `DELETE /conversations/{id}/terminals/{session_id}` | `204` | 停止一个后台命令及其启动的所有进程 |
+| `POST /conversations/{id}/branch` | `201` 对话 | 截至某条消息分支出新对话 |
+| `POST /conversations/{id}/title` | `200` 摘要 | 让模型为对话命名 |
+| `POST /attachments` | `201` 附件 | 上传图片或文件文字 |
+| `GET /attachments/{id}` | `200` 内容 | 图片按原样返回，文件返回其文字 |
+| `DELETE /attachments/{id}` | `204` | 撤回尚未发送的附件 |
+| `GET /session`、`PUT /session` | `200` | 上次打开的对话 |
+| `POST /chat/completions` | Chat Completions | 用工具访问密钥进行一次性聊天 |
+| `GET /models` | 模型列表 | Playground 提供的模型 |
+
+## 对话
+
+对话是一棵消息树。每条消息记录它所跟随的消息（`parent_id`，第一条为 `null`），因此编辑或重试会在原消息旁边新增一个兄弟节点，而不是替换它。`current_leaf` 是当前显示路径的最后一条消息；从第一条消息到它的路径就是发给模型的内容。
+
+### 对话对象
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `id` | 字符串 | 对话 ID |
+| `title` | 字符串 | 模型命名之前为第一个问题（最多 80 个字符）；之后为生成的标题或你自己的标题 |
+| `title_state` | `""`、`provisional`、`auto`、`user` | 尚无标题；取自第一个问题；由模型命名；由你设置（不会被替换） |
+| `model`、`effort` | 字符串 | 最近一次设置的值；发送时未指定则使用它们 |
+| `archived` | 布尔 | 是否已归档 |
+| `temporary` | 布尔 | 临时对话：不会列出、不会命名，网页界面离开它时以及服务下次启动时删除 |
+| `branched_from` | 字符串 | 分支来源的对话，没有则为空 |
+| `tools_on`、`tools_off` | 字符串列表 | 该对话相对 `playground.tools` 开启或关闭的工具开关 |
+| `approval` | `""`、`ask`、`auto`、`full` | 该对话自己的审批模式；为空则使用 `playground.approval` |
+| `created_at`、`updated_at` | 数字 | Unix 秒；`updated_at` 为最后一条消息的时间，列表按它排序 |
+| `current_leaf` | 字符串 | 仅完整对话中有：当前显示路径的末端 |
+| `messages` | 消息列表 | 仅完整对话中有：消息树中的全部消息，按时间先后排列 |
+
+`GET /conversations` 和 `PATCH` 返回摘要（不含 `current_leaf` 和 `messages`）；`POST /conversations`、`GET /conversations/{id}` 和 `POST .../branch` 返回完整对话。
+
+工具开关名为 `read`、`apply_patch`、`shell`、`terminal`、`web_search` 和 `web_fetch`，其他名称返回 `400`。当 `playground.tools` 或对话的 `tools_on` 包含某个工具、且 `tools_off` 不包含它时，对话使用该工具。
+
+### 创建
+
+```bash
+curl -X POST $BASE/conversations \
+  -H "Authorization: Bearer $ACCESS_KEY" -H "Content-Type: application/json" \
+  -d '{"model": "your-model", "tools_on": ["read"], "approval": "ask"}'
+```
+
+| 字段 | 默认值 | 含义 |
+| --- | --- | --- |
+| `model`、`effort` | `""` | 发送时未指定时使用的模型和推理强度 |
+| `title` | `""` | 你自己的标题（`title_state` 为 `user`） |
+| `temporary` | `false` | 是否为临时对话 |
+| `tools_on`、`tools_off` | `[]` | 相对设置开启或关闭的工具 |
+| `approval` | `""` | `ask`、`auto`、`full`，为空则使用设置中的模式 |
+
+### 修改
+
+`PATCH /conversations/{id}` 只修改给出的字段：
+
+| 字段 | 作用 |
+| --- | --- |
+| `title` | 你自己的标题，之后不会被生成的标题替换 |
+| `model`、`effort` | 之后发送时默认使用的值 |
+| `archived` | 归档（`true`）或恢复（`false`）。发送消息也会恢复 |
+| `current_leaf` | 切换显示的版本：必须是该对话中的消息 ID（否则返回 `400`） |
+| `tools_on`、`tools_off` | 该对话的工具选择 |
+| `approval` | 该对话的审批模式；从下一次工具调用起生效，正在进行的回复也一样 |
+
+修改不会改变 `updated_at`：只有新消息会让对话在列表中上移。
+
+### 删除
+
+`DELETE /conversations/{id}` 删除对话、其消息和只属于它的附件，停止它的后台命令，并清除它的 **始终允许** 答复。
+
+## 消息
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `id`、`parent_id` | 字符串 | 消息 ID，以及它所跟随的消息（第一条为 `null`）。兄弟节点就是同一轮的不同版本 |
+| `role` | `user`、`assistant` | 问题或回复 |
+| `content` | 字符串 | 文字。使用了工具的回复为其各文本步骤以空行连接的结果 |
+| `model`、`effort` | 字符串 | 生成回复所用的模型和推理强度 |
+| `status` | `complete`、`streaming`、`stopped`、`error` | 回复如何结束（生成期间为 `streaming`） |
+| `error` | 字符串 | 回复失败的原因 |
+| `notices` | 列表 | 关于回复生成方式、读者需要知道的提示（见下文） |
+| `created_at` | 数字 | Unix 秒 |
+| `attachments` | 列表 | 问题携带的附件：`id`、`kind`（`image` 或 `file`）、`name`、`mime`、`size`、`width`、`height` |
+| `reasoning`、`reasoning_ms` | 字符串、整数 | 模型的推理内容及推理时长（仅限会展示推理的模型） |
+| `steps` | 列表 | 使用了工具（或被补充说明）的回复的逐步记录；否则为空 |
+
+### 提示
+
+| `kind` | 字段 | 含义 |
+| --- | --- | --- |
+| `image-described` | `name`、`model` | 模型无法读取图片，图片改为发送 `model` 写的描述 |
+| `image-omitted` | `name` | 图片被略去：没有模型能描述它，或 `playground.vision_model` 为 `off` |
+| `image-refused` | `model` | 站点拒绝了图片，回复已改用描述重试 |
+| `tools-unsupported` | `model` | 模型不支持工具调用，或其站点拒绝了工具；它在没有工具的情况下作答 |
+| `step-limit` | `name`（上限值） | 回复用完了 `playground.max_steps` 轮工具调用 |
+
+## 发送消息
+
+`POST /conversations/{id}/messages` 添加一个问题并流式返回回复。
+
+| 字段 | 默认值 | 含义 |
+| --- | --- | --- |
+| `parent_id` | `null` | 问题所跟随的消息：继续对话时为最后一条回复，第一个问题为 `null`。编辑问题时，把新问题发在被编辑问题的父消息之后 |
+| `content` | `""` | 文字。消息必须有文字或附件（否则 `400`） |
+| `attachment_ids` | `[]` | 用 `POST /attachments` 上传的附件 |
+| `model` | `""` | 模型；未指定时依次使用对话的模型和 `server.default_model`。都没有则返回 `400`“Choose a model first.” |
+| `effort` | `""` | 推理强度，作为 `reasoning_effort` 发送；为空则不发送 |
+
+模型和推理强度会成为对话的当前值。以流的方式读取响应：
+
+```bash
+curl -N -X POST $BASE/conversations/$CID/messages \
+  -H "Authorization: Bearer $ACCESS_KEY" -H "Content-Type: application/json" \
+  -d '{"parent_id": null, "content": "What is in the workspace?"}'
+```
+
+### 事件流
+
+响应类型为 `text/event-stream`。每个事件是一行 `data:`，内容为一个 JSON 对象，用 `type` 表示事件类型：
+
+| `type` | 字段 | 时机 |
+| --- | --- | --- |
+| `user` | `message` | 最先发送（仅发送消息时）：保存后的问题 |
+| `assistant` | `message` | 已登记的回复，`status` 为 `streaming`，在第一个字之前 |
+| `stage` | `stage`（`describing`）、`model` | 回复开始前，`model` 正在描述图片 |
+| `notice` | `notice` | 一条提示，一旦确定就发送 |
+| `reasoning` | `text` | 模型推理内容的增量 |
+| `delta` | `text` | 回复文字的增量 |
+| `tool` | `step` | 某个工具调用的最新状态；用它替换 `id` 相同的步骤 |
+| `steer` | `step` | 通过 `/steer` 发送、现已被模型读取的消息：一个 `user` 步骤，`id` 为发送时返回的 ID |
+| `done` | `message` | 最后发送：保存后的回复，含 `status` 和 `error` |
+
+`reasoning` 和 `delta` 在最后一个步骤类型相同时追加到该步骤，否则开始新步骤。没有其他内容时（工具运行中或等待批准），每 2 秒发送一行注释 `: ping`；以 `:` 开头的行直接跳过即可。
+
+一个包含一次工具调用的回复大致如下（消息已省略部分字段）：
+
+```text
+data: {"type": "user", "message": {"id": "94bc…", "parent_id": null, "role": "user", "content": "What is in the workspace?", "status": "complete", …}}
+
+data: {"type": "assistant", "message": {"id": "5828…", "parent_id": "94bc…", "role": "assistant", "content": "", "model": "your-model", "status": "streaming", …}}
+
+data: {"type": "delta", "text": "Let me look."}
+
+data: {"type": "tool", "step": {"type": "tool", "id": "call_1", "name": "read", "arguments": "", "status": "pending", "output": "", "exit_code": null, "ms": 0, "meta": {}, "approval": "", "round": 0}}
+
+data: {"type": "tool", "step": {"type": "tool", "id": "call_1", "name": "read", "arguments": "{\"path\": \".\"}", "status": "running", …}}
+
+data: {"type": "tool", "step": {"type": "tool", "id": "call_1", "name": "read", "arguments": "{\"path\": \".\"}", "status": "done", "output": "Directory /home/me/.hoshimi/workspace:\n(empty)", "meta": {"path": "/home/me/.hoshimi/workspace", "entries": 0}, …}}
+
+data: {"type": "delta", "text": "The workspace is empty."}
+
+data: {"type": "done", "message": {"id": "5828…", "content": "Let me look.\n\nThe workspace is empty.", "status": "complete", "steps": [ … ], …}}
+```
+
+流的结束方式：
+
+- 问题保存之前发现的错误（没有模型、`parent_id` 或附件不存在）直接以 `400` 或 `404` 返回，而不是流。
+- 之后模型或站点返回的错误会让回复以 `error` 结束，流仍以 `done` 收尾。
+- 关闭连接会停止回复：正在运行的工具被要求停止，等待中的批准被取消，回复连同已生成的内容保存为 `stopped`。之后不会再有 `done`。
+
+### 重试
+
+`POST /conversations/{id}/messages/{message_id}/retry` 流式生成另一条回复，事件与发送相同，只是没有 `user`。`message_id` 可以是一条回复（新回复与它并列），也可以是一个还没有回复的问题（为它生成第一条回复）。
+
+| 字段 | 默认值 |
+| --- | --- |
+| `model` | 被重试回复的模型；对问题则为对话的模型 |
+| `effort` | 被重试回复的推理强度；对问题则为对话的推理强度。`""` 表示不发送 |
+
+## 步骤
+
+调用过工具或被补充说明过的回复会按顺序保存其 `steps`。每个步骤都有 `type` 和 `round`（从 0 开始，每轮工具调用加一）：
+
+| `type` | 字段 |
+| --- | --- |
+| `reasoning` | `text`、`ms`（推理时长） |
+| `text` | `text` |
+| `user` | `id`、`text`：通过 `/steer` 发送、在本轮开始时读取的消息 |
+| `tool` | `id`、`name`、`arguments`（模型写出的 JSON 字符串）、`status`、`output`、`exit_code`、`ms`、`meta`、`approval` |
+
+工具步骤的 `status`：
+
+| `status` | 含义 |
+| --- | --- |
+| `pending` | 模型还在写这次调用；本轮结束时 `arguments` 才完整 |
+| `waiting` | 等待批准；`approval` 说明原因：`command`、`edit`、`edit-outside` 或 `read-outside` |
+| `running` | 正在运行 |
+| `done` | 已完成 |
+| `error` | 失败（非零退出码、参数错误、未知工具）；`output` 说明原因 |
+| `denied` | 用户拒绝，未运行 |
+| `stopped` | 回复先被停止，或因回复达到轮数上限而未运行 |
+
+`output` 是发给模型的内容（最多 32,000 个字符）。`meta` 是页面在旁边显示的信息：
+
+| 工具 | `meta` |
+| --- | --- |
+| `read` | `path`；文件另有 `lines`、`from`、`to`，文件夹另有 `entries` |
+| `apply_patch` | `files`：每项含 `path`、`kind`（`add`、`update`、`delete`），移动的文件另有 `from` |
+| `shell` | `cwd`、`timed_out` |
+| `exec_command`、`write_stdin` | `session_id`、`running`、`cwd`；`exec_command` 另有 `command` |
+| `kill_session` | `session_id` |
+| `web_search` | `query`、`results` |
+| `web_fetch` | `url`（最终地址）、`title` |
+
+运行中被停止的调用还会带有 `"cancelled": true`。对话再次发给模型时，每一轮会还原为：该轮的补充消息、一条带 `tool_calls` 的 assistant 消息，以及每次调用对应的 `tool` 消息；没有开启工具时，调用及其结果以文字形式发送。
+
+## 批准
+
+`status` 为 `waiting` 的 `tool` 事件需要答复。用该步骤的 `id` 发送：
+
+```bash
+curl -X POST $BASE/conversations/$CID/approvals/call_1 \
+  -H "Authorization: Bearer $ACCESS_KEY" -H "Content-Type: application/json" \
+  -d '{"decision": "allow"}'
+```
+
+| `decision` | 作用 |
+| --- | --- |
+| `allow` | 运行这次调用 |
+| `always` | 运行它，并在服务重启前，此对话中同一工具开关的调用不再询问（工作区内和工作区外分开计算） |
+| `deny` | 跳过它；模型会被告知用户拒绝了 |
+
+成功返回 `204`；没有等待中的对应调用时返回 `404`。调用最多等待 10 分钟，之后视为拒绝。随后流中会发送该调用的下一个状态。哪些调用需要等待取决于审批模式（见 [Playground 工具](/docs/guide-agent)）。
+
+## 补充说明
+
+`POST /conversations/{id}/steer`，请求体 `{"content": "..."}`，向正在进行的回复发送消息而不停止它。返回 `202` 和 `{"id": "steer_…"}`。
+
+- 模型在下一轮开始时（当前调用完成后）读取它；随后流中发送一个 `steer` 事件，其步骤带有这个 `id`。
+- 在模型收尾时发送的消息会让回复再继续一轮来回应它。
+- 没有回复能接收时返回 `409`：没有回复在运行、运行中的回复没有工具，或回复刚刚结束。此时请把它作为新消息发送。
+- 消息为空时返回 `400`。
+
+回复停止或失败时仍在排队的消息不会被读取。
+
+## 后台命令
+
+`GET /conversations/{id}/terminals` 列出该对话的工具启动的后台命令（`exec_command` 会话），包括仍在运行的，以及已退出但模型尚未读取其输出的：
+
+```json
+{
+  "terminals": [
+    {"id": 1, "command": "npm run dev", "cwd": "/home/me/.hoshimi/workspace", "started_at": 1792684330.35, "running": true, "exit_code": null}
+  ]
+}
+```
+
+`DELETE /conversations/{id}/terminals/{session_id}` 停止其中一个及其启动的所有进程（`204`；不属于该对话时返回 `404`）。删除对话或服务停止时，它们也会停止。
+
+## 附件
+
+先上传文件，再把它的 `id` 放进 `attachment_ids` 发送。请求体就是文件本身：
+
+```bash
+curl -X POST "$BASE/attachments?name=photo.png&width=1024&height=768" \
+  -H "Authorization: Bearer $ACCESS_KEY" -H "Content-Type: image/png" \
+  --data-binary @photo.png
+
+curl -X POST "$BASE/attachments?name=notes.md" \
+  -H "Authorization: Bearer $ACCESS_KEY" -H "Content-Type: text/plain; charset=utf-8" \
+  --data-binary @notes.md
+```
+
+| 查询参数 | 含义 |
+| --- | --- |
+| `name` | 文件名（必填） |
+| `type` | 请求体为提取出的文字时，文件本来的类型（网页界面发送 PDF 文字时使用 `type=application/pdf`） |
+| `width`、`height` | 图片尺寸，可选 |
+
+`Content-Type` 决定保存方式：`image/png`、`image/jpeg`、`image/webp` 或 `image/gif` 作为图片保存；任意 `text/*` 类型，或 `application/json`、`xml`、`yaml`、`x-yaml`、`javascript`、`x-sh`、`sql`、`toml`，作为 UTF-8 文本保存。其他类型或空请求体返回 `400`。服务端按收到的内容保存：缩小图片和提取 PDF 文字都由网页界面在上传前完成。文件文字发给模型时最多 200,000 个字符。
+
+响应为附件对象：`id`、`kind`、`name`、`mime`、`size`、`width`、`height`。
+
+- `GET /attachments/{id}` 按图片自身的类型返回图片，文件以 `text/plain` 返回。
+- `DELETE /attachments/{id}` 在发送前撤回附件（`204`）；已被消息携带的附件返回 `400`。
+- 从未发送的附件会在一天后删除。
+
+## 标题、分支、请求与会话
+
+- `POST /conversations/{id}/title` 让模型根据第一轮问答为对话命名，并等待模型完成。使用 `playground.title_model`，未设置则用对话自身的模型。临时对话、已由模型命名的对话和你自己设置了标题的对话保持不变；模型调用失败时标题也不变。返回对话摘要。
+- `POST /conversations/{id}/branch`，请求体 `{"message_id": "..."}`，新建一个对话，包含截至该消息的路径（使用新的 ID），沿用标题、模型、推理强度、工具和审批模式，并设置 `branched_from`。返回 `201` 和完整对话。
+- `GET /conversations/{id}/messages/{message_id}/request` 返回某条回复背后的 Chat Completions 请求体（对问题则是将用来回答它的请求）：`model`、`messages`、`stream: true`，设置了推理强度时有 `reasoning_effort`，开启了工具时有 `tools` 和 `tool_choice`。使用了工具的回复返回的是第一轮的请求。这就是网页界面的 **复制为 API 请求**。
+- `GET /session` 返回 `{"conversation_id": "..."}`，即上次打开的对话（没有，或该对话是临时对话或已删除时为 `null`）。`PUT /session` 用同样的请求体设置它（新对话时为 `null`）；ID 不存在时返回 `400`。网页界面启动时会重新打开它。
+
+## 一次性聊天与模型列表
+
+- `POST /chat/completions` 接受 OpenAI Chat Completions 请求（见 [OpenAI 兼容 API](/docs/api-openai)），响应与 `/v1/chat/completions` 相同，但使用工具访问密钥而不是模型 API 密钥，并以 `playground` 来源记录在[用量](/docs/guide-usage)中。请求中没有 `system` 或 `developer` 消息时，先发送 `playground.system_prompt`。不会保存为对话。
+- `GET /models` 返回与 `GET /v1/models` 相同的列表。
+
+通过对话生成的回复、标题和图片描述分别以 `playground`、`playground-title` 和 `playground-vision` 来源记录。

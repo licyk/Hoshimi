@@ -1,0 +1,96 @@
+---
+title: "OpenCode"
+description: "Add Hoshimi as an OpenAI-compatible provider in opencode.json so OpenCode can use the gateway's models; covers the key, the model list, reasoning effort, and how this differs from Hoshimi's OpenCode Zen provider."
+icon: Terminal
+---
+
+OpenCode reaches any OpenAI-compatible service through `@ai-sdk/openai-compatible`. With Hoshimi configured as a provider, OpenCode calls the gateway over Chat Completions, and the gateway passes each request on to its providers.
+
+<Callout type="info" title="Not the OpenCode Zen provider">
+
+This page is about the OpenCode coding agent as a client of Hoshimi. Hoshimi's built-in `opencode` provider works the other way round: it connects OpenCode Zen's free models and offers them to every client of the gateway; see [Anonymous lanes](/docs/providers-anonymous). You can use both at once.
+
+</Callout>
+
+## Setup
+
+<Steps>
+<Step>
+
+### Write opencode.json
+
+Add this to `opencode.json` in the project root (for that project only) or to the global `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "hoshimi": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Hoshimi",
+      "options": {
+        "baseURL": "http://127.0.0.1:10600/v1",
+        "apiKey": "{env:HOSHIMI_API_KEY}"
+      },
+      "models": {
+        "<model-id>": { "name": "Display name" },
+        "<another-model-id>": { "name": "Another display name" }
+      }
+    }
+  },
+  "model": "hoshimi/<model-id>"
+}
+```
+
+- `baseURL` includes `/v1`.
+- `apiKey` reads the model API key from an environment variable with `{env:HOSHIMI_API_KEY}`.
+- The keys of `models` are Hoshimi model ids (an `id` from `/v1/models`, or `provider/model`); each `name` is what OpenCode displays. The models listed here appear in OpenCode's model list.
+- The top-level `model` is the default model as `provider/model`, where the provider is `hoshimi`.
+
+</Step>
+<Step>
+
+### Set the key and run
+
+```bash
+export HOSHIMI_API_KEY="your-model-api-key"   # any non-empty value when no model API key is set
+opencode
+```
+
+For a single run, or another model:
+
+```bash
+opencode run "Read the README and summarise it"
+opencode run -m "hoshimi/<another-model-id>" "Read the README and summarise it"
+```
+
+</Step>
+</Steps>
+
+## Reasoning effort
+
+Set `reasoningEffort` in a model's `options`; OpenCode sends it as `reasoning_effort`:
+
+```json
+"models": {
+  "<model-id>": {
+    "name": "Display name",
+    "options": { "reasoningEffort": "high" }
+  }
+}
+```
+
+Use `low`, `medium`, `high` and so on, or a model's own level name. Hoshimi's mapping is in [OpenAI-compatible API](/docs/api-openai); each model's levels are on the **Models** page.
+
+## Tool calls
+
+OpenCode's tools for reading files, searching, running commands and so on go out as Chat Completions `function` tools, and the model's calls are converted back for OpenCode to run. Choose models marked **Tools** on the **Models** page.
+
+## Free models through the OpenCode Zen provider
+
+When you use models from Hoshimi's default `opencode` provider (those with `owned_by` set to `opencode` in `/v1/models`), two things concern the client:
+
+- The anonymous lane derives a session id per conversation from `session_id`, `conversation_id` or `user` in the request body, in that order, and from the first user message when none is set. Two separate conversations that open with the same message share a session.
+- The anonymous lane also declares the `read` and `shell` tools the upstream requires. A call to a tool the client did not declare never reaches the client: Hoshimi tells the model the tool is unavailable and lets it carry on answering.
+
+The provider's protocol details and the difference between anonymous and API-key accounts are in [Anonymous lanes](/docs/providers-anonymous).

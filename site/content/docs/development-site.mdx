@@ -1,0 +1,174 @@
+---
+title: "文档站"
+description: "本站是 Hoshimi 的文档：它的结构、怎样写和检查一个页面、本地预览与构建、部署到 Netlify 与 GitHub Pages，以及统计和评论。"
+icon: BookOpen
+---
+
+本站取代了仓库原来的 `docs/` 目录，是 Hoshimi 唯一的文档。**用户能看到的改动**——命令、选项、配置键、环境变量、端点、界面——要在同一次提交里更新对应的页面，中文和英文都要改。本页讲站点的结构、怎样写页面、怎样在本地预览和构建，以及它怎样部署。
+
+## 结构
+
+站点位于仓库的 `site/`，用 TanStack Start、Fumadocs（MDX）和 Tailwind 构建，用 bun 安装和运行。
+
+| 路径 | 内容 |
+| --- | --- |
+| `site/content/docs/<slug>.mdx` | 简体中文页面（默认语言） |
+| `site/content/docs/<slug>.en.mdx` | 同一页面的英文版 |
+| `site/content/docs/meta.json`、`meta.en.json` | 中文和英文的侧边栏：页面顺序与分组 |
+| `site/src/` | 路由、布局、首页和组件；可用的 MDX 组件在 `src/components/mdx.tsx` 中注册 |
+| `site/scripts/prepare-static-output.mjs` | 构建后检查输出是否完整 |
+| `site/public/` | 原样复制到输出的静态文件 |
+
+两种语言共用同一个地址 `/docs/<slug>`：站点按读者选过的语言（保存在浏览器中）显示对应版本，没有选过时，浏览器首选语言是中文就显示中文，否则显示英文。
+
+## 本地预览与构建
+
+<Tabs items={["scripts/dev.py", "bun"]}>
+<Tab value="scripts/dev.py">
+
+```bash
+python scripts/dev.py site-install   # 安装依赖
+python scripts/dev.py site-dev       # 本地预览，热更新
+python scripts/dev.py test-site      # 测试与类型检查
+python scripts/dev.py site           # 构建静态站点
+```
+
+</Tab>
+<Tab value="bun">
+
+```bash
+cd site
+bun install
+bun run dev      # http://127.0.0.1:3000
+bun run check    # TypeScript 类型检查
+bun run test     # Vitest
+bun run build    # 静态站点输出到 site/.output/public
+```
+
+</Tab>
+</Tabs>
+
+开发服务器固定在 `http://127.0.0.1:3000`，端口被占用时直接失败，而不是换一个端口。构建产出 `site/.output/public`；构建脚本随后运行 `prepare-static-output.mjs`，确认 `meta.json` 中列出的每个页面都生成了 HTML，并把 `_shell.html` 复制为 `404.html`。所以侧边栏里有、但没有对应文件的页面会让构建失败。
+
+## 写一个页面
+
+<Steps>
+<Step>
+
+### 建两个文件
+
+在 `site/content/docs/` 中新建 `<slug>.mdx`（中文）和 `<slug>.en.mdx`（英文）。slug 用小写和连字符，按所属部分加前缀（`guide-`、`clients-`、`providers-`、`cli-`、`config-`、`advanced-`、`api-`、`development-`）。两个文件的结构要相同：同样的章节、同样的顺序、同样的代码块和链接。中文写自然的简体中文，不是逐字翻译；英文写平实直接的英文。
+
+</Step>
+<Step>
+
+### 写 frontmatter
+
+```mdx
+---
+title: "快速开始"
+description: "一两句话：这一页讲什么，读完能做什么。"
+icon: Rocket
+---
+```
+
+| 字段 | 含义 |
+| --- | --- |
+| `title` | 页面标题；正文里不要再写一个 `#` 标题 |
+| `description` | 显示在标题下方，也用于搜索和页面元数据 |
+| `icon` | [Lucide](https://lucide.dev/icons/) 图标名，PascalCase（如 `Rocket`、`Terminal`、`Settings`） |
+
+正文以一段简短的引言开始，然后是 `##` 章节。
+
+</Step>
+<Step>
+
+### 加进侧边栏
+
+把 slug 加进 `meta.json` 和 `meta.en.json` 的 `pages`，两者的位置相同。`"---标题---"` 形式的条目是分组标题，可以不同语言各写各的；页面 slug 的列表和顺序必须完全一致。
+
+</Step>
+<Step>
+
+### 检查
+
+运行 `bun run test` 和 `bun run build`（或 `python scripts/dev.py test-site` 与 `site`），在 `bun run dev` 中看一遍两种语言的页面。
+
+</Step>
+</Steps>
+
+`site/src/lib/i18n-content.test.ts` 检查两件事：每个中文页面都有英文版；两个侧边栏的页面 slug 与顺序一致。
+
+### 组件
+
+页面中可以直接使用这些组件，无需导入：
+
+| 组件 | 用途 |
+| --- | --- |
+| `<Callout type="info\|warn\|error" title="…">` | 提示与警告；只用于安全、数据丢失这类需要注意的地方 |
+| `<Steps>` 与 `<Step>` | 步骤；每一步以 `###` 标题开始 |
+| `<Tabs items={[...]}>` 与 `<Tab value="…">` | 同一件事的几种做法（pip / uv、bash / PowerShell） |
+| `<Cards>` 与 `<Card title href description />` | 指向其他页面的卡片 |
+| `<Accordions>` 与 `<Accordion title="…">` | 可折叠的问答 |
+| `<Mermaid chart={...} />` | Mermaid 图，跟随站点的明暗主题 |
+
+### MDX 的写法
+
+- MDX 是 JSX：正文中的 `{`、`}` 和 `<` 要转义（写成 `\{`），或放进行内代码。
+- 组件内部的 Markdown 前后各留一个空行，否则不会被当作 Markdown 解析。
+- 代码块写明语言：`bash`、`powershell`、`json`、`python`、`ts`、`http` 等。
+- 按键用 `<kbd>Ctrl</kbd>`。
+
+### 链接
+
+- 站内链接写成 `/docs/<slug>`，不带语言前缀和 `.mdx`，两种语言的页面写法相同；需要时加 `#锚点`。锚点由标题文字生成，最好只链接到自己写的标题。
+- 源码链接写成 `https://github.com/licyk/Hoshimi/blob/main/<路径>`。
+
+### 内容以代码为准
+
+每一句话都要能在代码中找到依据；旧文档或记忆与代码不一致时，以代码为准。无法确认的内容不写。
+
+| 页面内容 | 依据 |
+| --- | --- |
+| 配置键与默认值 | `hoshimi/core/config.py`、`hoshimi/core/paths.py`、`config.example.json` |
+| 命令与选项 | `hoshimi/cli/`；`hoshimi <命令> --help` |
+| 环境变量 | `hoshimi env` |
+| 端点 | `hoshimi/api/routers/`；运行中服务器的 `/docs` 与 `/openapi.json` |
+| 渠道的注册与账号字段 | `hoshimi/core/providers/factory.py`、`hoshimi/core/provider_forms.py`、`hoshimi/core/provider_definitions.py` |
+| Web UI 的文字 | 英文页面用 `hoshimi/webui/src/i18n/en.ts` 中的标签，中文页面用 `zh-CN.ts` 中的标签，加粗书写 |
+
+查看命令行的帮助时，用一个临时数据目录，以免动到真实的数据：
+
+```bash
+HOSHIMI_DATA_DIR=$(mktemp -d) python -m hoshimi serve --help
+```
+
+写作上，以任务为导向：先说做什么、为什么，再讲细节。参考类页面要完整（每个命令、键、端点），指南类页面要走完真实的任务。示例尽量是可以直接复制的命令、JSON 或 curl。
+
+## 生成的页面
+
+[渠道来源清单](/docs/providers-inventory)（`providers-inventory.mdx` 与 `providers-inventory.en.mdx`）由脚本根据 `hoshimi/core/provider_sources.py` 生成，不要手工修改：
+
+```bash
+python scripts/generate_provider_inventory.py
+```
+
+两种语言使用同一张表，只有表格周围的文字不同。改了 `provider_sources.py` 就重新运行它，并提交生成的两个文件。
+
+## 部署
+
+| 站点 | 地址 | 方式 |
+| --- | --- | --- |
+| 主站 | [hoshimi.netlify.app](https://hoshimi.netlify.app) | Netlify 在每次推送到 `main` 时构建 `site/`，配置在仓库根目录的 `netlify.toml`；`site/` 没有改动时跳过 |
+| 备份 | [licyk.github.io/Hoshimi](https://licyk.github.io/Hoshimi/) | `.github/workflows/site.yml` 以 `VITE_BASE_PATH=/Hoshimi/` 构建，用 GitHub 官方的 Pages actions 发布 |
+
+站点支持部署在子路径下：`VITE_BASE_PATH` 设置 Vite 的 `base`，路由和搜索索引都跟随它。备份站的页面带有指向 Netlify 站点的 canonical 链接，让搜索引擎以主站为准。CI 的共享检查也会对站点做类型检查、测试和构建。
+
+## 统计与评论
+
+- **统计**：站点使用 Umami，只在生产构建中加载，并且只在两个站点域名上计数；本地预览不计数。
+- **评论**：每个文档页面的末尾有 Giscus 评论区，基于本仓库的 GitHub Discussions，分类为 “Comment”。每个页面对应一个讨论帖，按页面路径 `/docs/<slug>` 对应，所以同一页面的中英文版本、主站和备份站共用同一个帖子。评论区跟随站点的明暗主题和语言。仓库根目录的 `giscus.json` 限定哪些站点可以嵌入它。
+
+## README
+
+仓库的 `README.md` 和 `README.zh-CN.md` 也是 PyPI 上的项目说明，所以其中的链接都写成完整的 URL（指向本站或 GitHub），而不是仓库内的相对路径。

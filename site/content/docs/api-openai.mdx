@@ -1,0 +1,278 @@
+---
+title: "OpenAI 兼容接口"
+description: "/v1 下 OpenAI 兼容接口的参考：Chat Completions 与 Responses 的请求字段、响应和流式事件，模型列表，模型路由规则，推理强度的换算，以及分类接口。"
+icon: FileJson
+---
+
+这些接口供 OpenAI 兼容的客户端使用，基础地址是 `http://127.0.0.1:10600/v1`，使用模型 API 密钥（见 [API 概览](/docs/api)）。用法示例见 [OpenAI SDK 与 curl](/docs/clients-openai)。
+
+| 方法与路径 | 用途 |
+| --- | --- |
+| `POST /v1/chat/completions` | Chat Completions；不写 `stream` 时流式返回 |
+| `POST /v1/responses` | Responses，无状态，在内部转换为 Chat；不写 `stream` 时流式返回 |
+| `GET /v1/models` | 模型目录 |
+| `GET /v1/classifiers` | 可用的分类器 |
+| `POST /v1/classify` | 用分类器回答问题 |
+
+三个推理接口与 `/v1/messages` 共用同一个模型目录和同一套账号轮换、重试、用量记录。每次调用都记在 **用量** 页，来源分别标为 `chat`、`responses`、`classify`。
+
+## Chat Completions
+
+`POST /v1/chat/completions`
+
+### 请求
+
+请求体是标准的 Chat Completions 对象。Hoshimi 自己读取的字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `model` | 模型名，见下文“模型路由”。省略时使用 `server.default_model`；也没有默认模型时返回 `400`（`Missing 'model' field.`） |
+| `messages` | 完整的对话历史；Hoshimi 不保存对话 |
+| `stream` | 默认 `true`。要一次拿到 JSON 必须显式写 `false` |
+| `reasoning_effort` | 推理强度，见下文“推理强度” |
+| `max_tokens` / `max_completion_tokens` | 输出上限；指定了推理强度时会被推理预算改写，见下文 |
+| `tools` / `tool_choice` | `function` 工具；`tool_choice` 为 `auto`、`none`、`required` 或指定函数 |
+
+其他字段（`temperature`、`top_p`、`stop` 等）交给上游的适配器，是否生效取决于上游的协议和模型。消息内容可以包含 `image_url` 内容块（`data:` URL 或 HTTP(S) 地址），只有能看图的模型会理解。
+
+### 非流式响应
+
+```json
+{
+  "id": "chatcmpl_e1cd177a2e2c4cf69f9cdf7d7ccf87ba",
+  "object": "chat.completion",
+  "created": 1792685596,
+  "model": "<请求中的 model>",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Hi! What can I help you with today?"
+      },
+      "finish_reason": "stop",
+      "logprobs": null
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 826,
+    "completion_tokens": 13,
+    "total_tokens": 839,
+    "prompt_tokens_details": {"cached_tokens": 768, "cache_write_tokens": 0},
+    "completion_tokens_details": {"reasoning_tokens": 0}
+  }
+}
+```
+
+- `model` 原样返回请求中写的模型名（包括 `渠道/` 前缀）。
+- `message` 可能还带有 `reasoning_content`（推理过程的文字）、`reasoning_details`（上游提供的结构化推理数据）和 `tool_calls`。
+- `finish_reason` 是 `stop`、`tool_calls` 或 `length`。
+- `usage` 中的明细取决于上游报告了什么；上游没有报告用量时各项为 `0`。
+
+### 流式响应
+
+```text
+data: {"id":"chatcmpl_…","object":"chat.completion.chunk","created":…,"model":"…","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {…,"choices":[{"index":0,"delta":{"reasoning_content":"…"},"finish_reason":null}]}
+
+data: {…,"choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}
+
+data: {…,"choices":[],"usage":{"prompt_tokens":830,"completion_tokens":5,"total_tokens":835,…}}
+
+data: {…,"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+```
+
+- 第一个块只有 `role`。之后的 `delta` 可以带 `content`、`reasoning_content`、`reasoning_details` 或 `tool_calls`。
+- 工具调用的第一个块带 `id`、`type` 和 `function.name`，之后的块按 `index` 追加 `function.arguments`。
+- 上游报告用量时，会有一个 `choices` 为空、带 `usage` 的块，不需要 `stream_options`。
+- 上游在流中失败时发出 `data: {"error": {"message": "…", "type": "upstream_error"}}` 并结束，不发 `[DONE]`。
+
+## Responses
+
+`POST /v1/responses`
+
+Hoshimi 的 Responses 是无状态的：请求被转换成 Chat Completions，交给与 Chat 相同的路由，结果再转换回 Responses 格式。每次都要在 `input` 中发送完整的对话。
+
+### 请求字段
+
+| 字段 | 处理 |
+| --- | --- |
+| `model` | 同 Chat Completions，可省略以使用默认模型 |
+| `input` | 字符串（作为一条用户消息），或项的数组，见下表 |
+| `instructions` | 作为系统消息放在最前面 |
+| `stream` | 默认 `true` |
+| `max_output_tokens` | 转为 `max_tokens` |
+| `temperature`、`top_p` | 原样传递 |
+| `tools` | 只接受 `type: "function"` 的工具（`name`、`description`、`parameters`），其他类型被忽略 |
+| `tool_choice` | `auto`、`none`、`required`，或 `{"type": "function", "name": "…"}` |
+| `reasoning.effort` | 推理强度 |
+| `previous_response_id` | 拒绝，`400`（`invalid_input`），提示每次在 `input` 中发送完整对话 |
+| `text.format`（`text` 以外的类型） | 拒绝，`400`（`invalid_input`），结构化输出不受支持 |
+
+`store`、`include` 等其他字段被忽略。
+
+`input` 数组中的项：
+
+| 项 | 转换为 |
+| --- | --- |
+| `{"role": "user", "content": …}`（或 `type: "message"`） | 用户消息；内容块 `input_text` 和 `input_image`（`image_url` 为字符串）被保留 |
+| `role` 为 `system` 或 `developer` | 系统消息（只取文字） |
+| `role` 为 `assistant` | 助手消息（只取文字） |
+| `{"type": "function_call", "call_id", "name", "arguments"}` | 助手的工具调用 |
+| `{"type": "function_call_output", "call_id", "output"}` | 工具结果 |
+| `{"type": "reasoning", …}` | 上一轮的推理数据，原样交回上游（带 `provider_details` 时用它） |
+
+把上一轮响应的 `output` 项原样放回 `input`，再追加 `function_call_output`，就能延续工具调用和推理。
+
+### 响应
+
+```json
+{
+  "id": "resp_3510bef283d648b98e2cdaf46ec132db",
+  "object": "response",
+  "created_at": 1792685597,
+  "status": "completed",
+  "model": "<请求中的 model>",
+  "output": [
+    {
+      "type": "message",
+      "id": "msg_3510bef283d648b98e2cdaf46ec132db",
+      "status": "completed",
+      "role": "assistant",
+      "content": [{"type": "output_text", "text": "Hi! How can I help you today?", "annotations": []}]
+    }
+  ],
+  "parallel_tool_calls": true,
+  "tool_choice": "auto",
+  "tools": [],
+  "metadata": {},
+  "usage": {
+    "input_tokens": 826,
+    "output_tokens": 12,
+    "total_tokens": 838,
+    "input_tokens_details": {"cached_tokens": 768},
+    "output_tokens_details": {"reasoning_tokens": 0}
+  }
+}
+```
+
+`output` 中按顺序可能有：
+
+- `reasoning`：模型有推理内容时出现，`summary` 中是推理文字；上游给出了结构化推理数据时附在 `provider_details` 中，上游本身就是 Responses 协议时直接使用上游的 `reasoning` 项。
+- `message`：回答文字。只有工具调用、没有文字时省略。
+- `function_call`：每个工具调用一项，`call_id`、`name`、`arguments`。
+
+### 流式事件
+
+每个事件是一行 `data: {...}`，带 `type` 和从 0 开始递增的 `sequence_number`，最后是 `data: [DONE]`：
+
+| 事件 | 时机 |
+| --- | --- |
+| `response.created`、`response.in_progress` | 开始时 |
+| `response.output_item.added` | 推理、消息或工具调用项开始 |
+| `response.reasoning_summary_text.delta` / `.done` | 推理文字 |
+| `response.output_text.delta` / `.done` | 回答文字 |
+| `response.function_call_arguments.delta` / `.done` | 工具调用参数 |
+| `response.output_item.done` | 一项结束 |
+| `response.completed` | 完整的响应对象，含 `usage` |
+| `response.failed` | 上游失败，`response.error` 中是原因 |
+
+不会发送 `response.content_part.added` 等内容分段事件，依赖它们的客户端辅助方法（如 OpenAI Python SDK 的 `responses.stream()`）无法使用，请直接迭代事件。
+
+## 模型列表
+
+`GET /v1/models`
+
+```json
+{
+  "object": "list",
+  "data": [
+    {"id": "big-pickle", "object": "model", "created": 0, "owned_by": "opencode", "free": null, "display_name": "Big Pickle"}
+  ]
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` | 上游的模型名；几个渠道有同名模型时只列出一次（按渠道顺序第一个） |
+| `owned_by` | 提供这个模型的渠道 id |
+| `free` | 站点声明调用免费时为 `true`，声明收费时为 `false`，没有说明时为 `null`（大多数情况） |
+| `display_name` | 显示名称；不知道时与 `id` 相同 |
+
+查询参数 `limit`（1–1000）返回前 `limit` 个模型，并把等待各渠道刷新目录的时间限制在 2 秒以内：响应慢的渠道先用缓存、配置或内置的模型 id，刷新在后台继续。Claude Code 的模型发现使用 `?limit=1000`。不带 `limit` 时返回完整目录。
+
+模型的能力（视觉、推理、工具、上下文长度、推理选项）不在这里，见管理接口的 `GET /api/v1/models`（[管理 API](/docs/api-management)）。
+
+## 模型路由
+
+请求中的 `model` 这样解析：
+
+1. 形如 `渠道/模型`，且 `渠道` 是一个已启用的渠道 id：由这个渠道处理，第一个斜杠之后的全部内容（可以再含斜杠）作为上游模型名。
+2. 否则按渠道顺序，找第一个目录里有这个名字的渠道。
+3. 都没有找到、而只启用了一个渠道时，把名字原样交给这个渠道。
+4. 仍然没有时返回 `404`，代码 `model_not_found`。
+
+省略 `model` 时使用 `server.default_model`（**设置** › **常规** › **默认模型**，或 `hoshimi serve --default-model`）。
+
+选定渠道后，Hoshimi 在这个渠道的账号之间轮换和重试；站点对一个模型的所有账号都回答 404/410 时，这个模型会被暂时停用（`503`，`model_unavailable`）。详见[模型与账号行为](/docs/advanced-models)。
+
+## 推理强度
+
+`reasoning_effort`（Chat）和 `reasoning.effort`（Responses）都按下面的规则处理。请求里没有推理强度时，Hoshimi 不改动请求体，调用方自己的 `max_tokens` 保持不变。
+
+**自带推理菜单的模型**（**模型** 页显示若干档位，例如 `disabled` / `low` / `high` / `max`）：级别是菜单里的就直接使用；否则按别名换算：
+
+| 请求 | 换算为 |
+| --- | --- |
+| `minimal`、`light` | `low` |
+| `balanced` | `medium` |
+| `deep` | `high` |
+| `xhigh` | `max` |
+
+换算后仍不在菜单中时使用模型的默认档位。选定的档位按模型声明的方式写入上游请求；此时输出上限取模型能力、请求值中较小者，不受档位影响。
+
+**其他推理模型**使用 Hoshimi 的三档输出预算（思考和回答共用这个上限）：
+
+| 档位 | 请求中的写法 | 输出上限 |
+| --- | --- | --- |
+| `light` | `light`、`minimal`、`low` | 2048 |
+| `balanced`（默认） | `balanced`、`medium`，以及无法识别的值 | 8192 |
+| `deep` | `deep`、`high`、`xhigh`、`max` | 模型的最大输出 |
+
+- 无法关闭思考的模型，每档上限加倍。
+- 上限不会超过模型的最大输出和请求自己的 `max_tokens`，也不会低于 512。
+- 这类模型的 `reasoning_effort` / `reasoning` 字段不发给上游，只用 `max_tokens` 控制。
+
+既不推理、也没有推理菜单的模型，Hoshimi 不处理推理强度字段，原样交给上游。每个模型的档位和默认值见 **模型** 页或 `GET /api/v1/models` 中的 `efforts` 与 `effort_default`。
+
+## 分类
+
+TypeSafe 分类器不是聊天模型，不出现在 `/v1/models` 中，而是通过单独的接口使用（需要 `typesafe` 渠道的账号）。
+
+```bash
+curl http://127.0.0.1:10600/v1/classifiers
+```
+
+```json
+{"data": [{"id": "typesafe/jev-latest", "owned_by": "typesafe"}]}
+```
+
+向 `POST /v1/classify` 发送的请求体：
+
+```json
+{
+  "model": "typesafe/jev-latest",
+  "state": {"…": "TypeSafe 定义的对话状态"},
+  "questions": {
+    "<问题名>": {"type": "bool"},
+    "<另一个问题名>": {"type": "choice"}
+  }
+}
+```
+
+- `model` 必须是 `/v1/classifiers` 中的 id，否则返回 `404`（`Select a classifier from /v1/classifiers.`）。
+- `state` 是一个对象，`questions` 是非空对象，每个问题的 `type` 为 `bool`、`score` 或 `choice`，问题对象的其余字段原样交给上游。不支持图片。
+- 响应是 `{"provider", "model", "answers", "usage"}`：`bool` 问题的答案为 `{"type": "bool", "probability": …}`；`score` 答案带 `score` 和 `confidence`；`choice` 答案带 `choice`、`probabilities` 和 `confidence`。

@@ -1,0 +1,271 @@
+---
+title: "OpenAI SDKs and curl"
+description: "Call Hoshimi's Chat Completions and Responses with the OpenAI Python and JavaScript SDKs and with curl: non-streaming and streaming, reasoning content, reasoning effort, tool calls, images and errors."
+icon: Code
+---
+
+The official OpenAI SDKs work with Hoshimi once you change the Base URL. Every example on this page was run against a local server; replace `<model-id>` with an `id` from `GET /v1/models` (see [Connecting clients](/docs/clients)).
+
+## Connection settings
+
+| Setting | Value |
+| --- | --- |
+| Base URL | `http://127.0.0.1:10600/v1` |
+| API key | The gateway's model API key; any non-empty string when none is set |
+| Model | An `id` from `/v1/models`, or `provider/model` |
+
+The examples read the key from an environment variable:
+
+```bash
+export HOSHIMI_API_KEY="your-model-api-key"   # anything, when no model API key is set
+```
+
+## Python
+
+```bash
+pip install openai
+```
+
+### Non-streaming
+
+```python
+import os
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:10600/v1", api_key=os.environ["HOSHIMI_API_KEY"])
+
+reply = client.chat.completions.create(
+    model="<model-id>",
+    messages=[{"role": "user", "content": "Introduce yourself in one sentence"}],
+    stream=False,
+)
+print(reply.choices[0].message.content)
+```
+
+<Callout type="warn" title="Always pass stream=False">
+
+Hoshimi streams when a request has no `stream` field. The SDK leaves the field out when you do not pass `stream`, and `create()` then returns the raw SSE text (a `str`) instead of an object. The same holds for `client.responses.create()`.
+
+</Callout>
+
+### Streaming
+
+```python
+stream = client.chat.completions.create(
+    model="<model-id>",
+    messages=[{"role": "user", "content": "Count to five"}],
+    stream=True,
+)
+for chunk in stream:
+    if chunk.choices and chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="", flush=True)
+```
+
+When the upstream reports usage, the stream carries one chunk with empty `choices` and a `usage` object, without `stream_options`; that is why the loop checks `chunk.choices` first.
+
+### Reasoning content and effort
+
+A reasoning model's thinking arrives in `reasoning_content`, which the SDK keeps as an extra attribute:
+
+```python
+reply = client.chat.completions.create(
+    model="<model-id>",
+    reasoning_effort="high",
+    messages=[{"role": "user", "content": "Is 91 prime? Answer in one line."}],
+    stream=False,
+)
+message = reply.choices[0].message
+print("Thinking:", getattr(message, "reasoning_content", None))
+print("Answer:", message.content)
+```
+
+When streaming, read it from `chunk.choices[0].delta` with `getattr(delta, "reasoning_content", None)`. `reasoning_effort` takes `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or a model's own level name; the **Models** page lists each model's levels, and [OpenAI-compatible API](/docs/api-openai) has the mapping.
+
+### Tool calls
+
+```python
+import json
+
+tools = [{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Current weather for a city",
+        "parameters": {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+        },
+    },
+}]
+
+def get_weather(city: str) -> str:
+    return json.dumps({"city": city, "sky": "sunny", "celsius": 21})
+
+messages = [{"role": "user", "content": "What's the weather in Paris?"}]
+while True:
+    reply = client.chat.completions.create(model="<model-id>", messages=messages, tools=tools, stream=False)
+    message = reply.choices[0].message
+    if not message.tool_calls:
+        print(message.content)
+        break
+    messages.append(message.model_dump(exclude_none=True))
+    for call in message.tool_calls:
+        result = get_weather(**json.loads(call.function.arguments))
+        messages.append({"role": "tool", "tool_call_id": call.id, "content": result})
+```
+
+`tool_choice` takes `auto`, `none`, `required` or a named function. Send the whole `messages` list every round; Hoshimi keeps no history.
+
+### Images
+
+Send images as `image_url` content parts; a `data:` URL works:
+
+```python
+import base64
+
+data = base64.b64encode(open("photo.png", "rb").read()).decode()
+reply = client.chat.completions.create(
+    model="<model-id>",
+    messages=[{"role": "user", "content": [
+        {"type": "text", "text": "What is in this picture?"},
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{data}"}},
+    ]}],
+    stream=False,
+)
+```
+
+Only models that read images understand them; look for the **Vision** mark on the **Models** page.
+
+### Responses
+
+```python
+response = client.responses.create(
+    model="<model-id>",
+    instructions="Keep answers short.",
+    input="Is 91 prime?",
+    reasoning={"effort": "low"},
+    stream=False,
+)
+print(response.output_text)
+```
+
+To stream, pass `stream=True` and read the events one by one:
+
+```python
+events = client.responses.create(model="<model-id>", input="Count to five", stream=True)
+for event in events:
+    if event.type == "response.output_text.delta":
+        print(event.delta, end="", flush=True)
+```
+
+<Callout type="info" title="Do not use responses.stream()">
+
+Hoshimi's Responses stream sends no content-part events such as `response.content_part.added`. The Python SDK's `client.responses.stream()` helper relies on them and raises `IndexError`. Use `responses.create(..., stream=True)` as above.
+
+</Callout>
+
+A Responses tool loop puts every `output` item of the previous turn back into `input`, followed by a `function_call_output` per call:
+
+```python
+tools = [{
+    "type": "function",
+    "name": "get_weather",
+    "description": "Current weather for a city",
+    "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
+}]
+
+items = [{"role": "user", "content": "What's the weather in Paris?"}]
+while True:
+    response = client.responses.create(model="<model-id>", input=items, tools=tools, stream=False)
+    calls = [item for item in response.output if item.type == "function_call"]
+    if not calls:
+        print(response.output_text)
+        break
+    items += [item.model_dump(exclude_none=True) for item in response.output]
+    for call in calls:
+        result = get_weather(**json.loads(call.arguments))
+        items.append({"type": "function_call_output", "call_id": call.call_id, "output": result})
+```
+
+Responses is stateless: `previous_response_id` and structured output (`text.format`) are refused with `400`, and only `type: "function"` tools are accepted. All fields are in [OpenAI-compatible API](/docs/api-openai).
+
+## JavaScript / TypeScript
+
+```bash
+npm install openai
+```
+
+```ts
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  baseURL: "http://127.0.0.1:10600/v1",
+  apiKey: process.env.HOSHIMI_API_KEY,
+});
+
+// Non-streaming: stream: false is required here too
+const reply = await client.chat.completions.create({
+  model: "<model-id>",
+  messages: [{ role: "user", content: "Introduce yourself in one sentence" }],
+  stream: false,
+});
+console.log(reply.choices[0].message.content);
+
+// Streaming
+const stream = await client.chat.completions.create({
+  model: "<model-id>",
+  messages: [{ role: "user", content: "Count to five" }],
+  stream: true,
+});
+for await (const chunk of stream) {
+  process.stdout.write(chunk.choices[0]?.delta?.content ?? "");
+}
+```
+
+As in Python, `create()` without `stream` returns the raw SSE text as a string.
+
+## curl
+
+Non-streaming:
+
+```bash
+curl http://127.0.0.1:10600/v1/chat/completions \
+  -H "Authorization: Bearer $HOSHIMI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<model-id>","messages":[{"role":"user","content":"hi"}],"stream":false}'
+```
+
+Streaming (`-N` turns off curl's buffering):
+
+```bash
+curl -N http://127.0.0.1:10600/v1/chat/completions \
+  -H "Authorization: Bearer $HOSHIMI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<model-id>","messages":[{"role":"user","content":"Count to five"}]}'
+```
+
+Each event is a `data: {...}` line, and the last one is `data: [DONE]`.
+
+Responses:
+
+```bash
+curl http://127.0.0.1:10600/v1/responses \
+  -H "Authorization: Bearer $HOSHIMI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<model-id>","input":"hi","reasoning":{"effort":"low"},"stream":false}'
+```
+
+Leave out the `Authorization` header when no model API key is set; `x-api-key: <key>` works in its place.
+
+In the Playground, **Copy as API request** in a reply's **More actions** menu copies the Chat Completions request behind that reply as a curl command that reads the key from `$HOSHIMI_API_KEY`, a handy starting point.
+
+## Errors
+
+Errors on `/v1` use OpenAI's shape, and the SDK raises the matching exception (`openai.NotFoundError`, `openai.BadRequestError` and so on):
+
+```json
+{"error": {"message": "Model 'nope' not found. Use `provider/model` or see /v1/models.", "type": "invalid_request_error", "code": "model_not_found"}}
+```
+
+Once a stream has started, an upstream failure can no longer change the HTTP status: Chat Completions sends one `data: {"error": {...}}` event and ends (without `data: [DONE]`); Responses sends a `response.failed` event or the same `error` event. Failed calls are recorded on the **Usage** page, where you can read the error. All error codes are listed in [API overview](/docs/api).

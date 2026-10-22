@@ -1,0 +1,212 @@
+---
+title: "Local and compatible endpoints"
+description: "Connect LM Studio, Ollama and llama.cpp on your own machine, and the built-in key-billed API services such as OpenAI, Anthropic, OpenRouter and DeepSeek: account fields, channel options, protocol selection and each service's compatibility handling."
+icon: Server
+---
+
+This page covers two kinds of channel: local inference servers on your own machine, and the conventional API services built into Hoshimi that you reach with an API key (OpenAI, Anthropic, OpenRouter, DeepSeek, Groq and fifty-odd more). They share the same account fields and channel options.
+
+## Local backends
+
+| Channel | Name | Default address | Model catalogue |
+| --- | --- | --- | --- |
+| `lmstudio` | LM Studio | `http://localhost:1234/v1` | `/v1/models`; loaded models' context lengths from `/api/v0/models` |
+| `ollama` | Ollama | `http://localhost:11434/v1` | `/api/tags`; capabilities and context lengths from `/api/show` |
+| `llamacpp` | LLaMA.cpp | `http://localhost:8080/v1` | `/v1/models` |
+
+Hoshimi does not scan local ports: it contacts these addresses only after you add an account and the channel is enabled.
+
+### Adding a local server
+
+<Tabs items={["Web UI", "config.json"]}>
+<Tab value="Web UI">
+
+1. Open **Channels**, find **LM Studio**, **LLaMA.cpp** or **Ollama** under the **Not set up** filter, and click **Add account**.
+2. The authentication method is **Local server (optional key)**. **API base URL (optional)** is pre-filled with the default address; change it if your server is on another port.
+3. Enter an **API key** if the local server requires one, otherwise leave it blank; restrict the models in **Model IDs** if you want. Click **Save account**.
+
+</Tab>
+<Tab value="config.json">
+
+```json
+{
+  "providers": {
+    "ollama": {
+      "accounts": [{"id": "local", "base_url": "http://127.0.0.1:11434/v1"}]
+    },
+    "lmstudio": {
+      "accounts": [{"id": "lmstudio-1", "base_url": "http://localhost:1234/v1", "api_key": "<optional key>"}]
+    }
+  }
+}
+```
+
+Without `base_url` the default address is used; an account can be just an `id`.
+
+</Tab>
+</Tabs>
+
+- `base_url` must be an HTTP(S) address without a user name and password, query or fragment; `/v1` is appended when it is missing.
+- When `api_key` (or `access_token`, `token`) has a value it is sent as `Authorization: Bearer`; otherwise no auth header is sent.
+- Local models are never marked free (`free` is `null`).
+
+### How each backend is handled
+
+- **LM Studio**: reads the actual context length of loaded models (cached for 30 seconds). Before a request it makes a rough check: when a quarter of the messages' JSON byte size plus `max_tokens` exceeds the loaded context, it answers 400 at once (`LM Studio request exceeds this model's loaded context window`). For requests close to the limit, the server's own tokenizer still decides. Thinking levels are sent as `reasoning_effort` (`minimal` becomes `low`; `xhigh` and `max` become `high`).
+- **Ollama**: reads each model's capabilities, keeps only models that can do completion or tool calls, and marks vision, thinking and tool support from them; the context length is the largest one in the model info. A model whose details fail to load is still listed. Thinking levels are sent as `reasoning_effort` (`minimal` becomes `low`, `xhigh` becomes `max`).
+- **llama.cpp**: the thinking switch maps to chat-template parameters: `enable_thinking` and `thinking` in `chat_template_kwargs`. A request that already sets `enable_thinking` cannot also name a thinking level.
+
+A thinking menu (including the off level `none`) appears only when the catalogue says the model thinks.
+
+## Conventional API services
+
+These services' addresses, protocols and catalogue endpoints are built in, so an account needs only a key.
+
+### Adding an account
+
+Pick the service in **Channels** and click **Add account**. The authentication method is **API key**: fill in the **API key**, and optionally **API base URL (optional)** and **Model IDs**; OpenAI, xAI and Vercel AI Gateway also offer a **Protocol** choice. Some services also support browser or device-code sign-in:
+
+| Channel | Sign-in | Resulting credential |
+| --- | --- | --- |
+| `anthropic` | claude.ai consent, local callback (paste `code#state` when remote) | Renewable OAuth token |
+| `openai` | OpenAI consent, local callback on fixed port 1455 | Renewable OAuth token (direct API access must be granted) |
+| `openrouter` | OpenRouter consent, local callback | API key |
+| `github-copilot` | GitHub device code | A Copilot token minted from the GitHub token, minted again on renewal; the inference address comes from the token |
+| `kimi-coding` | Device code | Renewable OAuth token |
+| `meta` | Device code | A one-day inference key, minted again on renewal |
+| `xai` | Device code | Renewable OAuth token |
+
+```bash
+hoshimi login openrouter
+hoshimi login github-copilot
+```
+
+Or write it into `config.json`:
+
+```json
+{
+  "providers": {
+    "openrouter": {"accounts": [{"id": "openrouter-1", "api_key": "<OpenRouter key>"}]},
+    "deepseek": {"accounts": [{"id": "deepseek-1", "api_key": "<DeepSeek key>"}]}
+  }
+}
+```
+
+### Account fields
+
+| Field | Meaning |
+| --- | --- |
+| `api_key` | The key, sent as `Authorization: Bearer` (an Anthropic API key is sent as `x-api-key`). `access_token` or `token` are also accepted. An account without a credential cannot be saved. |
+| `base_url` | Optional; replaces this account's upstream address. |
+| `models` | Optional; declares this account's model IDs in place of the live catalogue. |
+| `protocol` | Optional; the protocol this account uses: `chat`, `responses` or `messages`. |
+
+Each account's catalogue is read separately, and a request goes only to accounts whose catalogue has the model. When one account's catalogue refresh fails, its last good result is kept.
+
+### Channel options
+
+| Option | Meaning |
+| --- | --- |
+| `options.base_url` | Replaces the channel's default address. |
+| `options.models` | A channel-level model declaration, used when an account has no `models`. |
+| `options.model_protocols` | A protocol per model, for example `{"claude-sonnet": "messages"}`. Aliases such as `openai-completions`, `openai-responses` and `anthropic-messages` are also accepted. |
+| `options.messages_passthrough` | `false` converts requests to the internal format even when the upstream speaks Anthropic Messages. |
+| `options.messages_count_tokens` | Declares that the upstream has a native token-counting endpoint (`/messages/count_tokens`). On by default for `anthropic`. |
+| `options.structured_outputs` | Declares that the upstream's Chat or Responses supports JSON Schema structured output, so translated Messages requests may use `output_config.format`. Enable it only for models that really support it. |
+| `options.network` | The channel's network route; see [Network and proxies](/docs/config-network). |
+
+### Protocols
+
+A channel sends with its service's default protocol: Chat Completions for most, Responses for `openai`, `meta`, `xai` and `codex`, Anthropic Messages for `anthropic`, `minimax-api`, `minimax-cn` and `vercel-ai-gateway`. "Multi" channels choose per model:
+
+- `github-copilot` picks Responses, Messages or Chat from the endpoints the catalogue lists for the model.
+- In `fireworks` and `opencode-go`, models whose name starts with `claude` use Messages; in `opencode-go`, models starting with `gemini-` use the native Gemini protocol.
+- Everything else defaults to Chat. The account's `protocol` or `options.model_protocols` overrides this.
+
+When the upstream speaks Anthropic Messages, `/v1/messages` requests from Anthropic clients (such as Claude Code) are passed through natively, without format conversion. Feature boundaries and client setup are in [Anthropic API](/docs/clients-anthropic).
+
+### Compatibility handling
+
+Hoshimi adjusts requests for each service's known differences, for example:
+
+- In Chat requests, `max_completion_tokens` becomes `max_tokens` (`minimax-chat` and `wandb` use `max_completion_tokens` instead); services that do not accept the `developer` role get `system`.
+- `deepseek` gets `reasoning_content` filled in on past assistant messages; `mistral` and `mistral-codestral` turn tool-call IDs into 9-character alphanumeric IDs; `cohere` drops the fields it does not support and `name` on messages.
+- Services that reject certain fields have `store`, `reasoning_effort` or tool-definition `strict` removed.
+- `openrouter` reads its catalogue from `/models/user`, falling back to `/models` when refused.
+
+How thinking levels are sent differs by service (a menu appears only when the catalogue says the model thinks):
+
+| Method | Channels |
+| --- | --- |
+| `reasoning_effort` field | `nebius`, `cohere`, `wafer`, `nararoute`, `lightning`, `experiential`, `cheaperinference`, `atlascloud` (cannot be switched off), and the local `lmstudio` and `ollama` |
+| `reasoning` object | `vercel-ai-gateway` |
+| `thinking: {"type": ...}` | `zai-api` |
+| Chat-template parameter `enable_thinking` | `featherless`, `wandb`, `poolside`, `llamacpp` |
+| `reasoning_split: true` | `minimax-chat` |
+| No thinking parameter sent | `cline-pass`, `bedrock-mantle`, `xai`, `alibaba-cloud`, `qwen-coding-plan-intl`, `siliconflow`, `chutes`, `mistral-codestral`, `scaleway` |
+
+Other channels forward the caller's thinking fields unchanged, apart from the field removals above. The detailed rules are in [Model behaviour](/docs/advanced-models).
+
+### Built-in services
+
+| Channel | Name | Default address | Protocol | Plan | Sign-in |
+| --- | --- | --- | --- | --- | --- |
+| `ant-ling` | Ant Ling | `https://api.ant-ling.com/v1` | chat | api | |
+| `anthropic` | Anthropic | `https://api.anthropic.com/v1` | messages | api | Yes |
+| `baseten` | Baseten | `https://inference.baseten.co/v1` | chat | api | |
+| `cerebras` | Cerebras | `https://api.cerebras.ai/v1` | chat | api | |
+| `deepseek` | DeepSeek | `https://api.deepseek.com/v1` | chat | api | |
+| `fireworks` | Fireworks | `https://api.fireworks.ai/inference/v1` | multi | api | |
+| `github-copilot` | GitHub Copilot | `https://api.individual.githubcopilot.com` | multi | subscription | Yes |
+| `groq` | Groq | `https://api.groq.com/openai/v1` | chat | api | |
+| `huggingface` | Hugging Face | `https://router.huggingface.co/v1` | chat | api | |
+| `kimi-coding` | Kimi Coding | `https://api.kimi.com/coding/v1` | chat | coding | Yes |
+| `meta` | Meta | `https://api.meta.ai/v1` | responses | api | Yes |
+| `minimax-api` | MiniMax API | `https://api.minimax.io/anthropic/v1` | messages | api | |
+| `minimax-cn` | MiniMax API CN | `https://api.minimaxi.com/anthropic/v1` | messages | api | |
+| `mistral` | Mistral | `https://api.mistral.ai/v1` | chat | api | |
+| `moonshotai` | Moonshot | `https://api.moonshot.ai/v1` | chat | api | |
+| `moonshotai-cn` | Moonshot CN | `https://api.moonshot.cn/v1` | chat | api | |
+| `openai` | OpenAI | `https://api.openai.com/v1` | responses | api | Yes |
+| `opencode-go` | OpenCode Go | `https://opencode.ai/zen/go/v1` | multi | go | |
+| `openrouter` | OpenRouter | `https://openrouter.ai/api/v1` | multi | api | Yes |
+| `qwen-token-plan` | Qwen Token Plan | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | chat | token-plan | |
+| `qwen-token-plan-cn` | Qwen Token Plan CN | `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` | chat | token-plan-cn | |
+| `qwen-token-plan-individual` | Qwen Token Plan Individual | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | chat | individual | |
+| `together` | Together | `https://api.together.ai/v1` | chat | api | |
+| `vercel-ai-gateway` | Vercel AI Gateway | `https://ai-gateway.vercel.sh/v1` | messages | api | |
+| `xai` | xAI | `https://api.x.ai/v1` | responses | api | Yes |
+| `xiaomi` | Xiaomi MiMo | `https://api.xiaomimimo.com/v1` | chat | api | |
+| `xiaomi-token-plan-ams` | Xiaomi Token Plan AMS | `https://token-plan-ams.xiaomimimo.com/v1` | chat | ams | |
+| `xiaomi-token-plan-cn` | Xiaomi Token Plan CN | `https://token-plan-cn.xiaomimimo.com/v1` | chat | cn | |
+| `xiaomi-token-plan-sgp` | Xiaomi Token Plan SGP | `https://token-plan-sgp.xiaomimimo.com/v1` | chat | sgp | |
+| `zai` | Z.AI Coding | `https://api.z.ai/api/coding/paas/v4` | chat | coding | |
+| `zai-coding-cn` | Z.AI Coding CN | `https://open.bigmodel.cn/api/coding/paas/v4` | chat | coding-cn | |
+| `cline-pass` | ClinePass | `https://api.cline.bot/api/v1` | chat | subscription | |
+| `alibaba-cloud` | Alibaba Cloud | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | chat | api | |
+| `qwen-coding-plan-intl` | QwenCloud Coding Plan | `https://coding-intl.dashscope.aliyuncs.com/v1` | chat | coding | |
+| `siliconflow` | SiliconFlow | `https://api.siliconflow.com/v1` | chat | api | |
+| `nebius` | Nebius Token Factory | `https://api.tokenfactory.nebius.com/v1` | chat | api | |
+| `chutes` | Chutes | `https://llm.chutes.ai/v1` | chat | api | |
+| `featherless` | Featherless AI | `https://api.featherless.ai/v1` | chat | api | |
+| `wandb` | W&B Inference | `https://api.inference.wandb.ai/v1` | chat | api | |
+| `mistral-codestral` | Mistral Codestral | `https://codestral.mistral.ai/v1` | chat | coding | |
+| `bedrock-mantle` | Amazon Bedrock | `https://bedrock-mantle.us-east-1.api.aws/v1` | chat | api | |
+| `cohere` | Cohere | `https://api.cohere.ai/compatibility/v1` | chat | api | |
+| `wafer` | Wafer | `https://pass.wafer.ai/v1` | chat | api | |
+| `minimax-chat` | MiniMax | `https://api.minimax.io/v1` | chat | api | |
+| `zai-api` | Z.ai API | `https://api.z.ai/api/paas/v4` | chat | api | |
+| `nararoute` | NaraRoute | `https://router.bynara.id/v1` | chat | api | |
+| `poolside` | Poolside AI | `https://inference.poolside.ai/v1` | chat | api | |
+| `scaleway` | Scaleway | `https://api.scaleway.ai/v1` | chat | api | |
+| `lightning` | Lightning AI | `https://lightning.ai/api/v1` | chat | api | |
+| `experiential` | Experiential Labs | `https://api.experientiallabs.ai/v1` | chat | api | |
+| `cheaperinference` | Cheaper Inference | `https://api.cheaperinference.com/v1` | chat | api | |
+| `atlascloud` | Atlas Cloud | `https://api.atlascloud.ai/v1` | chat | api | |
+| `opper` | Opper | `https://api.opper.ai/v3/compat` | chat | api | |
+
+`codex` (ChatGPT subscription sign-in) is in [Free stations](/docs/providers-stations); the cloud platforms and NVIDIA are in [Cloud platforms](/docs/providers-cloud) and [NVIDIA NIM](/docs/providers-nvidia). The sources behind these services are mapped in the [provider inventory](/docs/providers-inventory).
+
+## When to use agg instead
+
+When the service is in the table above, use its channel: it carries the service's protocol, catalogue endpoint and compatibility rules. When it is not, but speaks OpenAI Chat Completions, use [agg](/docs/providers-agg): put the address and key in an account, and one agg channel can hold several stations.

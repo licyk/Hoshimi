@@ -1,0 +1,262 @@
+---
+title: "故障排查"
+description: "按现象排查常见问题：服务器起不来或端口被占用，401/403/400，模型不见了或 503，登录失效，账号都用完了，代理和网络错误，站点拒绝图片或工具。"
+icon: LifeBuoy
+---
+
+先看症状对应的小节。每一条都列出你会看到的错误信息、原因和处理办法；错误信息是程序实际输出的原文，可以直接搜索。
+
+## 先收集信息
+
+| 去哪里看 | 能看到什么 |
+| --- | --- |
+| 运行 `hoshimi serve` 的终端 | 所有日志（输出到 stderr，不写日志文件）。`HOSHIMI_LOG_LEVEL=DEBUG hoshimi serve` 或 `hoshimi serve --debug` 输出更多细节 |
+| `hoshimi check` | 配置能否读取、能否通过校验，以及将要启用哪些渠道、多少账号 |
+| **渠道** 页 | 每个渠道的状态（**需要处理**）、账号状态（**需要登录**、**已过期**、**暂停中**、**出错**）、额度和最近的网络错误 |
+| **用量** 页的调用列表 | 每次调用的渠道、账号、尝试次数、错误代码和说明；勾选 **仅失败** 只看失败的 |
+| **模型** 页 | 每个模型的探测结果和是否被记为不可用 |
+| `GET /api/v1/network/diagnostics` | 每个渠道每类操作最近一次的网络结果，见[网络与代理](/docs/config-network) |
+
+## 服务器起不来
+
+<Accordions>
+<Accordion title="Failed to read config file …">
+
+```text
+Failed to read config file /…/config.json: Expecting property name enclosed in double quotes: line 1 column 2 (char 1). The original bytes were kept at /…/config.json.corrupt-2026-10-22T155241.
+```
+
+`config.json` 不是合法的 JSON，多半是手动编辑时少了引号或逗号。Hoshimi 拒绝启动，而不是用空配置覆盖它（那样看起来就像所有账号都消失了），并已把原文件复制一份。按提示的行列修好 `config.json` 再启动；改不好时可以从 `.corrupt-…` 副本中把账号拷出来。`Config file … must contain a JSON object.` 表示文件的顶层不是一个对象。
+
+</Accordion>
+<Accordion title="校验错误（Invalid value: …）">
+
+启动、`hoshimi check` 和 `hoshimi config set` 都会先校验配置，例如 `network.proxy is required in proxy mode` 或 `playground.max_steps must be between 1 and 500.`。每一条的含义见[配置文件](/docs/config)的校验一节。
+
+</Accordion>
+<Accordion title="Set server.access_token first / Refusing to bind a non-loopback host …">
+
+`server.host` 是 `0.0.0.0` 或局域网地址时，必须先设置工具访问密钥和 `security.allow_cidrs`，否则服务器拒绝启动（退出码 4）。按[访问控制](/docs/config-security)中“开放到局域网”的步骤补齐，或把 `server.host` 改回 `127.0.0.1`。
+
+</Accordion>
+<Accordion title="端口被占用：Port 10600 is unavailable. Using port 10601.">
+
+这不是错误。端口被占用（或被系统保留）时，服务器自动尝试下一个端口，直到 65535，再从 1024 开始往上找。实际使用的端口：
+
+- 打印在日志和标准输出的 `SERVER_READY url=http://127.0.0.1:10601` 中；
+- 自动打开的浏览器用的就是它；
+- 写在数据目录的 `server.json` 中；
+- **设置** 页显示 **端口 10600 已被占用，服务器改用 10601。**
+
+客户端要用新端口连接。想固定端口：
+
+```bash
+hoshimi serve --port 18080                 # 这一次用别的端口
+hoshimi config set server.port 18080       # 以后都用（下次启动生效）
+hoshimi serve --strict-port                # 端口被占用就直接失败
+```
+
+开启严格端口后，端口被占用时报 `Port 10600 on 127.0.0.1 is unavailable (…), and strict port mode is on`，退出码 3。先找出占用端口的程序，常见的是另一个还在运行的 Hoshimi：看 `server.json` 中的 `pid`。
+
+</Accordion>
+<Accordion title="Cannot bind 192.168.1.10:10600: …">
+
+监听地址不属于这台机器（例如 IP 变了，或写错了网卡地址）。这种错误换端口也没用，服务器立即退出（退出码 3）。改用 `0.0.0.0` 或这台机器当前的地址。
+
+</Accordion>
+<Accordion title="No web UI build found at …; serving the API only">
+
+找不到网页界面的构建文件，服务器只提供 API。从 PyPI 安装的包自带构建；从源码运行时需要先构建网页界面，见[开发环境](/docs/development-setup)。
+
+</Accordion>
+<Accordion title="hoshimi check: error: no provider enabled">
+
+所有渠道都被关闭了，包括两个免账号渠道。启用一个渠道（`hoshimi config set providers.kilo.enabled true`），或为某个渠道添加账号。
+
+</Accordion>
+</Accordions>
+
+## 网关拒绝请求：401、403、400
+
+这些错误来自 Hoshimi 自己的访问控制，请求还没有到达上游。它们的响应体形如 `{"code": "…", "message": "…", "detail": {}}`；如果是 OpenAI 格式的 `{"error": {…}}`，那是上游或路由返回的错误，见后面几节。
+
+| 状态和代码 | 信息 | 原因与处理 |
+| --- | --- | --- |
+| `401` `model_api_key_required` | `A model API key is required` | 访问 `/v1/*` 需要模型 API 密钥。用 `Authorization: Bearer <模型 API 密钥>` 或 `x-api-key` 发送。注意工具访问密钥不能用在这里 |
+| `401` `auth_required` | `A tool access key is required` | 访问 `/api/*`、`/docs` 或 `/openapi.json` 需要工具访问密钥，只接受 `Authorization: Bearer`；模型 API 密钥和 `x-api-key` 不能用在这里 |
+| `403` `remote_not_allowed` | `Remote address not allowed` | 客户端 IP 不在 `security.allow_cidrs` 中。把它的网段加进去 |
+| `400` `bad_host` | `Host not allowed` | 服务器监听在回环地址，而请求的 `Host` 不是 `localhost`、`127.0.0.1`、`::1` 或监听地址。常见于反向代理转发了公开域名，或用自定义的本地域名访问。让代理转发 `Host: 127.0.0.1:<端口>` |
+| `403` `bad_origin` | `Cross-origin request refused` | 浏览器从另一个来源发起写请求。把那个来源加入 `security.allow_origins`（需要工具访问密钥） |
+| `403` `bad_origin` | `Cross-site request refused` | 请求没有 `Origin`，但浏览器标明它来自另一个站点 |
+
+网页界面反复弹出 **请输入工具访问密钥**，或提示 **工具访问密钥不正确。**：密钥被改过，用当前的密钥重新登录。忘了密钥时，停止服务器，用 `hoshimi config set server.access_token "<新密钥>"` 设置一个新的（或设为 `null` 取消），再启动。详细规则见[访问控制](/docs/config-security)。
+
+## 模型的问题
+
+<Accordions>
+<Accordion title="Model '…' not found">
+
+```text
+Model '…' not found. Use `provider/model` or see /v1/models.
+```
+
+没有一个正在运行的渠道列出这个模型（`404 model_not_found`）。
+
+- 用 `GET /v1/models` 或 **模型** 页确认准确的 id，注意大小写和前缀；
+- 用 `渠道/模型` 的写法，例如 `kilo/<模型 id>`；
+- 这个渠道可能没有运行：被关闭了、启用了却没有账号，或账号缺字段被丢弃（日志中有 `agg: dropping accounts without base_url or key: …`）。用 `hoshimi check` 查看实际运行的渠道。
+
+请求没有带 `model` 且没有设置 `server.default_model` 时，返回 `model is required`。
+
+</Accordion>
+<Accordion title="模型从列表里消失了，或列表是空的">
+
+- 拉取目录失败时，网关保留上一次成功的目录，30 秒后再试；**模型** 页提示 **目录加载失败或超时：…。已保留现有模型。** 一轮加载最多等 20 秒，慢的渠道会标为超时，稍后刷新即可。
+- 一个从没成功拉取过的渠道使用内置的后备列表，其中的模型不保证可用。
+- 新列表突然只剩不到一半时，网关先保留旧列表一个周期，日志里有 `the catalogue came back at N of M models (likely a partial answer)`；再过一个周期仍然如此就接受，日志写 `accepting it as the station's own answer`。
+- 渠道的网络有问题时，**渠道** 页的 **网络** 部分会显示 **模型目录** 操作的错误。
+
+</Accordion>
+<Accordion title="503 model_unavailable：… is temporarily unavailable">
+
+```text
+kilo/<模型 id> is temporarily unavailable: the station stopped answering for it.
+```
+
+上游的所有账号都说这个模型不存在（404、410，或正文明确说模型不存在），网关在 10 分钟内不再把请求发给它；10 分钟内累计 3 次则在本次运行期间一直如此。上游恢复后，用 `POST /api/v1/models/unavailable/reset` 清除记录，或重启服务器。规则见[模型与账号行为](/docs/advanced-models)。
+
+</Accordion>
+<Accordion title="探测结果是 region-blocked、throttled 或 unknown">
+
+- `region-blocked`（地区受限）：当前出口所在地区被站点拒绝。给这个渠道换一条代理线路，见[网络与代理](/docs/config-network)。
+- `throttled`（限流）：额度不够，没有问到模型。过一会儿再探测。
+- `unknown`（未知）：凭据、网络或服务器出错，说明不了模型本身。看 **渠道** 页的网络错误和账号状态。
+
+只有 `unavailable` 才说明模型本身不可用。
+
+</Accordion>
+</Accordions>
+
+## 账号与登录
+
+<Accordions>
+<Accordion title="账号显示需要登录">
+
+上游拒绝了这个账号的刷新令牌（日志：`<渠道>/<账号>: refresh token rejected, account needs a new login`）。这个账号不再参与轮换，续期也会跳过它，直到重新登录：
+
+```bash
+hoshimi login <渠道>
+```
+
+或在 **渠道** 页点 **登录**。用同一个身份重新登录会替换原账号。重启服务器会清除这个标记，但如果令牌确实失效，下一次续期还会再次标记。
+
+</Accordion>
+<Accordion title="Provider '…' exhausted all accounts.">
+
+`502`：这个渠道没有一个可以尝试的账号了，它们要么需要登录，要么正因限流或策略拦截暂停轮换。**渠道** 页列出每个账号的状态和恢复时间（**暂停中**，如 **被限流**、**被策略阻止**），`GET /api/v1/credits` 的 `cooled` 给出剩余秒数。
+
+- 限流暂停的时长取自上游的 `Retry-After` 或正文中的重置时间，没有说明时为 1 小时；策略拦截为 30 分钟。
+- 暂停记录在内存中，重启服务器会清除，但上游的限制不会因此解除。
+- 添加更多账号可以让请求在一个账号受限时继续。
+
+`No accounts configured for provider '…'.`（401）表示这个渠道没有任何账号。
+
+</Accordion>
+<Accordion title="上游返回 401、403、429">
+
+经过网关返回的上游错误保留上游的状态码。
+
+- `401`：网关已经尝试续期并换过账号，仍然被拒。检查 **渠道** 页的账号状态，必要时重新登录。
+- `403`（`permission denied`）：正文与凭据无关的 403 是权限或网关拦截，不会触发续期，也不会换账号。看 **渠道** 页的网络错误：如果是 **请求被上游代理拦截**、**地区限制** 或 **客户端兼容性限制**，问题在线路或地区，不在账号。
+- `429`：所有尝试过的账号都被限流了。请求最多尝试 `server.max_account_retries`（默认 3）个账号，账号更多时可以调大它。
+- 模型饱和（如 CodeBuddy 的 `14003`、“模型繁忙”）时，网关直接返回上游的说明而不换账号：换哪个账号都一样，换一个模型或稍后再试。
+
+</Accordion>
+<Accordion title="登录超时、回调端口被占用、在远程机器上登录">
+
+- 登录在 10 分钟内没有完成就会超时（如 `Login timed out waiting for authorization`），重新开始即可。
+- 需要本地回调的站点在 `127.0.0.1` 上监听：Codex 固定使用 1455 端口（被占用时报 `codex: cannot bind the local callback port 1455: …`；`codex: another login is already in progress` 表示另一个 Codex 登录还没结束），Cline 的浏览器方式使用 48801–48811（`cline: no available callback port (48801–48811)`）。关闭占用这些端口的程序后重试。
+- 浏览器和 Hoshimi 不在同一台机器上时，回调到不了 Hoshimi。用 `hoshimi login <渠道> --no-open --manual`：在任意浏览器中打开打印出的链接，完成后把浏览器最终跳转到的地址（或授权码）粘贴回终端。并非所有站点都支持手动粘贴。
+
+各站点的登录方式见[免费站点](/docs/providers-stations)。
+
+</Accordion>
+<Accordion title="签到或续期没有按预期运行">
+
+- 定时器只在服务器启动时开启。`hoshimi serve` 默认开启两者，并覆盖配置中的 `server.auto_refresh` 和 `server.auto_checkin`；要关闭，启动时加 `--no-refresh` 或 `--no-checkin`。
+- 签到按北京时间（UTC+8）的日历日计算，当天已成功的不会重复；查看历史：`GET /api/v1/credits/checkins`。
+- 没有余额或签到接口的渠道会被跳过。
+
+</Accordion>
+</Accordions>
+
+## 网络与代理
+
+渠道请求失败时，错误信息形如 `<渠道>: <类别>; <建议>`，类别与网络诊断中的 `kind` 相同：
+
+| 信息 | 原因与处理 |
+| --- | --- |
+| `…: proxy_error; check network configuration` | 连不上配置的代理。确认代理在运行、地址和端口正确。配置的代理失败时不会退回直连 |
+| `…: timeout; check network configuration` | 连接或读取超时。站点可能需要代理才能访问，或代理太慢 |
+| `…: connection_error; check network configuration` | DNS、拒绝连接或 TLS 错误 |
+| `…: challenge; complete_browser_authorization` | 上游返回了 Cloudflare 质询。Hoshimi 不会自动通过质询；换一条线路，或稍后再试 |
+| `…: edge_rejected; check_endpoint_and_network` | 返回的是 HTML 拦截页。检查地址是否正确、线路是否被拦截 |
+| `…: invalid_response; check_endpoint_and_network` | 期待 JSON 却收到 HTML，多半是地址指向了网页而不是 API |
+| `…: region_restricted; check_provider_availability` | 站点不服务当前出口的地区。换一条其他地区的代理线路 |
+| `…: client_restricted; check_client_compatibility` | 站点只允许自己的客户端使用免费额度 |
+| `…: signature_rejected; check_request_integrity` | 站点拒绝了请求签名 |
+
+这些都不会让账号作废，也不会触发换账号。
+
+还要注意：
+
+- `auto` 模式读取的是服务器进程启动时的环境变量；在另一个终端里设置的 `HTTPS_PROXY` 对已经运行的服务器无效。小写的 `https_proxy` 优先于大写。
+- 环境变量里的代理地址写错时，请求会报错而不是被忽略。
+- `network.system_proxy` 只在 Windows 上有效。
+- SOCKS 代理对 Bedrock 的 AWS SDK 无效，Bedrock 需要 HTTP(S) 代理。
+- 本机地址（如本地的 Ollama）始终直连，不经过代理。
+
+配置方法见[网络与代理](/docs/config-network)。
+
+## 站点拒绝图片或工具
+
+<Accordions>
+<Accordion title="Playground 中的图片被描述后才发送，或被略去">
+
+模型不能读图（能力中 `vision` 为 `false`）时，Playground 用 **图片模型**（`playground.vision_model`）先把图片描述成文字再发送，并在回复上方提示 **此模型无法读取图片，图片“…”已由 … 描述后发送。** 找不到能读图的模型，或 **图片模型** 设为 **关闭** 时，提示 **图片“…”已略去：没有可读取它的模型。**
+
+模型本应能读图，上游却在回复开始前拒绝了图片（错误中提到 image、vision、multimodal 等）时，Playground 自动改用描述重试一次，提示 **… 拒绝了图片，因此改为发送图片描述。**
+
+通过 API 调用时网关不做这种转换，上游的错误会原样返回。给不能读图的模型发图片，请先换一个 `vision` 为 `true` 的模型。
+
+</Accordion>
+<Accordion title="Playground 中的工具没有被调用">
+
+模型不支持工具调用，或上游在回复开始前拒绝了 `tools`（错误中提到 tool、tool_choice、function call）时，Playground 去掉工具重试，提示 **… 不支持调用工具，因此在没有工具的情况下作答。** 换一个支持工具调用的模型（**模型** 页的 **工具调用**）。工具的开关和询问模式见 [Playground 工具](/docs/guide-agent)。
+
+通过 API 调用时，上游对 `tools` 的拒绝原样返回给客户端。
+
+</Accordion>
+</Accordions>
+
+## 数据与文件
+
+<Accordions>
+<Accordion title="… was last used by a newer Hoshimi (database schema N, this one knows M)">
+
+`hoshimi.db` 被更新版本的 Hoshimi 用过，而现在运行的是旧版本。旧版本仍可运行，但部分记录可能显示不正确。升级到新版本，或从备份恢复数据目录。
+
+</Accordion>
+<Accordion title="命令行改的设置没有生效，或被改回去了">
+
+`hoshimi config set` 和手动编辑都要重启服务器才生效。更重要的是，服务器运行期间，每次在网页上保存设置、登录或续期，都会把内存中的配置写回 `config.json`，覆盖运行期间对文件的修改。先停止服务器，再修改文件。
+
+</Accordion>
+<Accordion title="stats.json.corrupt、checkin.json.corrupt 或 probe.json.corrupt">
+
+升级后导入旧的 JSON 记录时，这个文件无法读取，被改名放在一边，对应的记录从空开始。不影响其他功能；不需要时可以删除。
+
+</Accordion>
+</Accordions>
+
+仍然解决不了时，带上 `HOSHIMI_LOG_LEVEL=DEBUG` 下的日志、`hoshimi version` 的输出和复现步骤，到 [GitHub Issues](https://github.com/licyk/Hoshimi/issues) 反馈。日志可能包含账号 id 和主机名，分享前检查一遍。

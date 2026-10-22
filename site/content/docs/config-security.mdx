@@ -1,0 +1,158 @@
+---
+title: "访问控制"
+description: "工具访问密钥与模型 API 密钥各管什么、怎么发送；客户端网段、Host 和来源检查如何工作；以及如何安全地把网关开放到局域网。"
+icon: Shield
+---
+
+Hoshimi 手里握着上游账号的凭据，谁能连上它，谁就能用这些账号发请求。默认配置只监听本机 `127.0.0.1`，不设任何密钥，适合只有自己使用的电脑。要让别的程序或别的机器访问时，按本页设置密钥和访问限制。
+
+## 两把密钥
+
+| 密钥 | 配置键 | 保护什么 | 怎么发送 |
+| --- | --- | --- | --- |
+| 工具访问密钥 | `server.access_token` | 管理接口 `/api/*`（网页界面和 Playground 都用它）、`/docs`、`/openapi.json` | `Authorization: Bearer <工具访问密钥>` |
+| 模型 API 密钥 | `server.model_api_key` | 外部模型接口 `/v1/*`（Chat Completions、Responses、Messages、模型列表） | `Authorization: Bearer <模型 API 密钥>` 或 `x-api-key: <模型 API 密钥>` |
+| 渠道账号凭据 | `providers.<id>.accounts` | 不保护网关，而是网关用来访问上游站点 | 保存在配置中，由网关发送 |
+
+- 两把密钥互相独立：工具访问密钥打不开 `/v1/*`，模型 API 密钥也打不开 `/api/*`。
+- 哪把没设置，它保护的那部分就不需要密钥。
+- `x-api-key` 只在模型接口上有效，而且请求带了 `Authorization` 时以 `Authorization` 为准；它永远不能用来访问管理接口。
+- 健康检查 `/health`、`/api/v1/app/health` 和网页界面本身（页面、脚本、样式）不需要密钥，但仍然受下文的网段、Host 和来源检查约束。
+- Playground 走的是管理接口，用工具访问密钥，不需要模型 API 密钥。
+
+```bash
+# 模型接口
+curl http://127.0.0.1:10600/v1/models -H "Authorization: Bearer <模型 API 密钥>"
+curl http://127.0.0.1:10600/v1/models -H "x-api-key: <模型 API 密钥>"
+
+# 管理接口
+curl http://127.0.0.1:10600/api/v1/settings -H "Authorization: Bearer <工具访问密钥>"
+```
+
+## 设置密钥
+
+在网页界面的 **设置** › **访问** › **密钥** 中填写 **工具访问密钥** 和 **模型 API 密钥**，保存后立即生效。密钥保存在配置文件中，之后不会再显示，界面只提示 **已设置工具访问密钥。**；设置接口也只返回 `access_token_configured`、`model_api_key_configured` 是否已设置。
+
+用命令行（改完重启服务器）：
+
+```bash
+hoshimi config set server.access_token "一个足够长的随机字符串"
+hoshimi config set server.model_api_key "另一个足够长的随机字符串"
+hoshimi config set server.model_api_key null      # 清除
+```
+
+`hoshimi serve --access-token … --model-api-key …` 只为这一次运行设置密钥，不写入文件；但此后在网页上保存任何设置时，内存中的配置（包括这两个密钥）会被整体写回 `config.json`。
+
+### 在浏览器中登录
+
+设置了工具访问密钥后，网页界面会弹出 **请输入工具访问密钥** 对话框。输入的密钥经服务器验证后保存在这个浏览器的本地存储中；输错时显示 **工具访问密钥不正确。**，已保存的旧密钥不会被替换。在 **设置** 中修改或清除密钥，服务器接受后当前浏览器随之更新；其他浏览器需要重新登录。
+
+## 请求检查的顺序
+
+每个请求（包括 WebSocket）依次经过下面四项检查，任何一项不通过就立即返回错误，不会到达上游：
+
+| 顺序 | 检查 | 不通过时 |
+| --- | --- | --- |
+| 1 | 客户端 IP 在本机回环地址或 `security.allow_cidrs` 内 | `403` `remote_not_allowed`：`Remote address not allowed` |
+| 2 | 监听在回环地址时，`Host` 头是回环名称或监听地址（防 DNS 重绑定） | `400` `bad_host`：`Host not allowed` |
+| 3 | 会改变状态的请求来自页面自己的来源或允许的来源 | `403` `bad_origin`：`Cross-origin request refused` 或 `Cross-site request refused` |
+| 4 | 带了对应接口的密钥 | `401` `auth_required`：`A tool access key is required`，或 `401` `model_api_key_required`：`A model API key is required` |
+
+错误体的格式是 `{"code": "…", "message": "…", "detail": {}}`；`/v1/messages` 和 `/v1/messages/count_tokens` 返回 Anthropic 格式的错误。WebSocket 连接不通过时以关闭码 1008 断开。
+
+### 客户端网段
+
+`security.allow_cidrs` 中每一项是一个 IP 或网段：`192.168.1.0/24`、`10.0.0.0/8`、`fd00::/8`；单个 IP（如 `192.168.1.20`）视为 `/32`（IPv6 为 `/128`）。本机回环地址（`127.0.0.0/8`、`::1`）始终允许。列表为空时只有本机可以连接。
+
+网页界面中对应 **设置** › **安全** › **允许的 CIDR**，每输入一个值按回车。
+
+### Host 检查
+
+服务器监听在回环地址（`127.x.x.x`、`localhost`、`::1`）时，请求的 `Host` 头（去掉端口后）必须是 `localhost`、`127.0.0.1`、`::1` 或监听地址本身，否则返回 `400 bad_host`。这可以阻止恶意网页借 DNS 重绑定，把一个外部域名解析到 `127.0.0.1` 来访问你的网关。
+
+监听在非回环地址（如 `0.0.0.0`）时不做 Host 检查，访问由网段白名单和密钥控制。`security.allow_hosts`（**允许的主机名**）会被保存和显示，但当前版本的这项检查并不读取它。
+
+### 来源检查与 CORS
+
+以下请求要检查来源：除 `GET`、`HEAD`、`OPTIONS` 之外的所有方法，所有 WebSocket 连接，以及浏览器的 CORS 预检请求。
+
+- 带 `Origin` 头时，它必须等于页面自己的来源（`http://` 或 `https://` 加请求的 `Host`），或在 `security.allow_origins` 中，或 `allow_origins` 含有 `*`。
+- 不带 `Origin` 头时，如果浏览器发送了 `Sec-Fetch-Site`，它必须是 `same-origin` 或 `none`。
+
+curl、SDK 等非浏览器客户端通常不发这两个头，不受影响。真正的 CORS 预检请求不需要密钥，紧随其后的实际请求仍然要。
+
+`security.allow_origins`（**允许的来源**）用于让其他来源的浏览器页面调用这个 API，例如 `https://app.example.com`。规则：
+
+- 必须先设置工具访问密钥，否则保存时报错：浏览器跨域访问不能对匿名调用者开放。
+- 值写成来源的形式（协议 + 主机 + 端口），结尾的 `/` 会被去掉。
+- 来源检查立即使用新列表；浏览器跨域读取响应所需的 CORS 响应头使用服务器启动时的列表，修改后要重启。
+
+## 开放到局域网
+
+<Steps>
+<Step>
+
+### 设置两把密钥
+
+工具访问密钥给自己管理用；模型 API 密钥给局域网里的其他客户端（编辑器插件、Agent）用。
+
+</Step>
+<Step>
+
+### 写好配置
+
+```json
+{
+  "server": {
+    "host": "0.0.0.0",
+    "access_token": "your-tool-access-key",
+    "model_api_key": "your-model-api-key"
+  },
+  "security": {"allow_cidrs": ["192.168.1.0/24"]}
+}
+```
+
+把 `192.168.1.0/24` 换成你的局域网网段。只有浏览器页面要从其他来源调用 API 时才需要 `security.allow_origins`。
+
+</Step>
+<Step>
+
+### 重启服务器
+
+监听地址只在启动时生效。启动日志会提醒 `Binding to 0.0.0.0 makes the server reachable from other machines.`。没有设置模型 API 密钥时，还会提醒 `No server.model_api_key is set: external model APIs accept requests without a key.`
+
+</Step>
+<Step>
+
+### 从其他机器连接
+
+客户端的 Base URL 用这台机器的局域网地址，如 `http://192.168.1.10:10600/v1`，密钥用模型 API 密钥。见[接入客户端](/docs/clients)。
+
+</Step>
+</Steps>
+
+监听非回环地址时缺少前提，服务器会拒绝启动：
+
+| 缺少 | 启动时的错误 |
+| --- | --- |
+| 工具访问密钥 | `Set server.access_token first (hoshimi config set server.access_token <secret>).`（退出码 4） |
+| 网段白名单或工具访问密钥 | `Refusing to bind a non-loopback host without both security.allow_cidrs and server.access_token. The gateway can forward requests using upstream account credentials.` |
+
+在网页或用 `hoshimi config set` 保存这样的配置时，也会因为同一条规则被拒绝。
+
+<Callout type="warn" title="不要把网关直接暴露到公网">
+
+模型 API 密钥能调用你所有渠道账号的额度。网段白名单应当只包含你信任的网络。
+
+</Callout>
+
+### 放在反向代理后面
+
+监听在回环地址、由同一台机器上的反向代理转发时：
+
+- 代理转发给 Hoshimi 的 `Host` 头必须是回环名称或监听地址（如 `127.0.0.1:10600`），否则请求会被 Host 检查拒绝（`400 bad_host`）。
+- 浏览器通过公开域名打开网页界面时，保存设置、发送消息等写操作带的 `Origin` 是公开域名，与转发后的 `Host` 不同，会被拒绝（`403 bad_origin`）。把公开地址（如 `https://hoshimi.example.com`）加入 `security.allow_origins`。
+
+## 凭据的存放
+
+两把密钥、渠道账号的令牌和代理地址都明文保存在数据目录的 `config.json` 中。文件以原子替换的方式写入，并尽量把权限限制为仅所有者可读写。`hoshimi config show` 和 `hoshimi config get` 把它们显示为 `***`；网页界面和设置接口从不返回它们的值。用量统计中保存的错误信息会把形似密钥的内容替换为 `***`。见[数据目录与迁移](/docs/config-paths)。

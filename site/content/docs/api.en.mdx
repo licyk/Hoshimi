@@ -1,0 +1,130 @@
+---
+title: "API overview"
+description: "The whole of Hoshimi's HTTP interface: where the model, management and Playground APIs live and which key each uses, request checks and error shapes, streaming conventions, and the running server's /docs and /openapi.json."
+icon: Braces
+---
+
+Hoshimi's server offers three groups of endpoints next to the Web UI, at `http://127.0.0.1:10600` by default. This page covers the rules they share; each group's fields are on its own reference page.
+
+## Endpoint groups
+
+| Group | Paths | Key | Reference |
+| --- | --- | --- | --- |
+| OpenAI-compatible model API | `/v1/chat/completions`, `/v1/responses`, `/v1/models`, `/v1/classifiers`, `/v1/classify` | Model API key | [OpenAI-compatible API](/docs/api-openai) |
+| Anthropic-compatible model API | `/v1/messages`, `/v1/messages/count_tokens` | Model API key | [Anthropic-compatible API](/docs/api-anthropic) |
+| Management API | `/api/v1/*` (used by the Web UI) | Tool access key | [Management API](/docs/api-management) |
+| Playground API | `/api/v1/playground/*` | Tool access key | [Playground API](/docs/api-playground) |
+| API documentation | `/docs` (Swagger UI), `/openapi.json` | Tool access key | See below |
+| Liveness probes | `/health`, `/api/v1/app/health` | None | Return `{"status": "ok"}` and the like |
+| Web UI | Every other path | None (what the UI does goes through the management API) | [Web UI overview](/docs/guide) |
+
+## Authentication
+
+| Key | Config key | Paths | How to send it | When missing or wrong |
+| --- | --- | --- | --- | --- |
+| Model API key | `server.model_api_key` | `/v1/*` | `Authorization: Bearer <key>`, or `x-api-key: <key>` | `401`, code `model_api_key_required` |
+| Tool access key | `server.access_token` | `/api/*`, `/docs`, `/openapi.json` | `Authorization: Bearer <key>` | `401`, code `auth_required` |
+
+- The keys are independent and each guards its own paths; a key that is not set means its paths check no key.
+- `x-api-key` works only on `/v1/*`, and is read only when the request has no `Authorization` header.
+- A browser's CORS preflight (`OPTIONS` with `Origin` and `Access-Control-Request-Method`) needs no key; the real request that follows is checked as usual.
+- Keys are compared in constant time. How to set them is in [Access control](/docs/config-security).
+
+```bash
+curl http://127.0.0.1:10600/v1/models -H "Authorization: Bearer <model-api-key>"
+curl http://127.0.0.1:10600/api/v1/settings -H "Authorization: Bearer <tool-access-key>"
+```
+
+## Request checks
+
+Every request passes these checks, in this order, before it reaches an endpoint. A request that fails one gets:
+
+| Check | Condition | Status | Code | Message |
+| --- | --- | --- | --- | --- |
+| Client address | Not loopback and not in `security.allow_cidrs` | `403` | `remote_not_allowed` | `Remote address not allowed` |
+| Host | While bound to a loopback address, `Host` is not `localhost`, `127.0.0.1`, `::1` or the bound address | `400` | `bad_host` | `Host not allowed` |
+| Origin | A request other than `GET`/`HEAD`/`OPTIONS` carries an `Origin` that is neither this server nor in `security.allow_origins`; or it has no `Origin` but `Sec-Fetch-Site` says cross-site | `403` | `bad_origin` | `Cross-origin request refused` / `Cross-site request refused` |
+| Key | See above | `401` | `model_api_key_required` / `auth_required` | `A model API key is required` / `A tool access key is required` |
+
+On `/v1/messages` these refusals use Anthropic's error shape; on every other path (`/v1/chat/completions` included) they use the management shape. What each setting means is in [Access control](/docs/config-security).
+
+## Error shapes
+
+Each group answers in the shape its clients expect:
+
+<Tabs items={["OpenAI (/v1)", "Anthropic (Messages)", "Management (/api)"]}>
+<Tab value="OpenAI (/v1)">
+
+```json
+{"error": {"message": "Model 'nope' not found. Use `provider/model` or see /v1/models.", "type": "invalid_request_error", "code": "model_not_found"}}
+```
+
+</Tab>
+<Tab value="Anthropic (Messages)">
+
+```json
+{"type": "error", "error": {"type": "not_found_error", "message": "Model 'nope' not found. Use `provider/model` or see /v1/models."}}
+```
+
+`error.type` follows the status: `400` is `invalid_request_error`, `401` `authentication_error`, `403` `permission_error`, `404` `not_found_error`, `413` `request_too_large`, `429` `rate_limit_error`, `529` `overloaded_error`, anything else `api_error`. Upstream errors on native forwarding keep the upstream's own body and status.
+
+</Tab>
+<Tab value="Management (/api)">
+
+```json
+{"code": "not_found", "message": "No provider 'nope'.", "detail": {}}
+```
+
+</Tab>
+</Tabs>
+
+Error codes and statuses:
+
+| Code | Status | OpenAI `type` | Meaning |
+| --- | --- | --- | --- |
+| `invalid_input` | `400` | `invalid_request_error` | The request is invalid; the message says why |
+| `not_found` | `404` | `invalid_request_error` | No such resource |
+| `model_not_found` | `404` | `invalid_request_error` | No provider has this model name |
+| `conflict` | `409` | `invalid_request_error` | Conflicts with existing state, such as a duplicate account id |
+| `upstream_error` | `502`, or the upstream's 4xx/5xx | `upstream_error` | The upstream failed |
+| `quota_exceeded` | The upstream's status (usually `429`) | `upstream_error` | Quota used up or rate limited, with no other account to try |
+| `auth_failed` | The upstream's status | `upstream_error` | The upstream refused the account's credentials |
+| `model_saturated` | The upstream's status | `upstream_error` | The model itself is overloaded; another account would not help |
+| `model_gone` | The upstream's `404` / `410` | `upstream_error` | Every account of the provider says the model does not exist |
+| `model_unavailable` | `503` | `upstream_error` | The model is held out after that answer (given another chance after 10 minutes; three times within 10 minutes holds it until restart); `POST /api/v1/models/unavailable/reset` lifts it at once |
+| `internal_error` | `500` | `server_error` | A server error; `code` is `null` in the OpenAI shape |
+
+When a request body does not match an endpoint's schema, `/v1/messages` answers `400` (`Invalid Messages request body.`) and other endpoints answer the framework's default `422` with `{"detail": [...]}`.
+
+## Streaming
+
+Every stream is Server-Sent Events (`text/event-stream`). Once the response headers are out, the status is fixed at `200`, and a later failure can only be reported inside the stream; do not judge the outcome by the status alone:
+
+| Endpoint | Frames | End | Errors in the stream |
+| --- | --- | --- | --- |
+| Chat Completions | `data: <chat.completion.chunk>` | `data: [DONE]` | `data: {"error": {...}}`, then the end, without `[DONE]` |
+| Responses | `data: <event>`, each event with `type` and `sequence_number` | `data: [DONE]` after `response.completed` | A `response.failed` event, or `data: {"error": {...}}` |
+| Messages | `event: <type>` plus `data: <event>` | `message_stop` | `event: error` in Anthropic's shape |
+| `/api/v1/stats/live` and other management streams | `data: <json>` | The client disconnects | — |
+
+A Messages stream opens the upstream before sending headers, so authentication and rate-limit failures still carry their real status. While waiting on the upstream, Messages streams and the live usage stream send an `event: ping` (`data: {"type":"ping"}`) every 15 seconds, only ever between complete events.
+
+## API documentation: /docs and /openapi.json
+
+The running server has its own Swagger UI (`/docs`) and OpenAPI document (`/openapi.json`) listing every endpoint's fields; they are the authoritative reference. These pages explain usage; `/docs` describes structure.
+
+- With no tool access key set, the **Endpoints** section of **Overview** and **Settings** › **About** have an **API reference** button that opens `/docs`.
+- With a tool access key set, both addresses require it: opening them in a browser gives `401`, and the buttons are hidden. Fetch the OpenAPI document with the header:
+
+```bash
+curl -H "Authorization: Bearer <tool-access-key>" http://127.0.0.1:10600/openapi.json -o openapi.json
+```
+
+The request bodies of `/v1/chat/completions`, `/v1/responses` and `/v1/messages` appear in OpenAPI as free-form objects; their fields are described in [OpenAI-compatible API](/docs/api-openai) and [Anthropic-compatible API](/docs/api-anthropic).
+
+<Cards>
+  <Card title="OpenAI-compatible API" href="/docs/api-openai" description="Chat Completions, Responses, the model list, routing, reasoning effort and classification." />
+  <Card title="Anthropic-compatible API" href="/docs/api-anthropic" description="Messages and token counting: native forwarding, conversion, thinking signatures, streaming and errors." />
+  <Card title="Management API" href="/docs/api-management" description="Every /api/v1 endpoint the Web UI uses." />
+  <Card title="Playground API" href="/docs/api-playground" description="Conversations, the event stream, tool approvals, steering, background commands and attachments." />
+</Cards>

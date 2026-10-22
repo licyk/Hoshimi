@@ -1,0 +1,200 @@
+---
+title: "Anthropic SDK"
+description: "Call Hoshimi's Messages endpoint with the Anthropic Python and TypeScript SDKs and with curl: non-streaming and streaming, tool calls, thinking and effort, token counting, and native forwarding versus protocol conversion."
+icon: MessagesSquare
+---
+
+Hoshimi's `/v1/messages` is compatible with Anthropic Messages, so the official Anthropic SDKs only need a different Base URL. The model catalogue is the same one the OpenAI endpoints use, and any model can be called through Messages. Every example here was run against a local server; replace `<model-id>` with an `id` from `GET /v1/models`.
+
+## Connection settings
+
+| Setting | Value |
+| --- | --- |
+| Base URL | `http://127.0.0.1:10600` (no `/v1`; the SDK adds `/v1/messages` itself) |
+| API key | The gateway's model API key, sent as `x-api-key` or `Authorization: Bearer`; any non-empty string when none is set |
+| Model | An `id` from `/v1/models`, or `provider/model`; Messages requires it and does not use the default model |
+
+The SDK's `api_key` parameter sends `x-api-key` and its `auth_token` parameter sends `Authorization: Bearer`; Hoshimi accepts both. When both are present, `Authorization` wins.
+
+## Python
+
+```bash
+pip install anthropic
+```
+
+```python
+import os
+import anthropic
+
+client = anthropic.Anthropic(base_url="http://127.0.0.1:10600", api_key=os.environ["HOSHIMI_API_KEY"])
+
+reply = client.messages.create(
+    model="<model-id>",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Introduce yourself in one sentence"}],
+)
+print(reply.content[-1].text)
+```
+
+`max_tokens` is required. As with Anthropic, a request without `stream` returns one JSON message.
+
+### Streaming
+
+The SDK's streaming helper works as is:
+
+```python
+with client.messages.stream(
+    model="<model-id>",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Count to five"}],
+) as stream:
+    for text in stream.text_stream:
+        print(text, end="", flush=True)
+    final = stream.get_final_message()
+print("\n", final.stop_reason)
+```
+
+While waiting on the upstream, Hoshimi inserts a `ping` event between complete events every 15 seconds; the SDK skips it.
+
+### Tool calls
+
+```python
+import json
+
+tools = [{
+    "name": "get_weather",
+    "description": "Current weather for a city",
+    "input_schema": {
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": ["city"],
+    },
+}]
+
+def get_weather(city: str) -> str:
+    return json.dumps({"city": city, "sky": "sunny", "celsius": 21})
+
+messages = [{"role": "user", "content": "What's the weather in Paris?"}]
+while True:
+    reply = client.messages.create(model="<model-id>", max_tokens=2048, tools=tools, messages=messages)
+    if reply.stop_reason != "tool_use":
+        print("".join(block.text for block in reply.content if block.type == "text"))
+        break
+    messages.append({"role": "assistant", "content": reply.content})
+    messages.append({"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": block.id, "content": get_weather(**block.input)}
+        for block in reply.content if block.type == "tool_use"
+    ]})
+```
+
+- `tool_choice` takes `{"type": "auto"}`, `{"type": "any"}`, `{"type": "none"}` or `{"type": "tool", "name": "..."}` (the name must be a declared tool).
+- Tool results go in the next user message, with `tool_use_id` matching the earlier call; put the `tool_result` blocks before any text or images in that message.
+- Put the previous `reply.content` back unchanged as the `assistant` message, thinking blocks and signatures included (see below).
+
+### Thinking and effort
+
+Either form works:
+
+```python
+# A thinking budget
+reply = client.messages.create(
+    model="<model-id>",
+    max_tokens=4096,
+    thinking={"type": "enabled", "budget_tokens": 2048},
+    messages=[{"role": "user", "content": "Is 91 prime? Answer in one line."}],
+)
+
+# An effort level
+reply = client.messages.create(
+    model="<model-id>",
+    max_tokens=4096,
+    output_config={"effort": "low"},
+    messages=[{"role": "user", "content": "Is 91 prime? Answer in one line."}],
+)
+for block in reply.content:
+    print(block.type)   # thinking, text
+```
+
+- `thinking.type` is `enabled`, `disabled` or `adaptive`. An `enabled` `budget_tokens` must be at least 1024 and less than `max_tokens`.
+- `output_config.effort` is `low`, `medium`, `high`, `xhigh` or `max`.
+- When the upstream does not speak Anthropic's protocol, these settings become the model's own effort controls; the rules are in [Anthropic-compatible API](/docs/api-anthropic).
+- In a multi-turn conversation, send the assistant's `thinking` / `redacted_thinking` blocks back with their original `signature`. Do not edit or invent signatures, and do not reuse one model's signature with another.
+
+### Token counting
+
+```python
+count = client.messages.count_tokens(
+    model="<model-id>",
+    messages=[{"role": "user", "content": "hi"}],
+)
+print(count.input_tokens)
+```
+
+When the upstream has a native counting endpoint (Anthropic accounts do by default), you get its count; otherwise Hoshimi returns a local estimate with the header `x-hoshimi-token-count: estimate`. The estimate approximates from the UTF-8 size of the request and runs no tokenizer. Counting generates no reply and adds no usage record.
+
+```python
+raw = client.messages.with_raw_response.count_tokens(model="<model-id>", messages=[{"role": "user", "content": "hi"}])
+print(raw.headers.get("x-hoshimi-token-count"))   # "estimate" means a local estimate
+```
+
+## TypeScript
+
+```bash
+npm install @anthropic-ai/sdk
+```
+
+```ts
+import Anthropic from "@anthropic-ai/sdk";
+
+const client = new Anthropic({
+  baseURL: "http://127.0.0.1:10600",
+  apiKey: process.env.HOSHIMI_API_KEY,
+});
+
+const reply = await client.messages.create({
+  model: "<model-id>",
+  max_tokens: 1024,
+  messages: [{ role: "user", content: "Introduce yourself in one sentence" }],
+});
+console.log(reply.content.at(-1));
+
+const stream = client.messages.stream({
+  model: "<model-id>",
+  max_tokens: 1024,
+  messages: [{ role: "user", content: "Count to five" }],
+});
+stream.on("text", (text) => process.stdout.write(text));
+const final = await stream.finalMessage();
+console.log("\n", final.stop_reason);
+```
+
+## curl
+
+```bash
+curl http://127.0.0.1:10600/v1/messages \
+  -H "x-api-key: $HOSHIMI_API_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<model-id>","max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}'
+```
+
+Add `"stream": true` for SSE (with `curl -N`). Leave out `x-api-key` when no model API key is set.
+
+## Native forwarding and protocol conversion
+
+Hoshimi decides per request, from the account that will serve it:
+
+- **Native forwarding**: when the account's provider has a Messages endpoint of its own (for example `anthropic`), the request is forwarded unchanged except for the model name. System arrays, content order, signatures, cache markers, `context_management`, structured output and fields added in the future are left for the upstream to validate; `anthropic-*` headers and query parameters go along. Upstream errors come back as they are: status, body, `request-id`, `retry-after`, `anthropic-ratelimit-*` and so on.
+- **Protocol conversion**: for other providers, Messages is converted to the internal Chat format first. Text, images, system prompts, tools and thinking convert; features only a native upstream has (the MCP connector, containers, `context_management`, server tools, `task_budget`, non-text documents and the like) return `400` naming the field.
+
+The full comparison is in [Anthropic-compatible API](/docs/api-anthropic).
+
+## Errors
+
+Messages errors use Anthropic's shape, and the SDK raises the matching exception (`anthropic.NotFoundError` and so on):
+
+```json
+{"type": "error", "error": {"type": "not_found_error", "message": "Model 'nope' not found. Use `provider/model` or see /v1/models."}}
+```
+
+A streaming request opens the upstream before sending response headers, so authentication and rate-limit failures still carry their real HTTP status; failures after the stream has begun arrive as an `error` event.

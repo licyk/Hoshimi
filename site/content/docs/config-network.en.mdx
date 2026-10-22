@@ -1,0 +1,163 @@
+---
+title: "Network and proxies"
+description: "Which route Hoshimi takes to upstream stations: environment proxies, direct or a configured proxy, per-channel overrides, which requests are covered, and how to read the network diagnostics."
+icon: Network
+---
+
+Every request Hoshimi sends upstream (model catalogues, inference, login, token refresh, balances, check-in) picks its route from a network policy: direct, or through a proxy. There is one global default and each channel can override it. This page shows how to write these policies, when they apply, and where to look when something fails.
+
+Login pages opened in your browser are not affected by these settings; they use the browser's own network configuration.
+
+## Modes
+
+| Mode | Behaviour |
+| --- | --- |
+| `auto` (default) | Reads the `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` environment variables to decide; direct when none is set |
+| `direct` | Always direct; environment variables are ignored |
+| `proxy` | Always through the proxy in `proxy` |
+| `inherit` (channels only) | Use the global policy; this is a channel's default |
+
+Two rules hold whatever the mode:
+
+- Requests to this machine (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`) always go direct, so local model servers are never sent to a proxy.
+- When a configured proxy cannot be reached, the request fails. It **never** falls back to a direct connection.
+
+## Setting the global policy
+
+In the Web UI, open **Settings** › **Network**, choose **Automatic (environment proxy)**, **Direct** or **Proxy**, fill in the **Proxy URL** and save. Or write it in `config.json`:
+
+```json
+{
+  "network": {"mode": "proxy", "proxy": "http://127.0.0.1:7890"}
+}
+```
+
+On the command line, write the whole object at once (`network.mode proxy` on its own is refused for lack of a proxy URL), then restart the server:
+
+```bash
+hoshimi config set network '{"mode": "proxy", "proxy": "socks5://127.0.0.1:1080"}'
+hoshimi config set network '{"mode": "direct"}'
+hoshimi config set network '{"mode": "auto"}'
+```
+
+A proxy URL must:
+
+- use `http`, `https`, `socks5` or `socks5h`;
+- have a host name, and no path, query or fragment (a trailing `/` is fine);
+- may carry a user name and password, as in `http://user:pass@proxy.example.com:8080`.
+
+Proxy URLs may contain passwords. They are stored in plain text in the local `config.json`; the settings API only says whether one is configured, `hoshimi config show` prints `***`, and the Web UI shows **Proxy configured; save to replace it.** Clearing the proxy URL in the Web UI and saving returns to automatic mode (or, for a channel, to inheritance).
+
+## Environment variables (auto mode)
+
+`auto` mode picks the proxy by the target's scheme:
+
+1. `https://` targets use `HTTPS_PROXY`, `http://` targets use `HTTP_PROXY`;
+2. when that variable is empty, `ALL_PROXY`;
+3. a target that matches `NO_PROXY` goes direct.
+
+For each variable the lowercase spelling wins (`https_proxy` over `HTTPS_PROXY`). Proxy URLs from the environment are validated too: a malformed one makes requests fail rather than being silently ignored.
+
+`NO_PROXY` is separated by commas (or semicolons); each entry may be:
+
+| Entry | Matches |
+| --- | --- |
+| `example.com`, `.example.com`, `*.example.com` | The domain and all its subdomains |
+| `example.com:8443` | The domain on that port |
+| `10.0.0.0/8` | IP address targets inside that network |
+| `*` | Every target |
+| `<local>` | Host names without a dot |
+
+`NO_PROXY` only affects automatic selection; a proxy configured in `proxy` mode does not consult it.
+
+### Windows system proxy
+
+With `network.system_proxy` set to `true` (**Use Windows system proxy when no environment proxy exists** in the Web UI), on Windows, `auto` mode reads the system proxy settings (including their exception list) when no environment proxy was found. The option has no effect on other systems.
+
+```json
+{"network": {"mode": "auto", "system_proxy": true}}
+```
+
+## Per-channel overrides
+
+Each channel can have its own route. On the **Channels** page, open a channel and choose its route in its **Network** section; **Inherit global settings** follows **Settings** › **Network**. The matching configuration is `providers.<id>.options.network`:
+
+```json
+{
+  "network": {"mode": "proxy", "proxy": "http://127.0.0.1:7890"},
+  "providers": {
+    "cline":  {"options": {"network": {"mode": "inherit"}}},
+    "ollama": {"options": {"network": {"mode": "direct"}}},
+    "gemini": {"options": {"network": {"mode": "proxy", "proxy": "socks5h://127.0.0.1:1080"}}}
+  }
+}
+```
+
+- A channel with no `network`, or with `{"mode": "inherit"}`, uses the global policy.
+- A channel with an explicit policy **replaces** the global one; the two are not merged. A channel with `{"mode": "auto"}`, for example, reads the environment even when the global mode is `proxy`.
+- A channel's `network` object without `mode` means `inherit`.
+
+## Which requests are covered
+
+| Request | Policy used |
+| --- | --- |
+| Model catalogues, inference, token refresh and exchange, balances, check-in | The channel's policy |
+| Requests the gateway itself makes during `hoshimi login` and the Web UI's **Sign in** (starting authorization, polling, exchanging tokens) | The channel's policy |
+| Availability probes | The channel's policy |
+| Vertex Google authentication calls | The channel's policy |
+| Bedrock AWS SDK service calls | The HTTP(S) proxy the channel's policy selects; AWS credential discovery stays with the AWS SDK. SOCKS proxies do not apply to the Bedrock SDK |
+| models.dev capability metadata, the PyPI update check | The global policy |
+| The Playground's `web_search` and `web_fetch` tools | The global policy |
+| Login pages opened in a browser | The browser's own network settings |
+
+Ordinary gateway requests do not keep cookies that responses set; each login has its own isolated cookie session. Hoshimi does not solve browser challenges (such as Cloudflare's) automatically and does not emulate TLS fingerprints.
+
+## When changes apply
+
+After a save in the Web UI, new requests use the new route at once; streaming replies already running finish on their original connections. A network-only change does not rebuild a channel's account state: accounts held out of rotation and accounts marked as needing a login stay as they are. Changes made with `hoshimi config set` or by editing the file need a server restart. Environment variables are read on every request, but they are the ones the server process inherited when it started, so restart after changing them.
+
+## Network diagnostics
+
+Each channel keeps the latest result of every kind of operation. On the **Channels** page, open a channel: its **Network** section lists the operations that failed most recently, with the error category and HTTP status; hover over an operation to see the target host and route.
+
+The management API returns the same data:
+
+```bash
+curl -s http://127.0.0.1:10600/api/v1/network/diagnostics \
+  -H "Authorization: Bearer <tool access key>"
+```
+
+```json
+[
+  {"provider": "kilo", "operation": "catalog", "kind": "ok", "status": 200,
+   "at": 1792684378.49, "host": "api.kilo.ai", "route": "direct"}
+]
+```
+
+A row holds only the operation, host, route source, time, status and error category: never request paths, query strings, headers, bodies, cookies or proxy URLs.
+
+`operation` is one of: `catalog` (model catalogue), `inference`, `token_refresh`, `token_exchange`, `auth_start` (start authorization), `auth_poll` (authorization polling), `balance`, `checkin`, `request` (anything else).
+
+`route` is one of: `direct`, `configured_proxy`, `environment_proxy`, `system_proxy` (Windows system proxy).
+
+`kind` and what it means:
+
+| `kind` | Shown as | Meaning |
+| --- | --- | --- |
+| `ok` | Success | The request succeeded |
+| `timeout` | Connection timed out | Connect or read timeout |
+| `proxy_error` | Proxy connection failed | The proxy could not be reached or refused the connection |
+| `connection_error` | Connection failed | Any other connection error (DNS, refused, TLS) |
+| `challenge` | Browser authorization required | The upstream answered with a Cloudflare challenge (`cf-mitigated: challenge`) |
+| `edge_rejected` | Request rejected by an upstream proxy | An error came back as an HTML page, usually a gateway, CDN or proxy block page |
+| `invalid_response` | Unexpected API response | JSON or an event stream was expected, HTML arrived |
+| `client_restricted` | Client compatibility restriction | The station only grants its free tier to its own clients |
+| `region_restricted` | Region restriction | The station does not serve the region of this egress |
+| `signature_rejected` | Request signature rejected | The station refused the request signature |
+| `authentication` | Credentials rejected | HTTP 401 |
+| `permission_denied` | Permission denied | HTTP 403 |
+| `quota_exhausted` | Quota exhausted | HTTP 402 |
+| `rate_limited` | Rate limited | HTTP 429 |
+| `upstream_error` | Upstream service error | Any other error status |
+
+`challenge`, `edge_rejected`, `invalid_response`, `client_restricted`, `region_restricted` and `signature_rejected` are recognised before any token handling: they never invalidate an account's refresh token, rotate accounts or mark a model as gone. A bare HTTP 403 is not treated as an expired token either. When you see one of these, check the route first (another proxy, or direct), the region and the station's status. More steps are in [Troubleshooting](/docs/advanced-troubleshooting).

@@ -1,0 +1,108 @@
+---
+title: "Quick start"
+description: "From nothing to a first conversation: install Hoshimi, start the server, send a message in the Playground, then make a first API request with curl."
+icon: Rocket
+---
+
+This page takes the shortest route, using only the anonymous channels that are on by default, so no account is needed. Each step is covered in detail in [Installation](/docs/installation) and [First run](/docs/first-run).
+
+<Steps>
+<Step>
+
+### Install
+
+You need Python 3.10 or newer. Install from PyPI:
+
+```bash
+python -m pip install -U hoshimi
+```
+
+The package ships the built Web UI, so Node and Bun are not needed. Installing with uv or pipx, and the optional cloud dependencies, are in [Installation](/docs/installation).
+
+</Step>
+<Step>
+
+### Start the server
+
+```bash
+hoshimi serve
+```
+
+When the server is ready, the terminal prints `SERVER_READY url=http://127.0.0.1:10600` and the browser opens that address a moment later. By default the server listens on this machine only (`127.0.0.1`), port **10600**; if that port is busy it moves to the next free one, so use the URL the terminal prints. Press <kbd>Ctrl</kbd>+<kbd>C</kbd> to stop it.
+
+`python -m hoshimi serve` is the same as `hoshimi serve`. Add `--no-open` if you do not want a browser to open.
+
+</Step>
+<Step>
+
+### Look at the Overview page
+
+The interface opens on the **Overview** page. The **Channels** section already holds two channels, **OpenCode Zen** and **Kilo AI**, both marked **No account needed**. They are the anonymous entry points that are on by default; which models they offer depends on the upstream catalogue, quota and service state at the time.
+
+The **Endpoints** section lists the addresses clients use (`/v1/chat/completions`, `/v1/responses`, `/v1/messages` and more), each with a copy button.
+
+</Step>
+<Step>
+
+### Send a first message in the Playground
+
+1. Open **Playground** in the navigation rail on the left.
+2. The **Model** picker under the message box has already chosen the first model in the catalogue; click it to search for and pick another.
+3. Type a message in the box (**Ask anything…**) and press <kbd>Enter</kbd> to send (<kbd>Shift</kbd>+<kbd>Enter</kbd> adds a new line).
+
+The reply streams in. The conversation is saved and named automatically, and appears in the **Chats** list in the sidebar. If a model fails, try another: anonymous models can be rate limited or withdrawn at any time.
+
+</Step>
+<Step>
+
+### Make a first API request
+
+List the models first, and put one of the returned `data[].id` values in place of `<model-id>`:
+
+```bash
+curl http://127.0.0.1:10600/v1/models
+
+curl http://127.0.0.1:10600/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<model-id>","messages":[{"role":"user","content":"hi"}],"stream":false}'
+```
+
+Chat Completions streams (SSE) by default; `"stream": false` above returns one complete JSON response instead. In the Playground, **Copy as API request** in the **More actions** menu under a reply copies the conversation as an equivalent request.
+
+With the OpenAI Python SDK, point the base URL at `/v1`:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:10600/v1", api_key="unused")
+stream = client.chat.completions.create(
+    model="<model-id>",
+    messages=[{"role": "user", "content": "hi"}],
+    stream=True,
+)
+for chunk in stream:
+    if chunk.choices and chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="", flush=True)
+```
+
+While no model API key is set, `api_key` can be any value; once one is set, requests must send `Authorization: Bearer <model-api-key>`.
+
+</Step>
+</Steps>
+
+## The same checks from the command line
+
+You can confirm the channels and models without a browser (the server does not need to be running):
+
+```bash
+hoshimi check        # validate the configuration, list enabled channels and account counts
+hoshimi providers    # channels with their account and model counts
+hoshimi models       # every model and the channel that serves it
+```
+
+## Next steps
+
+- Add more channels: sign into free stations or paste API keys on the **Channels** page; see [Channels](/docs/guide-channels) and [Provider concepts](/docs/providers).
+- Connect Claude Code, Codex, OpenCode or your own program: [Connecting clients](/docs/clients).
+- Let other machines on your network connect, or protect the interface with an access key: [Security](/docs/config-security).
+- What each page is for the first time you open the interface: [First run](/docs/first-run).

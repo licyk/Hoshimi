@@ -1,0 +1,262 @@
+---
+title: "Troubleshooting"
+description: "Common problems by symptom: the server will not start or the port is taken, 401/403/400, missing models or 503, expired logins, exhausted accounts, proxy and network errors, stations refusing images or tools."
+icon: LifeBuoy
+---
+
+Find the section for your symptom. Each entry gives the message you will see, its cause and the fix; the messages are the program's actual output, so you can search for them.
+
+## Gather information first
+
+| Where to look | What it shows |
+| --- | --- |
+| The terminal running `hoshimi serve` | Every log line (written to stderr; there is no log file). `HOSHIMI_LOG_LEVEL=DEBUG hoshimi serve` or `hoshimi serve --debug` adds detail |
+| `hoshimi check` | Whether the configuration reads and validates, and which channels and how many accounts would run |
+| The **Channels** page | Each channel's state (**Needs attention**), account states (**Needs login**, **Expired**, **Resting**, **Failing**), allowance and recent network errors |
+| The call list on the **Usage** page | Each call's channel, account, attempts, error code and message; tick **Failed only** to see failures |
+| The **Models** page | Each model's probe verdict and whether it is remembered as unavailable |
+| `GET /api/v1/network/diagnostics` | The latest network result per channel and operation; see [Network and proxies](/docs/config-network) |
+
+## The server will not start
+
+<Accordions>
+<Accordion title="Failed to read config file …">
+
+```text
+Failed to read config file /…/config.json: Expecting property name enclosed in double quotes: line 1 column 2 (char 1). The original bytes were kept at /…/config.json.corrupt-2026-10-22T155241.
+```
+
+`config.json` is not valid JSON, usually a missing quote or comma after a hand edit. Hoshimi refuses to start rather than overwrite it with an empty configuration (which would look as if every account had vanished), and it has kept a copy of the original. Fix `config.json` at the line and column given, then start again; if you cannot, copy the accounts out of the `.corrupt-…` file. `Config file … must contain a JSON object.` means the file's top level is not an object.
+
+</Accordion>
+<Accordion title="Validation errors (Invalid value: …)">
+
+Start-up, `hoshimi check` and `hoshimi config set` validate the configuration first, with messages such as `network.proxy is required in proxy mode` or `playground.max_steps must be between 1 and 500.`. Each is explained in the validation section of [Configuration file](/docs/config).
+
+</Accordion>
+<Accordion title="Set server.access_token first / Refusing to bind a non-loopback host …">
+
+When `server.host` is `0.0.0.0` or a LAN address, a tool access key and `security.allow_cidrs` are required, or the server refuses to start (exit code 4). Follow "Opening the gateway to your LAN" in [Access control](/docs/config-security), or set `server.host` back to `127.0.0.1`.
+
+</Accordion>
+<Accordion title="Port taken: Port 10600 is unavailable. Using port 10601.">
+
+This is not an error. When the port is taken (or reserved by the system), the server tries the next port, up to 65535, then continues from 1024 upwards. The port actually used is:
+
+- printed in the log and on standard output as `SERVER_READY url=http://127.0.0.1:10601`;
+- the one the browser is opened on;
+- written to `server.json` in the data directory;
+- shown on the **Settings** page as **Port 10600 was taken, so the server is on 10601.**
+
+Clients must use the new port. To pin the port:
+
+```bash
+hoshimi serve --port 18080                 # another port, this once
+hoshimi config set server.port 18080       # from now on (at the next start)
+hoshimi serve --strict-port                # fail when the port is taken
+```
+
+With strict port on, a taken port gives `Port 10600 on 127.0.0.1 is unavailable (…), and strict port mode is on` and exit code 3. Find what holds the port first; often it is another Hoshimi still running: see the `pid` in `server.json`.
+
+</Accordion>
+<Accordion title="Cannot bind 192.168.1.10:10600: …">
+
+The listening address does not belong to this machine (its IP changed, or the wrong interface address was written). Another port would not help, so the server exits at once (exit code 3). Use `0.0.0.0` or the machine's current address.
+
+</Accordion>
+<Accordion title="No web UI build found at …; serving the API only">
+
+The Web UI build files are missing and only the API is served. Packages installed from PyPI include the build; when running from source, build the Web UI first; see [Development setup](/docs/development-setup).
+
+</Accordion>
+<Accordion title="hoshimi check: error: no provider enabled">
+
+Every channel is turned off, the two keyless ones included. Enable one (`hoshimi config set providers.kilo.enabled true`) or add an account to a channel.
+
+</Accordion>
+</Accordions>
+
+## The gateway refuses requests: 401, 403, 400
+
+These errors come from Hoshimi's own access control; the request never reached upstream. Their body looks like `{"code": "…", "message": "…", "detail": {}}`. An OpenAI-shaped `{"error": {…}}` is an error from upstream or from routing instead; see the sections below.
+
+| Status and code | Message | Cause and fix |
+| --- | --- | --- |
+| `401` `model_api_key_required` | `A model API key is required` | `/v1/*` needs the model API key. Send `Authorization: Bearer <model API key>` or `x-api-key`. The tool access key does not work here |
+| `401` `auth_required` | `A tool access key is required` | `/api/*`, `/docs` and `/openapi.json` need the tool access key, as `Authorization: Bearer` only; the model API key and `x-api-key` do not work here |
+| `403` `remote_not_allowed` | `Remote address not allowed` | The client IP is not in `security.allow_cidrs`. Add its network |
+| `400` `bad_host` | `Host not allowed` | The server listens on loopback and the request's `Host` is not `localhost`, `127.0.0.1`, `::1` or the listening address. Typical with a reverse proxy forwarding the public name, or a custom local host name. Have the proxy forward `Host: 127.0.0.1:<port>` |
+| `403` `bad_origin` | `Cross-origin request refused` | A browser made a write request from another origin. Add that origin to `security.allow_origins` (needs a tool access key) |
+| `403` `bad_origin` | `Cross-site request refused` | The request has no `Origin`, but the browser marked it as coming from another site |
+
+If the Web UI keeps showing **Tool access key required**, or says **The tool access key is incorrect.**, the key was changed: sign in with the current one. If you forgot it, stop the server, set a new one with `hoshimi config set server.access_token "<new key>"` (or `null` to remove it), then start again. The full rules are in [Access control](/docs/config-security).
+
+## Model problems
+
+<Accordions>
+<Accordion title="Model '…' not found">
+
+```text
+Model '…' not found. Use `provider/model` or see /v1/models.
+```
+
+No running channel lists this model (`404 model_not_found`).
+
+- Check the exact id with `GET /v1/models` or the **Models** page, including case and prefix;
+- use the `channel/model` form, such as `kilo/<model id>`;
+- the channel may not be running: turned off, enabled without accounts, or with accounts dropped for missing fields (the log says `agg: dropping accounts without base_url or key: …`). `hoshimi check` shows the channels that actually run.
+
+A request without `model` and no `server.default_model` gets `model is required`.
+
+</Accordion>
+<Accordion title="Models disappeared from the list, or the list is empty">
+
+- When a catalogue fetch fails, the gateway keeps the last good catalogue and retries after 30 seconds; the **Models** page says **Catalogue unavailable or timed out: …. Existing models are retained.** A loading round waits at most 20 seconds and marks slow channels as timed out; refresh a little later.
+- A channel that never fetched successfully uses its built-in fallback list, whose models are not guaranteed to work.
+- When a new list suddenly has fewer than half the models, the old list is kept for one cycle and the log says `the catalogue came back at N of M models (likely a partial answer)`; if the next cycle agrees, it is accepted and the log says `accepting it as the station's own answer`.
+- When the channel's network fails, the **Network** section of its **Channels** page shows errors for the **Model catalogue** operation.
+
+</Accordion>
+<Accordion title="503 model_unavailable: … is temporarily unavailable">
+
+```text
+kilo/<model id> is temporarily unavailable: the station stopped answering for it.
+```
+
+Every account of the upstream said this model does not exist (404, 410, or a body that clearly says so), so for 10 minutes the gateway stops sending requests for it; three such answers within 10 minutes keep it that way for the rest of the run. Once the upstream is back, clear the record with `POST /api/v1/models/unavailable/reset` or restart the server. The rules are in [Model and account behaviour](/docs/advanced-models).
+
+</Accordion>
+<Accordion title="Probe verdicts region-blocked, throttled or unknown">
+
+- `region-blocked` (Region blocked): the station refuses this egress's region. Give the channel a proxy route in another region; see [Network and proxies](/docs/config-network).
+- `throttled` (Throttled): not enough quota to ask the model. Probe again later.
+- `unknown` (Unknown): a credential, network or server error that says nothing about the model. Check the channel's network errors and account states on the **Channels** page.
+
+Only `unavailable` means the model itself is unavailable.
+
+</Accordion>
+</Accordions>
+
+## Accounts and logins
+
+<Accordions>
+<Accordion title="An account says it needs a login">
+
+The upstream rejected this account's refresh token (log: `<channel>/<account>: refresh token rejected, account needs a new login`). The account leaves rotation and renewal skips it until you sign in again:
+
+```bash
+hoshimi login <channel>
+```
+
+or press **Sign in** on the **Channels** page. Signing in as the same identity replaces the account. A restart clears the mark, but if the token is really invalid the next renewal sets it again.
+
+</Accordion>
+<Accordion title="Provider '…' exhausted all accounts.">
+
+`502`: the channel has no account left to try; each one either needs a login or is held out of rotation after a rate limit or policy block. The **Channels** page lists each account's state and when it comes back (**Resting**, with **Rate limited** or **Blocked by policy**); `cooled` in `GET /api/v1/credits` gives the seconds left.
+
+- A rate-limit hold lasts as long as the upstream's `Retry-After` or the reset time in its message, and one hour when it says nothing; a policy block lasts 30 minutes.
+- Holds live in memory and a restart clears them, but that does not lift the upstream's limit.
+- More accounts let requests continue while one is limited.
+
+`No accounts configured for provider '…'.` (401) means the channel has no accounts at all.
+
+</Accordion>
+<Accordion title="Upstream answers 401, 403, 429">
+
+Upstream errors passed through the gateway keep the upstream's status code.
+
+- `401`: the gateway already tried renewing and other accounts, and was still refused. Check the account states on the **Channels** page and sign in again if needed.
+- `403` (`permission denied`): a 403 whose body is not about credentials is a permission or gateway block; it triggers neither renewal nor rotation. Check the channel's network errors: **Request rejected by an upstream proxy**, **Region restriction** or **Client compatibility restriction** point at the route or region, not the account.
+- `429`: every account tried was rate limited. A request tries at most `server.max_account_retries` (default 3) accounts; raise it if you have more.
+- When a model is saturated (such as CodeBuddy's `14003`, "model busy"), the gateway returns the upstream's message without rotating: every account would get the same answer. Use another model or try later.
+
+</Accordion>
+<Accordion title="Login timeouts, busy callback ports, signing in on a remote machine">
+
+- A login not finished within 10 minutes times out (for example `Login timed out waiting for authorization`); start again.
+- Stations that need a local callback listen on `127.0.0.1`: Codex always uses port 1455 (a busy port gives `codex: cannot bind the local callback port 1455: …`; `codex: another login is already in progress` means another Codex login has not finished), and Cline's browser method uses 48801–48811 (`cline: no available callback port (48801–48811)`). Close whatever holds those ports and retry.
+- When the browser and Hoshimi are on different machines, the callback cannot reach Hoshimi. Use `hoshimi login <channel> --no-open --manual`: open the printed link in any browser, finish there, and paste the address the browser ended on (or the authorization code) back into the terminal. Not every station supports manual input.
+
+Each station's login method is in [Free stations](/docs/providers-stations).
+
+</Accordion>
+<Accordion title="Check-in or renewal does not run as expected">
+
+- The timers start only when the server starts. `hoshimi serve` turns both on by default and overrides `server.auto_refresh` and `server.auto_checkin` from the configuration; to turn them off, start with `--no-refresh` or `--no-checkin`.
+- Check-in days are calendar days in Beijing time (UTC+8); a day that already succeeded is not repeated. The history: `GET /api/v1/credits/checkins`.
+- Channels without a balance or check-in endpoint are skipped.
+
+</Accordion>
+</Accordions>
+
+## Network and proxies
+
+When a channel request fails, the message looks like `<channel>: <category>; <advice>`, with the same categories as `kind` in the network diagnostics:
+
+| Message | Cause and fix |
+| --- | --- |
+| `…: proxy_error; check network configuration` | The configured proxy cannot be reached. Check it is running and the address and port are right. A failed configured proxy never falls back to direct |
+| `…: timeout; check network configuration` | Connect or read timeout. The station may need a proxy, or the proxy is too slow |
+| `…: connection_error; check network configuration` | DNS, connection refused or TLS error |
+| `…: challenge; complete_browser_authorization` | The upstream answered with a Cloudflare challenge. Hoshimi does not solve challenges; try another route or later |
+| `…: edge_rejected; check_endpoint_and_network` | An HTML block page came back. Check the address and whether the route is blocked |
+| `…: invalid_response; check_endpoint_and_network` | HTML instead of JSON, usually an address pointing at a web page rather than the API |
+| `…: region_restricted; check_provider_availability` | The station does not serve this egress's region. Use a proxy route in another region |
+| `…: client_restricted; check_client_compatibility` | The station grants its free tier to its own clients only |
+| `…: signature_rejected; check_request_integrity` | The station refused the request signature |
+
+None of these invalidates an account or rotates accounts.
+
+Also note:
+
+- `auto` mode reads the environment the server process started with; `HTTPS_PROXY` set in another terminal has no effect on a running server. Lowercase `https_proxy` wins over uppercase.
+- A malformed proxy URL in the environment makes requests fail rather than being ignored.
+- `network.system_proxy` only works on Windows.
+- SOCKS proxies do not apply to Bedrock's AWS SDK; Bedrock needs an HTTP(S) proxy.
+- Local addresses (such as a local Ollama) always go direct, never through a proxy.
+
+Configuration is covered in [Network and proxies](/docs/config-network).
+
+## Stations refusing images or tools
+
+<Accordions>
+<Accordion title="Playground images are sent as descriptions, or left out">
+
+When a model cannot read images (`vision` is `false` in its capabilities), the Playground has the **Image model** (`playground.vision_model`) describe the image in words first, and says above the reply **The image “…” was described by …, because this model can’t read images.** When no model can read it, or the **Image model** is **Off**, it says **The image “…” was left out: no model could read it.**
+
+When a model should read images but the upstream refuses the image before the reply starts (an error mentioning image, vision, multimodal and the like), the Playground retries once with descriptions and says **… refused the image, so it was sent as a description.**
+
+Over the API, the gateway does no such conversion and the upstream's error comes back as is. To send images, pick a model whose `vision` is `true`.
+
+</Accordion>
+<Accordion title="Playground tools are never called">
+
+When a model does not support tool calls, or the upstream refuses `tools` before the reply starts (an error mentioning tool, tool_choice or function call), the Playground retries without tools and says **… can’t call tools, so it answered without them.** Pick a model that supports tools (**Tools** on the **Models** page). Turning tools on and the approval modes are covered in [Playground tools](/docs/guide-agent).
+
+Over the API, an upstream's refusal of `tools` is returned to the client as is.
+
+</Accordion>
+</Accordions>
+
+## Data and files
+
+<Accordions>
+<Accordion title="… was last used by a newer Hoshimi (database schema N, this one knows M)">
+
+`hoshimi.db` was used by a newer Hoshimi and an older one is running now. It still runs, but some records may not show correctly. Upgrade, or restore the data directory from a backup.
+
+</Accordion>
+<Accordion title="Settings changed from the command line do not apply, or revert">
+
+`hoshimi config set` and hand edits need a server restart. More importantly, while the server runs, every settings save in the Web UI, every login and every renewal writes the in-memory configuration back to `config.json`, overwriting changes made to the file in the meantime. Stop the server before changing the file.
+
+</Accordion>
+<Accordion title="stats.json.corrupt, checkin.json.corrupt or probe.json.corrupt">
+
+When old JSON records were imported after an upgrade, this file could not be read; it was renamed aside and that record started empty. Nothing else is affected; delete it if you do not need it.
+
+</Accordion>
+</Accordions>
+
+If the problem remains, open a report on [GitHub Issues](https://github.com/licyk/Hoshimi/issues) with logs taken with `HOSHIMI_LOG_LEVEL=DEBUG`, the output of `hoshimi version` and the steps to reproduce. Logs can contain account ids and host names; check them before sharing.

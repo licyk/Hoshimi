@@ -1,0 +1,220 @@
+---
+title: "Model and account behaviour"
+description: "How model names are routed to channels, how catalogues are discovered and cached, how capabilities and reasoning effort shape the request, availability probes, and how failures lead to account rotation, retries, renewal and quota records."
+icon: Route
+---
+
+This page covers the decisions the gateway makes behind each request: which channel gets a model name, what the model can do, what `reasoning_effort` finally becomes, and whether a failure means another account, a wait or a retry. Everyday use does not require any of this; when a result is not what you expected, the answer is here.
+
+## How model names are routed
+
+The request's `model` is resolved in this order:
+
+1. Written as `channel/model` (such as `kilo/some-model`) where `channel` is a running channel id: it goes to that channel, and everything after the slash is the upstream model name.
+2. A bare model id: the first channel, in the built-in channel order (`cline`, `opencode`, `kilo`, `gemini`, `zcode`, `minimax`, `trae`, `qoder`, …), whose catalogue lists it.
+3. No match, but only one channel is running: passed through to it as is.
+4. Otherwise `404 model_not_found`:
+
+   ```text
+   Model '…' not found. Use `provider/model` or see /v1/models.
+   ```
+
+A request without `model` uses `server.default_model`; when that is not set either, the answer is `model is required`.
+
+When the same id appears on several channels, `/v1/models` lists only the first channel's entry. Use the `channel/model` form to pick the channel.
+
+## Model catalogues
+
+Each channel's model list comes from the upstream's own listing; capabilities come from Hoshimi's built-in capability tables and the declarations in your accounts.
+
+- **Cached for 5 minutes**: a channel's listing is not fetched again within 5 minutes.
+- **Guarded against sudden shrinking**: when a fresh listing has fewer than half the models of the previous one, the old list is kept for one more cycle and the log warns `the catalogue came back at N of M models (likely a partial answer)`. If the next cycle says the same, the new list is accepted.
+- **Kept on failure**: when a fetch fails, the last good catalogue stays and the fetch is retried after 30 seconds. A channel that never succeeded uses its built-in fallback list; fallback lists are historical data, not a claim that those models are available now.
+- **Kept across restarts**: every successful catalogue is saved in the data directory's `catalog-cache/` and restored at start (only snapshots up to 7 days old, for exactly the same accounts and options), then refreshed in the background at once.
+
+The Web UI's **Models** page and the Playground load the catalogue through `GET /api/v1/catalog/stream` (SSE): cached results come first, then each channel's fresh result as it arrives. At most 8 fetches run at once; a round waits at most 20 seconds, marks unfinished channels as timed out and keeps the models already received. The standard `/v1/models` stays plain JSON.
+
+## Capabilities
+
+The management API `GET /api/v1/models` reports each model's capabilities:
+
+| Field | Meaning |
+| --- | --- |
+| `vision` | Reads images |
+| `reasoning` | Reasons (thinks) |
+| `tools` | Supports tool calls; `null` means unknown |
+| `context_window`, `max_output` | Context length and maximum output; 131072 and 32768 when nothing is known |
+| `can_disable_thinking` | Thinking can be switched off |
+| `region_sensitive` | Availability depends on the egress region |
+| `free` | Free to use: `true`, `false` or `null` (unknown) |
+| `efforts`, `effort_default` | The model's own reasoning levels and default level |
+| `probe` | The latest availability probe verdict |
+| `unavailable` | Currently remembered as gone by the gateway (see below) |
+
+Where capabilities come from, highest priority first:
+
+1. The channel's built-in capability table, and declarations in an account or the channel options (such as `model_specs` for `agg`; see [agg aggregator](/docs/providers-agg));
+2. metadata carried by the upstream listing itself (some channels);
+3. [models.dev](https://models.dev), which **only fills in** `vision` and `reasoning` for models nothing else declared.
+
+models.dev never supplies context length, output limits or reasoning levels: the same id has different limits on different stations and plans, and those numbers must describe the endpoint you actually use. Hoshimi bundles an offline snapshot and, when online, fetches fresh data in the background; that only affects later lookups and never delays a request, and a failed fetch keeps what is already known.
+
+`free` is evidence about the upstream's price or access, not a promise of unlimited quota; without evidence it is `null`. Local models are not marked free automatically. The per-station rules are in [pi-free migration and differences](/docs/advanced-pi-free).
+
+## Reasoning effort
+
+The gateway rewrites a request only when the caller names a level:
+
+- Chat Completions' `reasoning_effort`, or the Responses-style `reasoning.effort`;
+- without a level the body is sent as is, and the caller's own `max_tokens` is kept. The Playground's **Auto (server default)** sends no level.
+- Native Anthropic Messages requests (forwarded directly to an upstream that speaks Messages) keep the caller's own thinking and output settings and skip these rules.
+
+With a level, there are three cases:
+
+| Model | Handling |
+| --- | --- |
+| Has its own level menu (`efforts` not empty) | The level is chosen and the patch the model declares is merged into the body (for example `reasoning_effort`, or `thinking` and `output_config.effort`); `max_tokens` becomes the smaller of the model's output limit and the caller's limit |
+| Reasons but has no menu | Thinking is limited through the output ceiling: `light` 2,048, `balanced` 8,192, `deep` the model's full output limit |
+| Does not reason | No rewrite |
+
+How level names map:
+
+| Caller sends | Model without a menu (ladder) | Model with a menu |
+| --- | --- | --- |
+| `minimal`, `low` | `light` | The same level when the menu has it; otherwise `minimal` becomes `low` |
+| `medium` | `balanced` | Used when the menu has it |
+| `high` | `deep` | Used when the menu has it |
+| `xhigh`, `max` | `deep` | The same level when the menu has it; otherwise `xhigh` becomes `max` |
+| `light`, `balanced`, `deep` | As is | Become `low`, `medium`, `high` |
+
+- A menu model that still has no matching level after this mapping uses its default level; a ladder model given an unknown level uses `balanced`.
+- For menu models, `reasoning_effort` and `reasoning` fields already in the request are removed unless the patch sets them; `max_completion_tokens` is replaced by `max_tokens`.
+- Models that cannot switch thinking off (`can_disable_thinking` is `false`) get doubled ladder ceilings, because thinking and the answer share one limit.
+- The ladder ceiling is lowered further by the model's output limit and by a smaller `max_tokens` from the caller, but never below 512; so with an explicit level, a caller limit below 512 is raised to 512. For menu models the minimum is 1.
+- For ladder models the `reasoning_effort` and `reasoning` fields are removed, because the upstream does not act on them; only `max_tokens` does.
+
+Each station spells its menu differently: Kilo uses a `reasoning` object, MiniMax and ZCode use `output_config.effort`, CodeArts uses `thinking.type`, Raccoon uses `extra_body.thinking`, and Gemini Code Assist's `gemini-3.8-flash` offers `low`, `medium`, `high` and `tiered` (the model decides). Do not assume every model has the same levels; `GET /api/v1/models` lists each id's `efforts` and the ceiling of each level.
+
+## Availability probes
+
+Some channels' listings are a bare list of ids that cannot say which models this egress may actually use. A probe asks each one with the smallest possible request (`ping`, at most 64 tokens).
+
+Press **Probe** on the **Models** page, or call the management API:
+
+```bash
+# probe the default channels
+curl -X POST http://127.0.0.1:10600/api/v1/probe -H "Authorization: Bearer <tool access key>"
+
+# probe specific models only
+curl -X POST http://127.0.0.1:10600/api/v1/probe \
+  -H "Authorization: Bearer <tool access key>" -H "Content-Type: application/json" \
+  -d '{"models": ["kilo/<model-id>", "cline/<model-id>"]}'
+
+# read the verdicts
+curl http://127.0.0.1:10600/api/v1/probe -H "Authorization: Bearer <tool access key>"
+```
+
+- Without a model list, the probe covers `opencode`, `nvidia` and `agg`, the channels whose listings cannot tell availability. Kilo's free list is already filtered upstream and is not in the default round.
+- Probes run in the background, at most 2 at a time, each waiting at most 45 seconds. A request while a round is running does not start another and returns `started: false`.
+- Model names that cannot be resolved come back in `unresolved`.
+- Verdicts are saved in `hoshimi.db`, survive restarts, and are attached to each row of the **Models** page and `GET /api/v1/models`.
+
+| Verdict | Shown as | Meaning |
+| --- | --- | --- |
+| `available` | Available | The model produced content or tokens |
+| `region-blocked` | Region blocked | Refused for this egress's region |
+| `unavailable` | Unavailable | A refusal about this model |
+| `throttled` | Throttled | Quota prevented the model from being asked |
+| `unknown` | Unknown | A credential, network or server failure; nothing is known about the model |
+
+Only `unavailable` is a verdict about the model itself; region, quota and unknown results do not say a model is gone. When the Playground looks for a model to describe images, it skips models probed as `unavailable` or `region-blocked`.
+
+## Remembered model failures
+
+Ordinary requests also teach the gateway when an upstream says a model does not exist:
+
+- HTTP `404` or `410`, or a `400`, `405`, `406`, `415`, `418`, `422` or `451` whose body clearly says the model does not exist (such as `model not found`, `does not exist`, `不存在`, `已下线`), counts as one strike against that model.
+- A body that also talks about quota, rate limits, balance, login or credentials does not count; `401`, `402`, `429` and `5xx` never count, whatever the body says.
+- A strike is recorded only when every account asked in the channel answered that way.
+
+Once struck:
+
+- for 10 minutes from the first strike, requests for that model get `503 model_unavailable` (`… is temporarily unavailable: the station stopped answering for it.`) without reaching upstream;
+- three strikes within those 10 minutes make it unavailable for the rest of the run;
+- a normal answer from the model clears the record;
+- `POST /api/v1/models/unavailable/reset` or a server restart clears every record.
+
+This record lives in memory only, unlike the probe verdicts saved in the database. A struck model is marked `unavailable` on the **Models** page and in `GET /api/v1/models`, but does not necessarily disappear from the list.
+
+## Account rotation and retries
+
+When a channel has several accounts, a request starts with the first usable one, skipping accounts that need a login or are held out of rotation. After a failure, the kind of failure decides what happens next:
+
+| Failure | Typical upstream answer | What the gateway does |
+| --- | --- | --- |
+| Credentials rejected | `401`, or a `403` whose body is about credentials | Tries to renew this account's token and, if that works, retries with it; otherwise the next account |
+| Permission denied | A `403` whose body is not about credentials | Returns at once, no rotation |
+| Quota or rate limit | `402`, `429`, or a body about quota, rate limits or insufficient balance | Holds this account out of rotation, then the next account |
+| Policy block | CodeBuddy business code `11140`, or "safety review" and similar | Holds the account for 30 minutes without renewing its token, then the next account |
+| Model saturated | CodeBuddy business code `14003` (offering only `SWITCH_MODEL`), or "model busy" and similar | Returns the upstream's message to the caller at once: every account would meet the same wall |
+| Model does not exist | `404`, `410` and the like (see the previous section) | Asks the other accounts; when all agree, records a strike |
+| Recoverable error | `408`, `409`, `425`, `500`, `502`, `503`, `504`, `507`, Cloudflare `521`–`527`, Anthropic `529`, and any status not in a table | The next account |
+| The request itself | `400`, `405`, `406`, `415`, `418`, `422`, `451` | Returns at once: every account would answer the same |
+
+Rules:
+
+- A request tries at most `server.max_account_retries` (default 3) different accounts.
+- **How long a quota hold lasts**: the `Retry-After` header first, then a reset time stated in the body (such as `将在 2026-09-11 18:08:17 UTC+8 重置` or `reset at … UTC+8`, converted with its stated offset), and one hour when neither exists. A running hold is never shortened.
+- When every account has been asked and the last failure was recoverable (not credentials, quota, policy or a missing model), the gateway waits and tries the pool again, at most twice. The wait is `Retry-After` or the body's reset time when given, capped at 8 seconds; `Retry-After: 0` means at once. Otherwise it is random (a ceiling starting at 0.25 seconds that doubles, up to 8 seconds).
+- **A request that has already sent content to the caller is never replayed automatically**, so the same answer never arrives twice.
+- When a channel has no account left to try at all (all need a login or are held), the answer is `502`: `Provider '…' exhausted all accounts.`
+
+Accounts held out of rotation, and why, are shown on the **Channels** page (**Resting**, with **Rate limited** or **Blocked by policy**) and in `cooled` of `GET /api/v1/credits`. Holds live in memory and are cleared by a restart.
+
+## Credential renewal
+
+Accounts with a refresh token are kept fresh by the renewal timer (`server.auto_refresh`):
+
+- the first round runs 30 seconds after start, then one every 30 minutes;
+- each round renews accounts expiring within the hour; accounts with no recorded expiry are renewed every round;
+- after a successful renewal, the new tokens are written back to that one account in `config.json`;
+- when the upstream rejects the refresh token itself (such as `invalid_grant`, or a `401` with no explanation), the account is marked **Needs login** and leaves rotation until you sign in again; other failures are retried next round. A bare `403` never invalidates an account.
+
+A request that meets rejected credentials also renews once on the spot. Renewal state and manual renewal:
+
+```bash
+curl http://127.0.0.1:10600/api/v1/refresh -H "Authorization: Bearer <tool access key>"
+
+curl -X POST http://127.0.0.1:10600/api/v1/refresh \
+  -H "Authorization: Bearer <tool access key>" -H "Content-Type: application/json" \
+  -d '{"provider": "cline", "force": true}'
+```
+
+`force` renews whether or not expiry is near; accounts marked as needing a login are skipped even with `force`. In the Web UI these are **Renew now** and **Renew every account** on the **Channels** page.
+
+## Balances, check-in and passive quota
+
+### Balances and check-in
+
+`GET /api/v1/credits` reads each account's balance, the accounts held out of rotation and the check-in state; `POST /api/v1/credits/claim` (optionally with `{"provider": "…"}`) checks in now; `GET /api/v1/credits/checkins` lists the check-in history. Channels without a balance or check-in endpoint are skipped.
+
+With `server.auto_checkin` on, the first check-in round runs 30 seconds after start, then one every 24 hours. Days are calendar days in Beijing time (UTC+8); once an account has checked in for the day (or the station says it already has), the day is not repeated. Accounts are checked in one after another, never in parallel, to avoid tripping the stations' risk controls. Every outcome, scheduled or manual, joins a 365-day history.
+
+### Passive quota
+
+Upstream answers often carry quota information. The gateway reads the remaining amount and the limit from the headers of inference responses, with no extra request. The first pair that parses wins, in this order:
+
+| Remaining | Limit |
+| --- | --- |
+| `x-ratelimit-remaining-requests` | `x-ratelimit-limit-requests` |
+| `x-ratelimit-remaining` | `x-ratelimit-limit` |
+| `ratelimit-remaining-requests` | `ratelimit-limit-requests` |
+| `ratelimit-remaining` | `ratelimit-limit` |
+| `x-ratelimit-remaining-requests-day` | `x-ratelimit-limit-requests-day` |
+| `x-ratelimit-remaining-day` | `x-ratelimit-limit-day` |
+
+- Parsing is strict: `10 requests` is not read as 10. When remaining and limit headers are both present but no pair parses, an "unreadable quota header" is counted.
+- Percentages are clamped to 0–100; a reading older than 5 minutes is stale.
+- Each channel also has four counters: responses, `401`/`403`, `429` and `5xx`.
+- The **Channels** page shows the reading: red at 10% or less, amber at 25% or less, and stale readings marked **· old**.
+- Readings are kept per channel (not per account), in memory only, and recording one can never fail a generation. The management API returns header names, never raw values.

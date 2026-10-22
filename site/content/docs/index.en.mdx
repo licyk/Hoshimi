@@ -1,0 +1,44 @@
+---
+title: "Hoshimi"
+description: "Hoshimi is an OpenAI- and Anthropic-compatible gateway that puts free model stations, cloud services and local models behind one API and one Web UI. This page covers what it does and how the docs are organised."
+icon: House
+---
+
+Hoshimi is a model gateway written in Python. It puts free model stations (Cline, TRAE, ZCode, Qoder, MiniMax, Gemini, CodeBuddy, Kilo, OpenCode Zen and more), cloud services (Azure, Cloudflare, Vertex, Bedrock, NVIDIA NIM and more) and local or self-hosted OpenAI-compatible servers behind **one local server**: a client needs one base URL and one model catalogue to call any of those models through Chat Completions, Responses or Anthropic Messages, and a multilingual Web UI manages channels and accounts, browses models, chats and shows usage.
+
+Install it, run `hoshimi serve` and open `http://127.0.0.1:10600`. The anonymous OpenCode Zen and Kilo entry points are on by default, with no account and no configuration file.
+
+<Cards>
+  <Card title="Quick start" href="/docs/quick-start" description="Install, start, send a first message in the Playground, then a first API request." />
+  <Card title="Installation" href="/docs/installation" description="Requirements, pip / uv / pipx, optional extras, upgrades, source installs and running in the background." />
+  <Card title="First run" href="/docs/first-run" description="What you see the first time you open the Web UI: sign-in, the default anonymous channels, where everything is." />
+</Cards>
+
+## What it does
+
+| Feature | What it means | More |
+| --- | --- | --- |
+| One API | Chat Completions, Responses, Anthropic Messages and token counting under `/v1`, plus the model list | [Connecting clients](/docs/clients) |
+| Channels and accounts | API keys, browser or device-code sign-in, automatic credential renewal, rotation across accounts, balances and daily check-in | [Channels](/docs/guide-channels), [Provider concepts](/docs/providers) |
+| Model catalogue | Each model's abilities (reasoning, vision, tool calls), reasoning effort options and availability probes | [Models](/docs/guide-models), [Model behaviour](/docs/advanced-models) |
+| Live usage | Calls in flight, token and cache breakdowns, first-token latency and generation speed, hour by hour for any day, kept in a local SQLite database | [Usage](/docs/guide-usage) |
+| Playground | Chat with any model in the browser, optionally with built-in tools (read and edit files, run commands, search the web) that ask before they act | [Playground](/docs/guide-playground), [Playground tools](/docs/guide-agent) |
+| Security | Separate keys for the management UI and the model API; allowed networks, host names and origins | [Security](/docs/config-security) |
+
+## Documentation sections
+
+<Cards>
+  <Card title="Getting started" href="/docs/quick-start" description="Install, start and use it for the first time." />
+  <Card title="Web UI guides" href="/docs/guide" description="The Web UI page by page: Overview, Models, Channels, Playground, Usage and Settings." />
+  <Card title="Connecting clients" href="/docs/clients" description="OpenAI and Anthropic SDKs, curl, Claude Code, Codex and OpenCode." />
+  <Card title="Providers" href="/docs/providers" description="Free stations, anonymous lanes, agg aggregators, cloud platforms, NVIDIA and local models." />
+  <Card title="Command line" href="/docs/cli" description="The hoshimi command, every option and every environment variable." />
+  <Card title="Configuration" href="/docs/config" description="Every config.json key, networking and proxies, security, the data folder." />
+  <Card title="Advanced" href="/docs/advanced-models" description="Abilities and probes, retries and account rotation, usage records, EAC, migration and FAQ." />
+  <Card title="API reference" href="/docs/api" description="The /v1 model API, the /api/v1 management API and the Playground API." />
+  <Card title="Development" href="/docs/development" description="Repository layout, architecture, writing a provider adapter, the Web UI, testing and releases." />
+</Cards>
+
+## License
+
+Hoshimi is licensed under **GPL-3.0-only**. The source is on [GitHub](https://github.com/licyk/Hoshimi); the full text is in [LICENSE](https://github.com/licyk/Hoshimi/blob/main/LICENSE).

@@ -22,6 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "hoshimi" / "webui"
+SITE = ROOT / "site"
 PYTHON_PATHS = ["hoshimi", "tests", "scripts"]
 SCHEMA = WEB / "src" / "api" / "schema.d.ts"
 DEFAULT_API_PORT = 10600
@@ -63,9 +64,9 @@ def python(*args: str, cwd: Path = ROOT, stdout: int | None = None, env: dict[st
 
 
 def bun(*args: str, cwd: Path = WEB) -> int:
-    """Run bun in the web UI folder. Missing bun is a clear error, not a traceback."""
+    """Run bun in the web UI folder (or ``cwd``). Missing bun is a clear error, not a traceback."""
     if shutil.which("bun") is None:
-        print("bun is needed for the web UI tasks. Install it from https://bun.sh, or skip them.", file=sys.stderr)
+        print("bun is needed for the web UI and site tasks. Install it from https://bun.sh, or skip them.", file=sys.stderr)
         return 127
     return run(["bun", *args], cwd=cwd)
 
@@ -229,6 +230,34 @@ def dev(options: list[str]) -> int:
 @task("test-web", "Run the web UI tests and type-check")
 def test_web() -> int:
     return first_failure(bun("run", "test"), bun("run", "typecheck"))
+
+
+# -- The documentation site --------------------------------------------------
+
+
+@task("site-install", "Install the documentation site's dependencies")
+def site_install() -> int:
+    return bun("install", cwd=SITE)
+
+
+@task("site-dev", "Serve the documentation site with hot reload (http://127.0.0.1:3000)")
+def site_dev() -> int:
+    return bun("run", "dev", cwd=SITE)
+
+
+@task("site", "Build the documentation site into site/.output/public")
+def site_build() -> int:
+    return bun("run", "build", cwd=SITE)
+
+
+@task("test-site", "Run the documentation site's tests and type-check")
+def test_site() -> int:
+    return first_failure(bun("run", "check", cwd=SITE), bun("run", "test", cwd=SITE))
+
+
+@task("docs-inventory", "Regenerate the provider inventory pages of the documentation site")
+def docs_inventory() -> int:
+    return python(str(ROOT / "scripts" / "generate_provider_inventory.py"))
 
 
 # -- The OpenAPI contract ----------------------------------------------------

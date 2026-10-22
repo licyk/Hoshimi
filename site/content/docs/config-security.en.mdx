@@ -1,0 +1,158 @@
+---
+title: "Access control"
+description: "What the tool access key and the model API key each protect and how to send them; how the client network, Host and origin checks work; and how to open the gateway to your LAN safely."
+icon: Shield
+---
+
+Hoshimi holds the credentials of your upstream accounts: whoever can reach it can spend them. The default configuration listens on `127.0.0.1` only and sets no keys, which suits a computer only you use. When other programs or other machines need access, set keys and access limits as described here.
+
+## The two keys
+
+| Key | Config key | Protects | How to send it |
+| --- | --- | --- | --- |
+| Tool access key | `server.access_token` | The management API `/api/*` (used by the Web UI and the Playground), `/docs`, `/openapi.json` | `Authorization: Bearer <tool access key>` |
+| Model API key | `server.model_api_key` | The external model API `/v1/*` (Chat Completions, Responses, Messages, model list) | `Authorization: Bearer <model API key>` or `x-api-key: <model API key>` |
+| Channel account credentials | `providers.<id>.accounts` | Not the gateway: they are what the gateway uses to reach upstream stations | Stored in the configuration, sent by the gateway |
+
+- The two keys are independent: the tool access key does not open `/v1/*`, and the model API key does not open `/api/*`.
+- A key that is not set leaves its surface open.
+- `x-api-key` works on the model API only, and an `Authorization` header on the same request wins; it never grants access to the management API.
+- The health checks `/health` and `/api/v1/app/health` and the Web UI itself (page, scripts, styles) need no key, but are still subject to the network, Host and origin checks below.
+- The Playground uses the management API with the tool access key; it does not need the model API key.
+
+```bash
+# model API
+curl http://127.0.0.1:10600/v1/models -H "Authorization: Bearer <model API key>"
+curl http://127.0.0.1:10600/v1/models -H "x-api-key: <model API key>"
+
+# management API
+curl http://127.0.0.1:10600/api/v1/settings -H "Authorization: Bearer <tool access key>"
+```
+
+## Setting the keys
+
+In the Web UI, fill in the **Tool access key** and **Model API key** under **Settings** › **Access** › **Keys**; they apply as soon as they are saved. Keys are stored in the config file and never shown again: the page only says **A tool access key is set.**, and the settings API only returns whether each is set (`access_token_configured`, `model_api_key_configured`).
+
+From the command line (restart the server afterwards):
+
+```bash
+hoshimi config set server.access_token "a long random string"
+hoshimi config set server.model_api_key "another long random string"
+hoshimi config set server.model_api_key null      # clear
+```
+
+`hoshimi serve --access-token … --model-api-key …` sets the keys for that run only and does not write them to the file; but any later save in the Web UI writes the whole in-memory configuration, these keys included, back to `config.json`.
+
+### Signing in from a browser
+
+Once a tool access key is set, the Web UI shows the **Tool access key required** dialog. The key you enter is checked by the server and then kept in this browser's local storage; a wrong key shows **The tool access key is incorrect.** and does not replace the one already saved. When the key is changed or cleared in **Settings**, the current browser follows once the server accepts it; other browsers must sign in again.
+
+## The order of the checks
+
+Every request (WebSockets included) goes through these four checks in order. The first failure answers the request at once; nothing reaches upstream:
+
+| Order | Check | On failure |
+| --- | --- | --- |
+| 1 | The client IP is loopback or inside `security.allow_cidrs` | `403` `remote_not_allowed`: `Remote address not allowed` |
+| 2 | When listening on loopback, the `Host` header is a loopback name or the listening address (DNS-rebinding protection) | `400` `bad_host`: `Host not allowed` |
+| 3 | A state-changing request comes from the page's own origin or an allowed one | `403` `bad_origin`: `Cross-origin request refused` or `Cross-site request refused` |
+| 4 | The request carries the key of its surface | `401` `auth_required`: `A tool access key is required`, or `401` `model_api_key_required`: `A model API key is required` |
+
+The error body is `{"code": "…", "message": "…", "detail": {}}`; `/v1/messages` and `/v1/messages/count_tokens` answer with Anthropic's error shape. A WebSocket that fails is closed with code 1008.
+
+### Client networks
+
+Each entry of `security.allow_cidrs` is an IP or a network: `192.168.1.0/24`, `10.0.0.0/8`, `fd00::/8`. A single IP (such as `192.168.1.20`) counts as `/32` (`/128` for IPv6). Loopback (`127.0.0.0/8`, `::1`) is always allowed. With an empty list only this machine can connect.
+
+In the Web UI this is **Settings** › **Security** › **Allowed CIDRs**; press Enter after each value.
+
+### The Host check
+
+While the server listens on a loopback address (`127.x.x.x`, `localhost`, `::1`), the request's `Host` header (without its port) must be `localhost`, `127.0.0.1`, `::1` or the listening address itself; anything else gets `400 bad_host`. This stops a malicious web page from using DNS rebinding, pointing an outside domain at `127.0.0.1` to reach your gateway.
+
+While listening on a non-loopback address (such as `0.0.0.0`) there is no Host check; access is controlled by the network allowlist and the keys. `security.allow_hosts` (**Allowed hosts**) is saved and shown, but this version's check does not read it.
+
+### The origin check and CORS
+
+Origins are checked on every method other than `GET`, `HEAD` and `OPTIONS`, on every WebSocket, and on browser CORS preflight requests.
+
+- With an `Origin` header, it must equal the page's own origin (`http://` or `https://` plus the request's `Host`), or be listed in `security.allow_origins`, or `allow_origins` must contain `*`.
+- Without an `Origin` header, if the browser sent `Sec-Fetch-Site`, it must be `same-origin` or `none`.
+
+Non-browser clients such as curl and SDKs usually send neither header and are not affected. A real CORS preflight needs no key; the request that follows it does.
+
+`security.allow_origins` (**Allowed origins**) lets browser pages on other origins call this API, for example `https://app.example.com`. Rules:
+
+- A tool access key must be set first, or the save is refused: cross-origin browser access must not be open to anonymous callers.
+- Write values as origins (scheme + host + port); a trailing `/` is removed.
+- The origin check uses a new list at once; the CORS response headers browsers need to read cross-origin responses use the list from server start, so restart after a change.
+
+## Opening the gateway to your LAN
+
+<Steps>
+<Step>
+
+### Set both keys
+
+The tool access key is for you, to manage the gateway; the model API key is for the other clients on your LAN (editor plugins, agents).
+
+</Step>
+<Step>
+
+### Write the configuration
+
+```json
+{
+  "server": {
+    "host": "0.0.0.0",
+    "access_token": "your-tool-access-key",
+    "model_api_key": "your-model-api-key"
+  },
+  "security": {"allow_cidrs": ["192.168.1.0/24"]}
+}
+```
+
+Replace `192.168.1.0/24` with your LAN. `security.allow_origins` is needed only when browser pages on another origin call the API.
+
+</Step>
+<Step>
+
+### Restart the server
+
+The listening address takes effect only at start. The log warns `Binding to 0.0.0.0 makes the server reachable from other machines.`; without a model API key it also warns `No server.model_api_key is set: external model APIs accept requests without a key.`
+
+</Step>
+<Step>
+
+### Connect from another machine
+
+Clients use this machine's LAN address as their base URL, such as `http://192.168.1.10:10600/v1`, with the model API key. See [Connecting clients](/docs/clients).
+
+</Step>
+</Steps>
+
+When listening on a non-loopback address without the prerequisites, the server refuses to start:
+
+| Missing | Error at start |
+| --- | --- |
+| Tool access key | `Set server.access_token first (hoshimi config set server.access_token <secret>).` (exit code 4) |
+| Network allowlist or tool access key | `Refusing to bind a non-loopback host without both security.allow_cidrs and server.access_token. The gateway can forward requests using upstream account credentials.` |
+
+Saving such a configuration in the Web UI or with `hoshimi config set` is refused by the same rule.
+
+<Callout type="warn" title="Do not expose the gateway to the internet directly">
+
+The model API key spends the allowance of every account you have added. Keep the network allowlist to networks you trust.
+
+</Callout>
+
+### Behind a reverse proxy
+
+When Hoshimi listens on loopback and a reverse proxy on the same machine forwards to it:
+
+- The `Host` header the proxy forwards must be a loopback name or the listening address (such as `127.0.0.1:10600`), or the Host check refuses the request (`400 bad_host`).
+- When a browser opens the Web UI through the public name, writes such as saving settings or sending a message carry the public `Origin`, which differs from the forwarded `Host`, and are refused (`403 bad_origin`). Add the public address (such as `https://hoshimi.example.com`) to `security.allow_origins`.
+
+## Where credentials are kept
+
+Both keys, the channel accounts' tokens and proxy URLs are stored in plain text in `config.json` in the data directory. The file is replaced atomically on each write and restricted to its owner where the file system allows. `hoshimi config show` and `hoshimi config get` print them as `***`; the Web UI and the settings API never return their values. Error messages saved in the usage statistics have anything shaped like a key replaced with `***`. See [Data directory and migration](/docs/config-paths).

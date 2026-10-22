@@ -1,0 +1,257 @@
+---
+title: "Management API"
+description: "Every /api/v1 management endpoint the Web UI uses: app information, settings, providers and accounts, the model catalogue, availability probes, credential renewal, balances and check-in, sign-in, usage statistics, with each endpoint's method, purpose and authentication."
+icon: Wrench
+---
+
+Everything the Web UI does goes through these endpoints, and scripts can call them directly. The base address is `http://127.0.0.1:10600/api/v1`.
+
+- **Authentication**: with a tool access key (`server.access_token`) set, every endpoint except `GET /api/v1/app/health` needs `Authorization: Bearer <tool-access-key>`; a missing or wrong key answers `401` (`auth_required`). `x-api-key` and the model API key do not work here.
+- **Errors**: `{"code": "...", "message": "...", "detail": {}}`, usually with `400` (`invalid_input`), `404` (`not_found`) or `409` (`conflict`); a body that does not match the schema gets the framework's `422`. See [API overview](/docs/api).
+- **Fields**: the running server's `/openapi.json` has every endpoint's full schema; the Web UI's types are generated from it.
+- **Playground**: `/api/v1/playground/*` is covered in [Playground API](/docs/api-playground).
+
+The examples use `ACCESS_KEY` for the tool access key:
+
+```bash
+export ACCESS_KEY=your-tool-access-key
+API=http://127.0.0.1:10600/api/v1
+curl -H "Authorization: Bearer $ACCESS_KEY" $API/app/meta
+```
+
+## Endpoints
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /app/version` | The version |
+| `GET /app/health` | Liveness probe, **no key needed**; also says whether a tool access key is required |
+| `GET /app/meta` | Version, which keys are set, whether the request is local, data folder, config file, default model, provider and account counts |
+| `GET /app/update` | Whether PyPI has a newer release |
+| `GET /settings` | Read the settings (keys are reported only as set or not) |
+| `PATCH /settings` | Deep-merge changes into the settings, save them to the config file and apply them at once |
+| `GET /providers` | Providers: accounts, model count, enabled, keyless, needs authorization |
+| `GET /provider-forms` | The form fields for adding an account to each provider |
+| `POST /providers/{provider_id}/accounts` | Validate and append an account |
+| `DELETE /providers/{provider_id}/accounts/{account_id}` | Remove an account |
+| `GET /stations` | Station presets an `agg` account can name |
+| `GET /channels` | The Channels page in one read: each provider's accounts, renewal, cooling, passive quota, network diagnostics, today's usage, recent check-ins and status |
+| `GET /network/diagnostics` | The latest outcome of each kind of network operation per provider |
+| `GET /models` | The model capability catalogue with effort options |
+| `GET /catalog/stream` | An SSE stream of the catalogue refreshing provider by provider |
+| `POST /models/unavailable/reset` | Let every held-out model back in |
+| `GET /probe` | The latest availability verdicts |
+| `POST /probe` | Start an availability round |
+| `GET /refresh` | Each account's credential state |
+| `POST /refresh` | Renew due credentials now |
+| `GET /credits` | Balances, passive quota, cooled accounts and check-in state |
+| `GET /credits/checkins` | Check-in history |
+| `POST /credits/claim` | Check in now to claim today's credits |
+| `GET /login/providers` | Stations that offer an interactive sign-in |
+| `POST /login/start` | Start a sign-in |
+| `GET /login/poll` | Read a sign-in's progress |
+| `POST /login/input` | Send input (such as a code) to a sign-in |
+| `POST /login/cancel` | Cancel a sign-in |
+| `GET /stats` | Usage totals for one range |
+| `GET /stats/days` | Every date with usage |
+| `GET /stats/calls` | Individual calls, filtered and paged |
+| `GET /stats/live` | An SSE stream of calls in flight |
+| `DELETE /stats` | Clear the usage statistics |
+| `/playground/*` | See [Playground API](/docs/api-playground) |
+
+`GET /health` at the server root is also a liveness probe that needs no key; it returns `{"status": "ok"}`.
+
+## App
+
+`GET /app/health` returns `{"status": "ok", "auth_required": true}`, where `auth_required` says whether a tool access key is set. The Web UI uses it to decide whether to show the sign-in dialog.
+
+`GET /app/meta` returns:
+
+| Field | Notes |
+| --- | --- |
+| `version` | The version |
+| `auth_required` / `model_api_key_configured` | Whether a tool access key / model API key is set |
+| `local` | Whether this request comes from the server's own machine |
+| `api_prefix` | The path prefix when embedded in another application; empty when running on its own |
+| `data_dir` / `config_path` | The data folder and config file paths |
+| `default_model` | The default model, or `null` |
+| `providers` / `accounts` | Enabled providers and accounts (anonymous accounts not counted) |
+
+`GET /app/update` returns `status`, `current`, `latest` (the newest final release on PyPI, once known) and `checked_at` (Unix seconds of the last successful check). `status` is `checking` (the first check has not finished), `available`, `current`, `failed` (no check has succeeded yet; later failures keep the last good answer) or `disabled` (`server.check_updates` is off).
+
+## Settings
+
+`GET /settings` returns the current settings: `data_dir`, `config_path`, `server` (host, port, `strict_port`, `access_token_configured`, `model_api_key_configured`, allowed CIDRs/hosts/origins, `max_body_bytes`, `max_account_retries`, `default_model`, `auto_refresh`, `auto_checkin`, `check_updates`, `stats_keep_days`), `providers` (each provider's `id`, `enabled`, account count, the names of its options, its network settings), `network`, `playground`, and:
+
+- `restart_required`: a saved `server.host` / `server.port` differs from what this process started with and needs a restart.
+- `listening`: the socket actually in use; `port` is the bound port, `requested_port` the one the search started from, and `fallback` means the requested port was taken and another was used (never a reason to restart).
+
+The keys themselves are never returned.
+
+`PATCH /settings` takes partial settings in the shape of `config.json`, deep-merges them, validates the result, saves it to the config file and applies it to the running gateway, then returns the new settings:
+
+```bash
+curl -X PATCH $API/settings \
+  -H "Authorization: Bearer $ACCESS_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"server": {"default_model": "<model-id>", "model_api_key": "a-long-random-string"}}'
+```
+
+- Setting `server.access_token` or `server.model_api_key` to `null` (or an empty string) clears it.
+- Invalid values answer `400` with the reason, for example binding a non-loopback address without both `security.allow_cidrs` and `server.access_token`.
+- Changing the listening host or port turns `restart_required` to `true`.
+
+What each setting means is in [Configuration file](/docs/config).
+
+## Providers and accounts
+
+Each item of `GET /providers` has `id`, `display_name`, `accounts` (anonymous accounts not counted), `account_ids`, `models` (the cached model count; this never asks the upstream), `enabled`, `keyless` (usable without an account) and `requires_authorization` (needs a sign-in or a key). Configured but disabled providers, and providers that could be signed into or given a key but are not configured yet, are listed too.
+
+`GET /provider-forms` lists, per provider, the ways to add an account (`method`) with their fields (`key`, `kind`, `required`, `choices`) and defaults.
+
+`POST /providers/{provider_id}/accounts` appends one account; the `account` in the body is exactly what you would write in `config.json`:
+
+```bash
+curl -X POST $API/providers/<provider-id>/accounts \
+  -H "Authorization: Bearer $ACCESS_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"account": {"api_key": "<upstream API key>"}}'
+```
+
+```json
+{"provider": "<provider-id>", "account": "<provider-id>-0", "accounts": 1}
+```
+
+- Accounts are appended, never replaced. The provider checks the account first and answers `400` when it is unusable.
+- Without an `id`, one of the form `<provider>-<n>` is generated; an existing `id` answers `409`; an unknown provider answers `404`.
+- A disabled provider is switched back on. The account goes into both the config file and the running pool.
+
+`DELETE /providers/{provider_id}/accounts/{account_id}` removes the account from the config file and the running pool and returns `{"provider", "account", "removed_from_config"}`. An account imported from an older data folder, which is not in `config.json`, is removed from the pool only, with `removed_from_config` set to `false`. If neither has it, the answer is `404`.
+
+`GET /stations` lists the stations an `agg` account can name with `preset`: `id`, `display_name`, `base_url`, `key_env` (only a hint about which key to have ready; Hoshimi does not read that variable) and `catalog_keyless`. See [The agg aggregator](/docs/providers-agg).
+
+`GET /channels` returns all the local state the Channels page needs in one read, without asking any upstream (balances need upstream requests, so they live in `/credits`):
+
+- Per provider: `id`, `display_name`, `enabled`, `keyless`, `configured`, `loginable`, `addable`, `forms`, `models`, `options`, `network`, `diagnostics`, `quota` (passive quota), `accounts`, `usage_today`, `recent_checkins` (the last five check-in outcomes) and `status`.
+- `status`: `ok`; `attention` (still serving, but something needs a human: a sign-in, an expired token, a cooled account, rate limiting, or quota at or below 10%); `disabled` (switched off); `empty` (nothing to serve from).
+- Per account: `needs_login`, `refreshable`, `expires_at` (epoch milliseconds), `failures`, `last_error`, `last_ok`, `cooled_reason`, `cooled_seconds`, `usage_today`, `last_used_at`.
+- At the top level: `checkin` (the daily check-in state), `auto_refresh`, `auto_checkin`.
+
+`GET /network/diagnostics` returns the latest observation of each kind of network operation per provider: `provider`, `operation`, `kind` (such as `timeout`, `proxy_error`, `connection_error`, `rate_limited`), `status`, `at`, `host`, `route`. Network settings are covered in [Network and proxies](/docs/config-network).
+
+## Model catalogue
+
+`GET /models` returns `levels` (the three output budgets `light`, `balanced`, `deep`) and `data`. Each item of `data`:
+
+| Field | Notes |
+| --- | --- |
+| `id`, `provider`, `name` | Model id, provider, display name |
+| `wire` | The upstream protocol: `chat`, `responses`, `messages` and so on |
+| `vision`, `reasoning`, `tools` | Reads images, reasons, calls tools (`tools` is `null` when unknown) |
+| `context_window`, `max_output` | Context length and maximum output (`0` when unknown) |
+| `can_disable_thinking` | Whether thinking can be turned off |
+| `region_sensitive` | Whether availability depends on region |
+| `free` | Whether the station says it is free; `null` when it says nothing |
+| `efforts`, `effort_default` | Effort options (`id`, `name`, `description`, `is_default`, `tokens`) and the default level |
+| `probe` | The latest availability verdict, or `null` if never probed |
+| `unavailable` | Whether the model is held out (the station answered 404/410 on every account) |
+
+`GET /catalog/stream` is SSE: first a `snapshot` event listing each provider's cached models (status `loading`); then a `provider` event as each provider finishes refreshing (status `ready`, `failed`, or `timeout` after 20 seconds, with `error`, `last_success`, `retry_at` and `source`); finally `done`. While waiting it sends `: keep-alive` comments.
+
+`POST /models/unavailable/reset` lets every held-out model back in and returns `{"cleared": <count>}`.
+
+## Availability probes
+
+`GET /probe` returns `running`, `at` (when the last round finished) and `results` (model → `state`, `detail`, `latency_ms`, `ttft_ms`, `at`). `state` is `available`, `region-blocked`, `unavailable`, `throttled` or `unknown`.
+
+`POST /probe` starts a round in the background; the body is optional:
+
+```json
+{"models": ["<model-id>", "opencode/<model-id>"]}
+```
+
+Without `models`, or with an empty list, every model of the providers that need probing is probed. The answer is the same snapshot plus `started` (whether a new round actually began; `false` while one is already running, as rounds do not stack) and `unresolved` (model names that could not be resolved). What probes mean is in [Model and account behaviour](/docs/advanced-models).
+
+## Credential renewal
+
+`GET /refresh` returns `auto_refresh` and, per account, `provider`, `account`, `refreshable`, `needs_login`, `expires_at`, `failures`, `last_error`, `last_ok`.
+
+`POST /refresh` renews credentials that are due, with an optional body `{"provider": "<provider>", "force": true}` (`force` renews every refreshable account, due or not). It returns one outcome per account: `ok`, `persisted` (the new credential was saved to the config), `terminal` (the station refused the refresh token; the account needs a new sign-in) and `error`.
+
+## Balances and check-in
+
+| Endpoint | Parameters | Returns |
+| --- | --- | --- |
+| `GET /credits` | `provider` (optional) | `rows` (each account's `available`, `unit`, `message`; asks the upstream), `passive` (remaining quota read off ordinary response headers, marked `stale` after five minutes), `cooled` (accounts out of rotation, with reason `rate_limited` or `policy_blocked` and seconds left), `checkin` |
+| `GET /credits/checkins` | `provider` (optional), `limit` (1–500, default 50) | Check-in history, newest first, daily rounds and on-demand claims alike; kept 365 days |
+| `POST /credits/claim` | Body `{"provider": "<provider>"}`; omitted means every provider | Each account's `status`, `credits`, `covers_today`, `message`; a station already claimed today answers `already` |
+
+## Sign-in
+
+Browser authorisation and device-code sign-ins take a few steps:
+
+<Steps>
+<Step>
+
+### Start
+
+```bash
+curl -X POST $API/login/start \
+  -H "Authorization: Bearer $ACCESS_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider": "<provider>"}'
+```
+
+This returns a session: `id`, `provider`, `status`, `login_url` (once the station issues one), `user_code` and `instructions` (for device codes), `expires_at`, `waiting_for` and `message`. `GET /login/providers` lists the providers you can sign into.
+
+</Step>
+<Step>
+
+### Poll
+
+```bash
+curl -H "Authorization: Bearer $ACCESS_KEY" "$API/login/poll?session_id=<session-id>"
+```
+
+Open `login_url` in a browser and finish there, then poll until `status` moves from `pending` to `succeeded` (`account_id` is the new account) or `failed` (`message` says why). An unknown session answers `404`.
+
+</Step>
+<Step>
+
+### Send input or cancel
+
+When the station needs more input (`waiting_for` is not empty), send `{"session_id": "…", "value": "…"}` to `POST /login/input`. `POST /login/cancel?session_id=<session-id>` cancels a sign-in in progress.
+
+</Step>
+</Steps>
+
+How each station signs in is covered in [Channels](/docs/guide-channels).
+
+## Usage statistics
+
+Parameters of `GET /stats`:
+
+| Parameter | Notes |
+| --- | --- |
+| `range` | `24h`, `day`, `7d` (default), `30d`, `90d` |
+| `date` | The date for `range=day`, `YYYY-MM-DD` in server local time (today by default); a future or malformed date answers `400` |
+
+It returns `totals`, `previous` (the equal span just before; for `day` the day before, and for today only up to the same time of day), `latency` (average, median and P95 of time to first token and generation speed), a zero-filled `series`, breakdowns by model, provider, account and origin, `lifetime`, and `since`, `until` (exclusive), `date`, `granularity`, `hourly` and `server_time`. `24h` and `day` are hourly (23 or 25 hours on a daylight-saving change), the rest daily. Hourly data is kept 120 days and daily data forever; a day without hourly data has `hourly` set to `false`.
+
+`GET /stats/days` returns every local date with usage (`date`, `calls`, `tokens`, `failed`), oldest first, plus `first` and `today`, for a calendar.
+
+`GET /stats/calls` returns individual calls, newest first, over the whole retention period (`server.stats_keep_days`, 90 days by default):
+
+| Parameter | Notes |
+| --- | --- |
+| `limit` | 1–200, default 50 |
+| `before` | Paging cursor: the `next` of the previous page |
+| `model`, `provider`, `origin`, `ok` | Exact filters; `origin` is `chat`, `responses`, `messages`, `classify`, `playground` and so on |
+| `account` | An account id, or `provider/account` |
+| `since`, `until` | ISO 8601 times (with an offset; without one, server local time); `until` is exclusive |
+| `q` | Case-insensitive search in the model, provider, account, error code, error message and finish reason |
+
+Each record has `seq`, `at`, `model`, `provider`, `account`, `origin`, `effort`, `stream`, `ok`, the token counts, `ttft_ms`, `tps`, `elapsed_ms`, `attempts`, `finish_reason`, `error_code`, `error_message` and more.
+
+`DELETE /stats` clears every counter and recorded call and returns `{"cleared_at": …}`; calls in flight are still recorded when they finish.
+
+`GET /stats/live` is SSE with `data: <json>` frames: first a `snapshot` (calls in flight, today's totals, the latest calls), then `started`, `progress` and `finished` events, with a `ping` every 15 seconds. A reader that falls too far behind is disconnected; reconnecting brings a fresh snapshot. Token counts of calls in flight are estimated from characters. How usage is recorded is in [Usage statistics](/docs/advanced-usage).

@@ -1,0 +1,289 @@
+---
+title: "Free stations"
+description: "How to use each sign-in station adapter: Cline, Gemini Code Assist, ZCode, MiniMax, TRAE, Qoder, CodeBuddy/WorkBuddy, CodeArts, Loomy, Raccoon, LobsterAI, Codex, EAC and Zhipu — how to sign in, what each offers and its limits."
+icon: KeyRound
+---
+
+These channels correspond to the free, trial or subscription allowances of AI coding tools and platforms. Most of these stations do not hand out an API key you can paste; they issue tokens through a browser sign-in. Hoshimi performs the sign-in in place of the official client, stores the credential as an account, and takes care of renewal and check-in.
+
+<Callout type="info" title="What the adapter supports is not what the station promises">
+
+This page describes what Hoshimi's adapters implement. Each station decides its own free allowance, models and rules, and can change them at any time; the built-in model lists are only a fallback for when the station's listing cannot be reached. What actually works is whatever the station answers now.
+
+</Callout>
+
+## Signing in
+
+<Tabs items={["Web UI", "Command line"]}>
+<Tab value="Web UI">
+
+1. Open **Channels** and pick the station from the list (stations without accounts are under the **Not set up** filter).
+2. Click **Sign in**. The dialog goes through **Request a link**, **Finish in the browser** and **Signed in**, and opens the station's login page in a new tab.
+3. For device-code stations, the dialog shows a **Verification code**; enter it on the authorization page.
+4. When the browser is not on the machine running Hoshimi, paste the address the browser finally lands on into **Authorization code or callback URL** and click **Submit code**.
+
+</Tab>
+<Tab value="Command line">
+
+```bash
+hoshimi login                   # list the channels that offer an interactive login
+hoshimi login trae              # print and open the login link, then wait
+hoshimi login trae --no-open    # print the link only
+hoshimi login trae --manual     # prompt for the authorization code or callback URL
+```
+
+On success it prints `Signed into <channel> as <account id>.` and the account is written to `config.json`.
+
+</Tab>
+</Tabs>
+
+- A sign-in waits at most 10 minutes. In the Web UI you can cancel it; a callback that arrives after cancelling does not save an account.
+- Signing in again as the same station identity updates the existing account rather than adding another.
+- Stations that need a local callback listen only on `127.0.0.1` (or `localhost`) for the duration of the sign-in, never on a public interface. When the browser is on another machine, paste the callback with `--manual` or the Web UI's **Authorization code or callback URL**. The one flow without manual input (Loomy) has to be finished in a browser on the same machine.
+
+## At a glance
+
+| Channel | Station | Sign-in | Renewal | Check-in | Balance |
+| --- | --- | --- | --- | --- | --- |
+| `cline` | Cline (`api.cline.bot`) | WorkOS device code; optional browser-extension flow | Yes | — | Yes |
+| `gemini` | Gemini Code Assist | Google consent, local callback | Yes | — | Quota windows |
+| `zcode` | ZCode (`zcode.z.ai`, Zhipu) | Station-mediated link, no local callback | — | — | — |
+| `minimax` | MiniMax Agent (`agent.minimax.cn`) | Device code + PKCE | Yes | Yes | Yes |
+| `trae` | TRAE (China) | Console login, local callback (port 18080 preferred) | Yes | Yes | Yes |
+| `qoder` / `qodercn` | Qoder international / China | Device authorization link, polled | Yes | Yes | Yes |
+| `buddy` / `workbuddy` | Tencent CodeBuddy / WorkBuddy international | External login page, polled | Yes | `buddy` only | Yes |
+| `codearts` | Huawei Cloud CodeArts | Portal login, PKCE + DPoP, local callback | — | Yes | Yes |
+| `loomy` | iFlytek Loomy | WeChat QR on a local page | — | Yes | Yes |
+| `raccoon` | SenseTime Raccoon | WeChat QR page, polled by the gateway | Yes | — | Yes |
+| `lobsterai` | Youdao LobsterAI | Portal login, local callback | Yes | Yes | Yes |
+| `codex` | ChatGPT / Codex subscription | OpenAI consent, local callback on fixed port 1455 | Yes | — | — |
+| `eac` | EAC co-paid relay | GitHub authorization through the gateway | — | — | — |
+| `zhipu` | Zhipu BigModel | API key | — | — | — |
+
+"Renewal" means the adapter can trade a refresh token for a new token; on stations without it, sign in again when the token expires. Check-in and balances are covered at the end of this page.
+
+## Cline (`cline`)
+
+Cline's free model lane. The catalogue is the free list from Cline's public recommended-models endpoint, readable without an account; the fallback list is `stealth/space-bunny-alpha`, `cline-free/mimo-v2.6-flash` and `cline-free/muse-spark-1.3-contributor`.
+
+- **Sign-in**: `hoshimi login cline` uses WorkOS device authorization by default, then registers with Cline to obtain the station token. The token is stored with its `workos:` prefix and sent as is.
+- **Login method**: the channel's **Network** section has a **Cline login method** selector with **Device code (SDK)** (default) and **Browser (extension)**, matching `sdk` and `extension` for `providers.cline.options.client_profile`. The extension flow takes a callback on one of the local ports 48801–48811 and accepts a pasted callback. New accounts record the method they signed in with; changing the selector affects later sign-ins only.
+- **Balance**: needs the account's `account_id` (a `usr-…` value, saved automatically at sign-in).
+- **Account fields**: `access_token`, `refresh_token`, `client_profile`, `account_id`.
+
+## Gemini Code Assist (`gemini`)
+
+Google's Code Assist lane (`daily-cloudcode-pa.googleapis.com`), signed in with a Google account. It is a different service from the Gemini Developer API (`google`) and Vertex AI (`google-vertex`); see [Cloud platforms](/docs/providers-cloud).
+
+- **Sign-in**: `hoshimi login gemini` opens Google's consent page, which calls back to a temporary port on `localhost`; a pasted callback is accepted. The sign-in stores the public desktop client's `client_id` and `client_secret` with the account, so renewal needs no extra setup. `options.client_id` / `options.client_secret` override them.
+- **Models**: a single `gemini-3.8-flash`, with thinking levels `low`, `medium`, `high` and `tiered` (`medium` when none is given). The level sets the thinking budget and is appended to the upstream model name as a suffix.
+- **Balance**: shows the remaining share of the five-hour and weekly quota windows, not credits.
+
+```json
+{
+  "providers": {
+    "gemini": {
+      "accounts": [
+        {"id": "gemini-1", "access_token": "<oauth access token>", "refresh_token": "<oauth refresh token>"}
+      ],
+      "options": {"client_id": "<google oauth client id>", "client_secret": "<google oauth client secret>"}
+    }
+  }
+}
+```
+
+## ZCode (`zcode`)
+
+The free-plan lane of Zhipu's ZCode client, using the Anthropic Messages protocol. The models are `GLM-5.3-Flash` and `GLM-5.3`, with thinking levels `low`, `high` and `max`, sent as `output_config.effort`.
+
+- **Sign-in**: `hoshimi login zcode` is mediated by the station and authorised with a Zhipu account; there is no local callback, so it works on a remote server. The sign-in generates and stores a fixed `device_mid`.
+- **Renewal**: the adapter does not renew; sign in again when the token stops working.
+- **Note**: the adapter puts the official ZCode client's identity and environment sections before the caller's system prompt, and inserts a date reminder before the first user message. The caller's system prompt is kept, after those blocks.
+- **Options**: `options.app_version` (default `3.14.3`).
+- **Account fields**: `zcode_jwt` (or `access_token`), `device_mid`.
+
+## MiniMax (`minimax`)
+
+The MiniMax Agent sign-in lane (Anthropic Messages protocol), unrelated to the key-billed `minimax-api`, `minimax-cn` and `minimax-chat`.
+
+- **Sign-in**: `hoshimi login minimax` uses a device code on `account.minimax.cn`, checked with PKCE.
+- **Models**: `MiniMax-M3.1-Flash-Preview`, `MiniMax-M3`, `MiniMax-M2.7-highspeed`, `MiniMax-M2.7`. The M3.1 family requires adaptive thinking, so the adapter turns it on even when no level is given; M2.7 declares no levels, so a caller's level is not forwarded.
+- **Check-in and balance**: daily credits are claimed by the UTC+8 calendar day; the balance is the sum of what remains in each credit pack.
+- **Account fields**: `access_token`, `refresh_token`.
+
+## TRAE (`trae`)
+
+ByteDance TRAE's SOLO lane, China edition (`api.trae.com.cn`, `trae-api-cn.mchost.guru`).
+
+- **Sign-in**: `hoshimi login trae` opens the login page on `www.trae.cn`; the station sends the tokens straight back to a local callback, on port 18080 when free or any free port otherwise. A pasted callback is accepted.
+- **Models**: the fallback list includes `DeepSeek-V4-Flash-Official`, `Doubao-Seed-2.1-Pro`, `glm-5.2`, `kimi-k3` and others. TRAE provides a context-length table but no thinking menu, so a caller's `reasoning_effort` is forwarded unchanged.
+- **Check-in and balance**: the device identity is derived from the account's `uid`; an account without `uid` cannot check in.
+- **Account fields**: `access_token`, `refresh_token`, `device_id`, `machine_id`, `uid`.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `channel` | `solo_work_lite` | The feature channel requests use |
+| `user_agent` | `Trae/0.1.52` | User-Agent |
+| `app_id` | built-in value | `X-App-Id` |
+| `ide_version` | `0.1.52` | `X-Ide-Version` |
+| `ide_version_code` | `20260811` | `X-Ide-Version-Code` |
+| `os_version` | `macOS 15.7.4` | `X-OS-Version` |
+| `device_brand` | `Apple` | `X-Device-Brand` |
+
+```json
+{
+  "providers": {
+    "trae": {
+      "accounts": [
+        {"id": "trae-1", "access_token": "<access token>", "refresh_token": "<refresh token>",
+         "device_id": "<device id>", "machine_id": "<machine id>", "uid": "<user id>"}
+      ],
+      "options": {"channel": "solo_work_lite"}
+    }
+  }
+}
+```
+
+## Qoder (`qoder`, `qodercn`)
+
+Alibaba Qoder's international edition (`qoder`, `openapi.qoder.sh`) and China edition (`qodercn`, `openapi.qoder.com.cn`) are two channels; accounts and models do not carry over between them.
+
+- **Sign-in**: `hoshimi login qoder` or `hoshimi login qodercn` opens the device authorization page on `qoder.com` / `qoder.cn`, and the gateway polls for the result; no local callback is needed. The sign-in generates a `machine_id` that renewal requests carry, so keep it in the account.
+- **Models**: the two editions have different tables: 17 international IDs (`auto`, `ultimate`, `performance`, `efficient`, `smodel`, `cmodel`, `qmodel_38max`, …) and 14 China IDs (including the China-only `q37fmodel` and `gm51model`). Sending one edition's exclusive ID to the other always fails.
+- **Check-in**: claiming the campaign reward needs the machine token cached by the Qoder desktop client. The adapter looks for `Qoder` (or `Qoder CN`) `/SharedClientCache/cache/machine_token.json` under `%APPDATA%`, `~/Library/Application Support` or `~/.config`; on a machine without Qoder desktop installed, check-in fails. The station refreshes its campaigns at 10:00 UTC+8.
+- **Note**: the official client uses an encrypted WASM inference path; Hoshimi uses the public OpenAI-compatible endpoint, which may answer `503`. Matching headers, models and renewal do not mean inference behaves exactly as in the official client.
+- **Account fields**: `access_token`, `security_oauth_token`, `refresh_token`, `machine_id`.
+
+## CodeBuddy / WorkBuddy (`buddy`, `workbuddy`)
+
+Tencent CodeBuddy (`buddy`, `copilot.tencent.com`) and WorkBuddy international (`workbuddy`, `www.workbuddy.ai`) share one protocol on two hosts.
+
+- **Sign-in**: `hoshimi login buddy` or `hoshimi login workbuddy` opens an external login page, and the gateway polls for the result; no local callback is needed.
+- **Models**: CodeBuddy has 16 fallback IDs (hy4/hy3, deepseek-v4, glm-5.x, kimi, minimax-m3); WorkBuddy has 23 (including aliases such as `default-model`, gpt-5.x, gemini-3.5-flash, glm and kimi). WorkBuddy switches its User-Agent by model family.
+- **Check-in**: only CodeBuddy has a daily check-in; the WorkBuddy international station has no check-in endpoint, though its balance still works.
+- **Account fields**: `access_token`, `refresh_token`; the sign-in also saves `user_id`, `enterprise_id` and others, which the balance query uses.
+
+## CodeArts (`codearts`)
+
+Huawei Cloud CodeArts' ModelArts lane (`snap-access.cn-north-4.myhuaweicloud.com`); requests are signed with Huawei Cloud's SDK-HMAC-SHA256 scheme.
+
+- **Sign-in**: `hoshimi login codearts` opens the Huawei Cloud portal's authorization page, which calls back to a random local port of 10000 or above (the portal refuses lower ports); the token exchange carries a DPoP proof. It waits at most 5 minutes for the callback and accepts a pasted one.
+- **Credentials**: the result is a temporary AK/SK pair and security token with an expiry. The adapter does not renew them; sign in again when they expire.
+- **Models**: discovered from the station's built-in model list (`-VL` models excluded), with `GLM-5.x`, `deepseek-v4*`, `openpangu-2.0-*` and others as the fallback.
+- **Benefit models**: requests for models in `options.benefit_models` (default `glm-5.3-flash` and `deepseek-v4.1-flash`) carry a `maas_type: benefit` header; if the station rejects the header, the request is retried without it.
+- **Check-in**: claims the "daily login" campaign; token-billed and non-credit-billed accounts are outside the campaign.
+
+```json
+{
+  "providers": {
+    "codearts": {
+      "accounts": [
+        {"id": "codearts-1", "access_key_id": "<AK>", "secret_access_key": "<SK>", "security_token": "<temporary token>"}
+      ],
+      "options": {"benefit_models": ["glm-5.3-flash", "deepseek-v4.1-flash"]}
+    }
+  }
+}
+```
+
+## Loomy (`loomy`)
+
+iFlytek Loomy (`loomyad.xunfei.cn`), OpenAI-compatible.
+
+- **Sign-in**: `hoshimi login loomy` starts a local page showing a WeChat QR code; scan and confirm. A WeChat account using Loomy for the first time must bind a phone number on the same page (request and enter the SMS code). The page is served only on `127.0.0.1`, so open it in a browser on the same machine.
+- **Credentials**: the session lasts about 14 days and the adapter does not renew it; sign in again when it expires.
+- **Requests**: the token is sent both as `Authorization: Bearer` and as a `token` header (the chat and control endpoints each accept one of them).
+- **Account fields**: `access_token`, `userid`, `expires_at`.
+
+## Raccoon (`raccoon`)
+
+SenseTime Raccoon (`xiaohuanxiong.com`), OpenAI-compatible.
+
+- **Sign-in**: `hoshimi login raccoon` opens the station's WeChat QR page, and the gateway polls for the result; no local callback is needed.
+- **Models**: a fixed list such as `sn-sensenova-6-8-flash`, `sn-glm-5-3`, `sn-kimi-k3` and `sn-deepseek-v4-1-flash`.
+- **Account fields**: `access_token`, `refresh_token`, `device_id`, `office_identity` (the organisation code, sent as `X-Org-Code`).
+
+## LobsterAI (`lobsterai`)
+
+Youdao LobsterAI (`lobsterai-server.youdao.com`), OpenAI-compatible. The model catalogue is read live from the station, with 19 built-in IDs as the fallback.
+
+- **Sign-in**: `hoshimi login lobsterai` opens the `lobsterai.youdao.com` portal, which calls back to a temporary local port; a pasted callback is accepted.
+- **Note**: the `uuid` and `firstKeyfrom` generated at sign-in are sent with every renewal request; do not remove them from the account or renewal fails.
+- **Account fields**: `access_token`, `refresh_token`, `uuid`.
+
+## Codex (`codex`)
+
+The Codex lane signed in with a ChatGPT account (`chatgpt.com/backend-api/codex`), using the OpenAI Responses protocol; its allowance comes from the ChatGPT subscription.
+
+- **Sign-in**: `hoshimi login codex` opens OpenAI's consent page and calls back to the fixed local address `localhost:1455` (the redirect registered for the Codex client), so that port must be free; only one Codex sign-in can run at a time. A pasted callback is accepted.
+- **Requests**: system and developer messages are merged into `instructions`, and `max_output_tokens`, `temperature` and `top_p` are not sent; the account's `account_id` is sent as the `ChatGPT-Account-Id` header.
+- **Models**: read from the account's model catalogue, or declared with `models` on the account.
+
+```json
+{
+  "providers": {
+    "codex": {
+      "accounts": [
+        {"id": "codex-1", "access_token": "<oauth access token>", "refresh_token": "<oauth refresh token>",
+         "account_id": "<ChatGPT account id>", "client_id": "<oauth client id>", "expires_at": "<epoch milliseconds>"}
+      ]
+    }
+  }
+}
+```
+
+## EAC (`eac`)
+
+EAC is a co-paid relay. It has no anonymous mode: it is enabled only when an account is configured, and **Channels** marks it as needing authorization. On a fresh install, run `hoshimi login eac` (or click **Sign in** in **Channels**) to authorise the bundled relay with GitHub; on success it creates the `eac-default` account with `relay: "bundled"`. You can also add a custom worker relay or a direct Bearer relay. Its models include `deepseek-ai/deepseek-v4.1-flash`, `moonshotai/kimi-*`, `z-ai/glm-5.3*` and `openai/gpt-oss-20b`, plus the relayed `opencode/deepseek-v4.1-flash-free` and `opencode/glm-5.3-flash-free`. Relay modes, signing and the authorization file are covered in [EAC](/docs/advanced-eac).
+
+## Zhipu (`zhipu`)
+
+Zhipu's BigModel open platform (`open.bigmodel.cn/api/paas/v4`). It is a fixed station reached with a key, not an aggregator.
+
+- **Adding an account**: create an API key in the bigmodel.cn console, then **Add account** under **Channels** › **Zhipu GLM (BigModel)**, or write it into `config.json`.
+- **Models**: the live listing comes first (other models the account's balance covers appear too). When it cannot be reached, the 7 free IDs are the fallback: `glm-4.7-flash`, `glm-4.5-flash`, `glm-4-flash-250414`, `glm-z1-flash`, `glm-4.6v-flash`, `glm-4.1v-thinking-flash`, `glm-4v-flash`.
+- **International station**: set `options.base_url` to `https://api.z.ai/api/paas/v4` to move the whole channel to api.z.ai.
+- **Thinking**: text models without a menu leave the caller's request untouched; thinking-by-construction models such as Z1 and V-Thinking use the budget ladder.
+
+```json
+{
+  "providers": {
+    "zhipu": {
+      "accounts": [{"id": "zhipu-1", "api_key": "<bigmodel.cn API key>"}],
+      "options": {"base_url": "https://open.bigmodel.cn/api/paas/v4"}
+    }
+  }
+}
+```
+
+## Renewal, check-in and balances
+
+Two timers are switched in **Settings**: **Credential renewal** (`server.auto_refresh`) and **Daily check-in** (`server.auto_checkin`), both on by default.
+
+**Renewal**: starts 30 seconds after the gateway boots and checks every 30 minutes, renewing accounts that expire within the hour or record no expiry (only accounts with a `refresh_token`). When a station refuses the refresh token, the account is marked **Needs login** and taken out of rotation until you sign in again. A renewed token is written back to its own account only. To renew by hand, use **Renew now** in the channel detail (the whole channel, or one account from its menu) or **Renew every account** at the top of **Channels**; the API is `GET /api/v1/refresh` (status) and `POST /api/v1/refresh` (renew now).
+
+**Check-in**: starts 30 seconds after boot and claims once a day per account, by the UTC+8 calendar day, one account after another (stations rate-limit parallel requests). A station answering "already claimed today" counts as done. To check in by hand, use **Check in all** at the top of **Channels**, or **Claim now** in a channel's menu; **Recent check-ins** shows the channel's latest results.
+
+**Balance**: supporting stations can report a balance or quota. Separately, the gateway reads the remaining allowance passively from the rate-limit headers of every station response and shows it in the channel's **Allowance** section, with no extra requests.
+
+| Capability | Channels |
+| --- | --- |
+| Renewal | `cline`, `gemini`, `minimax`, `trae`, `qoder`, `qodercn`, `buddy`, `workbuddy`, `raccoon`, `lobsterai`, `codex` |
+| Daily check-in | `minimax`, `trae`, `qoder`, `qodercn`, `buddy`, `codearts`, `loomy`, `lobsterai` |
+| Balance | `cline`, `gemini` (quota windows), `minimax`, `trae`, `qoder`, `qodercn`, `buddy`, `workbuddy`, `codearts`, `loomy`, `raccoon`, `lobsterai` |
+
+The related routes are in the [management API](/docs/api-management); the UI is described in [Channels](/docs/guide-channels).
+
+## Other channels with sign-in
+
+These key-billed services also support `hoshimi login`; see their pages for details:
+
+| Channel | Sign-in | Page |
+| --- | --- | --- |
+| `anthropic` | claude.ai consent, local callback (`code#state` can be pasted) | [Local and compatible endpoints](/docs/providers-local) |
+| `openai` | OpenAI consent, local callback on fixed port 1455 | [Local and compatible endpoints](/docs/providers-local) |
+| `openrouter` | OpenRouter consent, local callback, exchanged for an API key | [Local and compatible endpoints](/docs/providers-local) |
+| `github-copilot` | GitHub device code | [Local and compatible endpoints](/docs/providers-local) |
+| `kimi-coding`, `meta`, `xai` | Device code | [Local and compatible endpoints](/docs/providers-local) |
+| `kilo` | Device code | [Anonymous lanes](/docs/providers-anonymous) |
+| `radius` | Device code | [Cloud platforms](/docs/providers-cloud) |

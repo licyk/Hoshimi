@@ -1,0 +1,75 @@
+---
+title: "Overview"
+description: "The Overview page: today's usage, endpoint addresses to copy, the channels in use, and the version, updates and default model."
+icon: Gauge
+---
+
+**Overview** is the first page the interface opens on: the state of the gateway at a glance. From top to bottom it has **Today**, **Endpoints**, **Channels** and **Server**; each part has a button to the page with the details.
+
+## Today
+
+| Figure | Meaning |
+| --- | --- |
+| **Tokens** | Input + output tokens of every call today |
+| **Calls** | Requests that went through the gateway today |
+| **Cache hit** | The share of input tokens read from the upstream cache |
+| **Running now** | Calls in flight at this moment |
+
+"Today" is the server's local day. The small line on the right is tokens per hour over the last 24 hours. The dot beside the title is the live connection's state (**Live**, **Reconnecting…**, **Offline**): while it is **Live**, the figures move as soon as a call finishes. **Usage** opens the [Usage](/docs/guide-usage) page with charts and every call.
+
+## Endpoints
+
+This part lists the addresses clients need. Its subtitle is the **Base URL**, the address you opened the interface on (by default `http://127.0.0.1:10600`). The button at the end of each row copies the full URL:
+
+| Path | What it is |
+| --- | --- |
+| `/v1/chat/completions` | **Chat Completions** (OpenAI) |
+| `/v1/responses` | **Responses** (OpenAI) |
+| `/v1/messages` | **Anthropic Messages** |
+| `/v1/messages/count_tokens` | **Token count (estimate)** (Anthropic) |
+| `/v1/models` | **Models** |
+
+Most SDKs take `http://127.0.0.1:10600/v1` as their base URL. For example:
+
+```bash
+curl http://127.0.0.1:10600/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "<model id>", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+If **Settings › Access** has a **Model API key**, requests also send `Authorization: Bearer <model API key>` (or `x-api-key`). Copy model ids from the [Models](/docs/guide-models) page. How to connect each kind of client is in [Connecting clients](/docs/clients).
+
+The line under the list says whether a tool access key is set: **A tool access key is required to manage this server.** or **No tool access key is set.**. With no tool access key, the title also has **API reference**, which opens the server's own API documentation (`/docs`) in a new tab. With a key the button is left out, because that page cannot send the key the browser keeps; reach `/docs` and `/openapi.json` with the header instead, as described in the [API reference](/docs/api).
+
+## Channels
+
+The channels that are set up or switched on are listed here (stations that are only offered, not set up, stay on the [Channels](/docs/guide-channels) page). Each card shows:
+
+- The channel's name and state: **Ready**, **Needs attention**, **Off**.
+- How many accounts it has, or **No account needed** (an anonymous channel, such as OpenCode Zen and Kilo).
+- How many models in the catalogue come from it (once the catalogue has loaded).
+- Today's tokens, when it was used today.
+
+Click a card to open that channel's details, or **Manage channels** for the list. While the model catalogue loads, or when a provider failed to load, a line above the cards shows the progress, the failed providers with their reasons, and **Retry**.
+
+With no channel at all the section says **No providers are enabled**. Sign into a free station or add an API key on the **Channels** page; there is no file to edit and no restart.
+
+## Server
+
+| Item | Meaning |
+| --- | --- |
+| **Version** | The Hoshimi version running |
+| **Latest version** | The newest final release on PyPI, marked **Update available** or **Up to date**; **Checking…** until the first answer, **Could not check** when no check has succeeded yet |
+| **Default model** | The model used when a request does not name one; **Not set** when there is none. Change it in **Settings › General** |
+
+The server asks PyPI once in the background after it starts, then once a day. It only reads the version number; nothing is downloaded or installed. The check goes out through the global network settings. To keep Hoshimi from making this request, set `server.check_updates` to `false`; the **Latest version** row is then left out:
+
+```bash
+hoshimi config set server.check_updates false
+```
+
+A change made from the command line needs a server restart. To upgrade, see [Installation](/docs/installation):
+
+```bash
+python -m pip install -U hoshimi
+```

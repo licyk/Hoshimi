@@ -1,0 +1,327 @@
+---
+title: "Playground API"
+description: "Reference for the /api/v1/playground routes: conversations as message trees, sending and retrying with streamed Server-Sent Events, tool steps, approvals, steering, background commands, attachments, titles, branches and sessions."
+icon: Braces
+---
+
+The Web UI's [Playground](/docs/guide-playground) does everything through these routes, so a script can do the same: keep conversations, stream replies, run the [tools](/docs/guide-agent) and answer their approvals. Everything a model is sent (the system prompt, file text, image descriptions, earlier tool calls) is put together on the server; a client only says what to add and where.
+
+The routes are part of the management API (see [Management API](/docs/api-management)):
+
+- Base address: `http://127.0.0.1:10600/api/v1/playground`.
+- Authentication: `Authorization: Bearer <tool access key>` when `server.access_token` is set (see [Access and security](/docs/config-security)); not the model API key.
+- Errors: a JSON body `{"code": "...", "message": "...", "detail": {}}` with `400` (`invalid_input`), `404` (`not_found`) or `409` (`conflict`).
+- The running server's `/docs` and `/openapi.json` list every field (see [API overview](/docs/api)).
+
+The examples use `ACCESS_KEY` for the tool access key:
+
+```bash
+export ACCESS_KEY=your-tool-access-key
+BASE=http://127.0.0.1:10600/api/v1/playground
+```
+
+## Routes
+
+| Method and path | Answer | Purpose |
+| --- | --- | --- |
+| `GET /conversations` | `200` list | Kept conversations, most recently used first; `?archived=true` for the archive |
+| `POST /conversations` | `201` conversation | Create one |
+| `GET /conversations/{id}` | `200` conversation | One conversation with every message of its tree |
+| `PATCH /conversations/{id}` | `200` summary | Change title, model, effort, archive, the version on screen, tools, approval mode |
+| `DELETE /conversations/{id}` | `204` | Delete it, its messages and its own attachments; stop its background commands |
+| `POST /conversations/{id}/messages` | `200` SSE | Add a question and stream the reply |
+| `POST /conversations/{id}/messages/{message_id}/retry` | `200` SSE | Stream another reply to the same question |
+| `GET /conversations/{id}/messages/{message_id}/request` | `200` JSON | The Chat Completions request behind a reply |
+| `POST /conversations/{id}/approvals/{call_id}` | `204` | Answer a tool call waiting for approval |
+| `POST /conversations/{id}/steer` | `202` `{"id"}` | Send a message to the reply under way |
+| `GET /conversations/{id}/terminals` | `200` list | Background commands its tools started |
+| `DELETE /conversations/{id}/terminals/{session_id}` | `204` | Stop one, and everything it started |
+| `POST /conversations/{id}/branch` | `201` conversation | A new conversation up to a message |
+| `POST /conversations/{id}/title` | `200` summary | Have a model name the conversation |
+| `POST /attachments` | `201` attachment | Upload an image or a file's text |
+| `GET /attachments/{id}` | `200` bytes | An image as itself, a file as its text |
+| `DELETE /attachments/{id}` | `204` | Take back an attachment not yet sent |
+| `GET /session`, `PUT /session` | `200` | The conversation open last |
+| `POST /chat/completions` | Chat Completions | One-off chat with the tool access key |
+| `GET /models` | model list | The models the Playground offers |
+
+## Conversations
+
+A conversation is a tree of messages. Each message names the one it follows (`parent_id`, `null` for the first), so an edit or a retry adds a sibling beside the old message instead of replacing it. `current_leaf` is the last message of the path on screen; the path from the first message to it is what a model is sent.
+
+### The conversation object
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `id` | string | Its id |
+| `title` | string | The first question (up to 80 characters) until a model names it; then the generated or your own title |
+| `title_state` | `""`, `provisional`, `auto`, `user` | No title yet; from the first question; named by a model; set by you (never replaced) |
+| `model`, `effort` | string | What it was last set to; used when a send names none |
+| `archived` | boolean | In the archive |
+| `temporary` | boolean | Never listed, never titled, deleted when the Web UI leaves it and on the next start |
+| `branched_from` | string | The conversation it was branched from, or empty |
+| `tools_on`, `tools_off` | string list | Tool switches this conversation turns on or off against `playground.tools` |
+| `approval` | `""`, `ask`, `auto`, `full` | Its own approval mode; empty follows `playground.approval` |
+| `created_at`, `updated_at` | number | Unix seconds; `updated_at` is the last message, which orders the list |
+| `current_leaf` | string | Only in a full conversation: the end of the path on screen |
+| `messages` | message list | Only in a full conversation: every message of the tree, oldest first |
+
+`GET /conversations` and `PATCH` return the summary (no `current_leaf`, no `messages`); `POST /conversations`, `GET /conversations/{id}` and `POST .../branch` return the full conversation.
+
+Tool switch names are `read`, `apply_patch`, `shell`, `terminal`, `web_search` and `web_fetch`; any other name is a `400`. A conversation uses a tool when `playground.tools` or its `tools_on` has it and its `tools_off` does not.
+
+### Create
+
+```bash
+curl -X POST $BASE/conversations \
+  -H "Authorization: Bearer $ACCESS_KEY" -H "Content-Type: application/json" \
+  -d '{"model": "your-model", "tools_on": ["read"], "approval": "ask"}'
+```
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `model`, `effort` | `""` | The model and reasoning effort for sends that name none |
+| `title` | `""` | A title of your own (`title_state` `user`) |
+| `temporary` | `false` | A temporary conversation |
+| `tools_on`, `tools_off` | `[]` | Tools to turn on or off against Settings |
+| `approval` | `""` | `ask`, `auto`, `full`, or empty for Settings' mode |
+
+### Update
+
+`PATCH /conversations/{id}` changes only the fields given:
+
+| Field | Effect |
+| --- | --- |
+| `title` | Your own title; a generated one never replaces it |
+| `model`, `effort` | What later sends use by default |
+| `archived` | Archive (`true`) or restore (`false`). Sending a message also restores |
+| `current_leaf` | Show another version: a message id of this conversation (`400` otherwise) |
+| `tools_on`, `tools_off` | The conversation's tool choices |
+| `approval` | Its approval mode; applies from the next tool call, even in a reply under way |
+
+An update does not change `updated_at`: only a new message moves a conversation up the list.
+
+### Delete
+
+`DELETE /conversations/{id}` removes the conversation, its messages and the attachments only it carried, stops its background commands and forgets its **Always allow** answers.
+
+## Messages
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `id`, `parent_id` | string | Its id, and the message it follows (`null` for the first). Siblings are the versions of one turn |
+| `role` | `user`, `assistant` | A question or a reply |
+| `content` | string | The text. For a reply that used tools, its text steps joined by blank lines |
+| `model`, `effort` | string | What a reply was made with |
+| `status` | `complete`, `streaming`, `stopped`, `error` | How a reply ended (`streaming` while it runs) |
+| `error` | string | Why a reply failed |
+| `notices` | list | What the reader should know about how the reply was made (see below) |
+| `created_at` | number | Unix seconds |
+| `attachments` | list | What a question carried: `id`, `kind` (`image` or `file`), `name`, `mime`, `size`, `width`, `height` |
+| `reasoning`, `reasoning_ms` | string, integer | What the model reasoned, and for how long, for a model that shows it |
+| `steps` | list | A reply that used tools (or was steered), step by step; empty otherwise |
+
+### Notices
+
+| `kind` | Fields | Meaning |
+| --- | --- | --- |
+| `image-described` | `name`, `model` | The image was sent as `model`'s description, for a model that cannot read images |
+| `image-omitted` | `name` | The image was left out: no model could describe it, or `playground.vision_model` is `off` |
+| `image-refused` | `model` | The station refused the image; the reply was tried again with descriptions |
+| `tools-unsupported` | `model` | The model makes no tool calls, or its station refused the tools; it answered without them |
+| `step-limit` | `name` (the limit) | The reply spent its `playground.max_steps` rounds of tool calls |
+
+## Send a message
+
+`POST /conversations/{id}/messages` adds a question and streams the reply.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `parent_id` | `null` | The message the question follows: the last reply to go on, `null` for the first question. To edit a question, send the new one after the edited one's parent |
+| `content` | `""` | The text. A message needs text or an attachment (`400` otherwise) |
+| `attachment_ids` | `[]` | Attachments uploaded with `POST /attachments` |
+| `model` | `""` | The model; falls back to the conversation's, then `server.default_model`. With none, `400` "Choose a model first." |
+| `effort` | `""` | Reasoning effort, sent as `reasoning_effort`; empty sends none |
+
+The model and effort become the conversation's. Read the response as a stream:
+
+```bash
+curl -N -X POST $BASE/conversations/$CID/messages \
+  -H "Authorization: Bearer $ACCESS_KEY" -H "Content-Type: application/json" \
+  -d '{"parent_id": null, "content": "What is in the workspace?"}'
+```
+
+### The event stream
+
+The response is `text/event-stream`. Each event is one `data:` line holding a JSON object whose `type` names it:
+
+| `type` | Fields | When |
+| --- | --- | --- |
+| `user` | `message` | First (sends only): the question as kept |
+| `assistant` | `message` | The reply as filed, with `status` `streaming`, before its first word |
+| `stage` | `stage` (`describing`), `model` | An image is being described by `model` before the reply starts |
+| `notice` | `notice` | A notice, as soon as it is known |
+| `reasoning` | `text` | More of what the model reasons |
+| `delta` | `text` | More of the reply's text |
+| `tool` | `step` | A tool call as it now stands; replace the step with the same `id` |
+| `steer` | `step` | A message sent with `/steer`, now read by the model: a `user` step with the `id` the steer was given |
+| `done` | `message` | Last: the reply as kept, with its `status` and `error` |
+
+`reasoning` and `delta` add to the last step when it is of their kind, and start a new step otherwise. While nothing else comes (a tool runs, or waits for approval), a comment line `: ping` goes out every 2 seconds; skip lines that start with `:`.
+
+A reply with one tool call looks like this (messages shortened):
+
+```text
+data: {"type": "user", "message": {"id": "94bc…", "parent_id": null, "role": "user", "content": "What is in the workspace?", "status": "complete", …}}
+
+data: {"type": "assistant", "message": {"id": "5828…", "parent_id": "94bc…", "role": "assistant", "content": "", "model": "your-model", "status": "streaming", …}}
+
+data: {"type": "delta", "text": "Let me look."}
+
+data: {"type": "tool", "step": {"type": "tool", "id": "call_1", "name": "read", "arguments": "", "status": "pending", "output": "", "exit_code": null, "ms": 0, "meta": {}, "approval": "", "round": 0}}
+
+data: {"type": "tool", "step": {"type": "tool", "id": "call_1", "name": "read", "arguments": "{\"path\": \".\"}", "status": "running", …}}
+
+data: {"type": "tool", "step": {"type": "tool", "id": "call_1", "name": "read", "arguments": "{\"path\": \".\"}", "status": "done", "output": "Directory /home/me/.hoshimi/workspace:\n(empty)", "meta": {"path": "/home/me/.hoshimi/workspace", "entries": 0}, …}}
+
+data: {"type": "delta", "text": "The workspace is empty."}
+
+data: {"type": "done", "message": {"id": "5828…", "content": "Let me look.\n\nThe workspace is empty.", "status": "complete", "steps": [ … ], …}}
+```
+
+How a stream ends:
+
+- Errors found before the question is kept (no model, an unknown `parent_id` or attachment) are a plain `400` or `404`, not a stream.
+- An error from the model or the station after that settles the reply as `error`, and the stream still ends with `done`.
+- Closing the connection stops the reply: a running tool is told to stop, a waiting approval is dropped, and the reply is kept as `stopped` with what came so far. No `done` follows.
+
+### Retry
+
+`POST /conversations/{id}/messages/{message_id}/retry` streams another reply, with the same events except `user`. `message_id` is a reply (the new one goes beside it) or a question left unanswered (it gets its first reply).
+
+| Field | Default |
+| --- | --- |
+| `model` | The retried reply's model; for a question, the conversation's |
+| `effort` | The retried reply's effort; for a question, the conversation's. `""` sends none |
+
+## Steps
+
+A reply that called a tool or was steered keeps its `steps`, in order. Every step has a `type` and a `round` (from 0, one per round of tool calls):
+
+| `type` | Fields |
+| --- | --- |
+| `reasoning` | `text`, `ms` (how long it reasoned) |
+| `text` | `text` |
+| `user` | `id`, `text`: a message sent with `/steer`, read at the start of this round |
+| `tool` | `id`, `name`, `arguments` (the JSON string the model wrote), `status`, `output`, `exit_code`, `ms`, `meta`, `approval` |
+
+A tool step's `status`:
+
+| `status` | Meaning |
+| --- | --- |
+| `pending` | The model is still writing the call; `arguments` is complete once the round ends |
+| `waiting` | Waiting for approval; `approval` says why: `command`, `edit`, `edit-outside` or `read-outside` |
+| `running` | Running |
+| `done` | Finished |
+| `error` | Failed (a non-zero exit, bad arguments, an unknown tool); `output` says why |
+| `denied` | The user denied it; it did not run |
+| `stopped` | The reply was stopped first, or the call was not run because the reply hit its round limit |
+
+`output` is what the model was sent (at most 32,000 characters). `meta` carries what the page shows beside it:
+
+| Tool | `meta` |
+| --- | --- |
+| `read` | `path`, and `lines`, `from`, `to` for a file or `entries` for a folder |
+| `apply_patch` | `files`: each `path`, `kind` (`add`, `update`, `delete`) and `from` when moved |
+| `shell` | `cwd`, `timed_out` |
+| `exec_command`, `write_stdin` | `session_id`, `running`, `cwd`; `exec_command` also `command` |
+| `kill_session` | `session_id` |
+| `web_search` | `query`, `results` |
+| `web_fetch` | `url` (the final address), `title` |
+
+A call that was stopped while running also has `"cancelled": true`. When the conversation is sent to a model again, each round becomes its steering messages, an assistant message with its `tool_calls`, and a `tool` message per call; with no tools on, the calls and their results go as text.
+
+## Approvals
+
+A `tool` event with `status` `waiting` asks for an answer. Send it with the step's `id`:
+
+```bash
+curl -X POST $BASE/conversations/$CID/approvals/call_1 \
+  -H "Authorization: Bearer $ACCESS_KEY" -H "Content-Type: application/json" \
+  -d '{"decision": "allow"}'
+```
+
+| `decision` | Effect |
+| --- | --- |
+| `allow` | Run this call |
+| `always` | Run it, and stop asking for this tool switch in this conversation (inside and outside the workspace count separately) until the server restarts |
+| `deny` | Skip it; the model is told the user declined |
+
+The answer is `204`; `404` when no such call waits. A call waits 10 minutes, then counts as denied. The stream then carries the call's next state. Which calls wait depends on the approval mode (see [Playground tools](/docs/guide-agent)).
+
+## Steering
+
+`POST /conversations/{id}/steer` with `{"content": "..."}` sends a message to the reply under way, without stopping it. It answers `202` with `{"id": "steer_…"}`.
+
+- The model reads it at the start of its next round, after the calls in progress; the stream then sends a `steer` event whose step has that `id`.
+- One sent as the model finishes keeps the reply going for another round, to answer it.
+- `409` when no reply can take it: none is running, the running one has no tools, or it has just ended. Send it as a new message then.
+- `400` for an empty message.
+
+A message queued when the reply stops or fails is never read.
+
+## Background commands
+
+`GET /conversations/{id}/terminals` lists the background commands (`exec_command` sessions) the conversation's tools started that are running, or have exited and not yet been read by the model:
+
+```json
+{
+  "terminals": [
+    {"id": 1, "command": "npm run dev", "cwd": "/home/me/.hoshimi/workspace", "started_at": 1792684330.35, "running": true, "exit_code": null}
+  ]
+}
+```
+
+`DELETE /conversations/{id}/terminals/{session_id}` stops one and everything it started (`204`; `404` when it is not this conversation's). They also stop when the conversation is deleted and when the server stops.
+
+## Attachments
+
+Upload a file first, then send its `id` in `attachment_ids`. The request body is the file itself:
+
+```bash
+curl -X POST "$BASE/attachments?name=photo.png&width=1024&height=768" \
+  -H "Authorization: Bearer $ACCESS_KEY" -H "Content-Type: image/png" \
+  --data-binary @photo.png
+
+curl -X POST "$BASE/attachments?name=notes.md" \
+  -H "Authorization: Bearer $ACCESS_KEY" -H "Content-Type: text/plain; charset=utf-8" \
+  --data-binary @notes.md
+```
+
+| Query | Meaning |
+| --- | --- |
+| `name` | The file's name (required) |
+| `type` | The file's own type, when the body is its extracted text (the Web UI sends a PDF's text with `type=application/pdf`) |
+| `width`, `height` | An image's size, optional |
+
+The `Content-Type` decides how it is kept: `image/png`, `image/jpeg`, `image/webp` or `image/gif` as an image; any `text/*` type, or `application/json`, `xml`, `yaml`, `x-yaml`, `javascript`, `x-sh`, `sql` or `toml`, as UTF-8 text. Anything else, or an empty body, is a `400`. The server keeps what it is given: scaling images down and extracting PDF text are done by the Web UI before upload. A model is sent at most 200,000 characters of a file's text.
+
+The answer is the attachment: `id`, `kind`, `name`, `mime`, `size`, `width`, `height`.
+
+- `GET /attachments/{id}` returns an image with its own type, a file as `text/plain`.
+- `DELETE /attachments/{id}` takes back an attachment before it is sent (`204`); one a message carries is a `400`.
+- An attachment never sent is deleted after a day.
+
+## Titles, branches, requests and the session
+
+- `POST /conversations/{id}/title` has a model name the conversation after its first exchange, and waits for it. The model is `playground.title_model`, else the conversation's own. A temporary conversation, one titled by a model already, and one with your own title are left as they are; if the model fails, the title stays. Answers the summary.
+- `POST /conversations/{id}/branch` with `{"message_id": "..."}` creates a conversation holding the path up to that message, under new ids, with the same title, model, effort, tools and approval mode, and `branched_from` set. Answers `201` with the full conversation.
+- `GET /conversations/{id}/messages/{message_id}/request` returns the Chat Completions body behind a reply (or the one that would answer a question): `model`, `messages`, `stream: true`, `reasoning_effort` when set, and `tools` with `tool_choice` when tools are on. For a reply that used tools it is the first round. This is the Web UI's **Copy as API request**.
+- `GET /session` returns `{"conversation_id": "..."}`, the conversation open last (`null` when none, or when it was temporary or deleted). `PUT /session` with the same body sets it (`null` for a new chat); an unknown id is a `400`. The Web UI reopens it on start.
+
+## One-off chat and the model list
+
+- `POST /chat/completions` takes an OpenAI Chat Completions request (see [OpenAI-compatible API](/docs/api-openai)) and answers like `/v1/chat/completions`, but with the tool access key instead of the model API key, and recorded in [Usage](/docs/guide-usage) under the `playground` origin. `playground.system_prompt` goes first unless the request has a `system` or `developer` message. Nothing is kept as a conversation.
+- `GET /models` returns the same list as `GET /v1/models`.
+
+Replies, titles and image descriptions made through conversations are recorded under the origins `playground`, `playground-title` and `playground-vision`.

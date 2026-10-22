@@ -1,0 +1,135 @@
+---
+title: "EAC"
+description: "The EAC co-paid channel: enabling it with the bundled relay and a GitHub authorization, the worker and direct relay modes, account fields for your own relay, request signing, and common errors."
+icon: KeyRound
+---
+
+EAC (shown as **EAC (co-paid)** in the UI) is a co-paid channel reached through a relay. The relay speaks OpenAI Chat Completions and only serves installs that have completed its authorization. It has no anonymous mode and runs only once an account is configured; until then, `GET /api/v1/providers` still lists it with `requires_authorization: true`, which is how the Web UI knows to say it needs authorization.
+
+## Enabling it with the bundled relay
+
+Hoshimi ships with a relay address and its signing credential, so a fresh install only needs a GitHub authorization:
+
+<Steps>
+<Step>
+
+### Start the login
+
+Open EAC on the **Channels** page and press **Sign in**, or run:
+
+```bash
+hoshimi login eac
+```
+
+The command prints the relay's GitHub authorization link and opens it in a browser (`--no-open` prints it only).
+
+</Step>
+<Step>
+
+### Authorize on GitHub
+
+Authorize with your GitHub account on the page that opens. The relay requires this GitHub account to have starred the upstream repository; otherwise the login fails with `the GitHub account has not starred the upstream repository`.
+
+</Step>
+<Step>
+
+### Done
+
+On success Hoshimi creates the account `eac-default` in `config.json`:
+
+```json
+{
+  "providers": {
+    "eac": {
+      "enabled": true,
+      "accounts": [{"id": "eac-default", "relay": "bundled", "user_token": "…", "user_login": "…", "user_avatar": "…"}]
+    }
+  }
+}
+```
+
+It also saves the authorization token in `eac-user.json` in the data directory (owner read/write only). The bundled relay's signing credential is never written to the config file; it is opened afresh for each request.
+
+</Step>
+</Steps>
+
+EAC's models are listed with an `EAC` prefix, such as **EAC Kimi K3**. Their ids carry the upstream organization prefix, for example `moonshotai/kimi-k3`, `z-ai/glm-5.3` and `opencode/glm-5.3-flash-free`. When the relay's model list cannot be fetched, a built-in fallback list is used. Most of these models have their own reasoning levels; see [Model and account behaviour](/docs/advanced-models).
+
+## The two relay modes
+
+The account's credential decides the mode:
+
+| Mode | Account fields | What a request carries |
+| --- | --- | --- |
+| worker | `base_url` + `signing_secret` (the bundled relay is one) | No secret at all, only a timestamp and an HMAC signature, plus the GitHub authorization token in `x-ofm-user` |
+| direct | `base_url` + `access_token` | `Authorization: Bearer <access_token>`, no GitHub authorization |
+
+In worker mode a leaked request contains no reusable secret, and the relay can revoke access at any time.
+
+### Worker-mode signing
+
+Each request carries two headers:
+
+- `x-ofm-timestamp`: a timestamp in milliseconds;
+- `x-ofm-signature`: the hex HMAC-SHA256 of the string below, keyed with `signing_secret`.
+
+```text
+<timestamp>\n<METHOD in upper case>\n<request path>\n<hex SHA-256 of the request body>
+```
+
+The signature covers the body's hash, so the body is serialized once and the same bytes are signed and sent; anything that re-encodes the body after signing makes the relay's check fail.
+
+### Where the GitHub authorization token comes from
+
+In worker mode, `x-ofm-user` follows the account's `user_token`:
+
+| `user_token` in the account | Used |
+| --- | --- |
+| Field absent | The latest token in `eac-user.json`, read on every request, so a new login applies at once |
+| A string | That string |
+| `null` or an empty string | No `x-ofm-user`: this account does not use the install's GitHub identity |
+
+Without an authorization the relay answers `401 AuthorizationRequired`; the gateway reports `eac: the relay demands this install's GitHub authorization (set the account's user_token)` and does not renew or rotate accounts over it.
+
+## Your own relay
+
+When adding an EAC account on the **Channels** page you can pick the bundled relay, a custom worker relay or a direct relay. Or write it in the configuration:
+
+```json
+{
+  "providers": {
+    "eac": {
+      "accounts": [
+        {"id": "my-worker", "base_url": "https://relay.example.com/v1", "signing_secret": "<shared signing secret>"},
+        {"id": "my-direct", "base_url": "https://relay.example.com/v1", "access_token": "<bearer credential>"}
+      ]
+    }
+  }
+}
+```
+
+Requirements:
+
+- `base_url` is an HTTP(S) URL ending in `/v1`, with no user name, password, query or fragment;
+- a custom relay needs either `signing_secret` (worker) or `access_token` (direct);
+- an account with `relay: "bundled"` cannot also set `base_url`, `signing_secret` or `access_token`;
+- GitHub login is for worker relays only; a direct relay uses its Bearer credential as is.
+
+Signing in again on an existing worker account updates that account's authorization and keeps its address and signing secret. For login, Hoshimi prefers a bundled-relay account or one with a `signing_secret`.
+
+## Common errors
+
+| Message | Cause and fix |
+| --- | --- |
+| `eac: the GitHub account has not starred the upstream repository` | The GitHub account used has not starred the upstream repository |
+| `eac: authorization expired, please start again` | The authorization link expired; sign in again |
+| `eac: login timed out (last status: …)` | The authorization was not completed in time |
+| `eac: cannot reach the authorization service (…)` | The relay cannot be reached; check the network or proxy, see [Network and proxies](/docs/config-network) |
+| `eac: GitHub authorization requires a worker relay; direct relays use their existing Bearer token` | A GitHub login was started for a direct relay |
+| `eac: configure a worker relay with base_url and signing_secret, or use the bundled relay` | The account is neither the bundled relay nor has a `base_url` |
+| `eac: base_url must be an HTTP(S) relay URL ending in /v1, without credentials, query or fragment` | Malformed relay address |
+| `eac: a custom relay needs signing_secret (worker) or access_token (direct)` | A custom relay without a credential |
+| `eac: a bundled relay reference cannot also specify a custom relay` | A `relay: "bundled"` account also has custom fields |
+| `eac: the bundled relay configuration is unavailable; configure your own worker relay or update Hoshimi` | The bundled relay credential cannot be used; upgrade Hoshimi or use your own relay |
+| `eac: failed to persist the per-install authorization; check data-dir permissions` | `eac-user.json` could not be written; check the data directory's permissions |
+| `eac: the relay account changed or was removed during login; start again` | The account was changed or removed during the login |

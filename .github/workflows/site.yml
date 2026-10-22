@@ -1,0 +1,63 @@
+# Builds the documentation site (site/) and publishes it to GitHub Pages at https://licyk.github.io/Hoshimi/,
+# a copy of https://hoshimi.netlify.app (which Netlify builds itself, see netlify.toml). The pages name the
+# Netlify address as canonical. A push that changes nothing the site is built from deploys nothing.
+# Settings › Pages › Source must be "GitHub Actions".
+name: Documentation site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "scripts/generate_provider_inventory.py"
+      - ".github/workflows/site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time; a newer push waits rather than cancelling one under way.
+concurrency:
+  group: site-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: '1.4.2'
+      - run: bun install --frozen-lockfile
+        working-directory: site
+      - name: Types, tests and build
+        env:
+          VITE_BASE_PATH: /Hoshimi/
+        run: |
+          bun run check
+          bun run test
+          bun run build
+        working-directory: site
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/.output/public
+
+  deploy:
+    name: Publish to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

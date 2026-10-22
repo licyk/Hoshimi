@@ -1,0 +1,111 @@
+---
+title: "命令行概览"
+description: "hoshimi 命令的组成、全局选项、命令如何读取配置、输出与 --json、退出码和日志，以及常用的命令组合。"
+icon: Terminal
+---
+
+`hoshimi` 命令用来启动服务器，也能在不打开浏览器的情况下检查配置、查看渠道和模型、登录免费站点和修改设置。`python -m hoshimi` 与 `hoshimi` 完全等价。
+
+本页介绍共同的约定；每条命令的全部参数见[命令参考](/docs/cli-commands)，环境变量见[环境变量](/docs/cli-env)。
+
+## 命令一览
+
+```text
+hoshimi
+├── serve                 启动服务器：API 与 Web UI
+├── check                 检查配置，报告渠道与账户
+├── models                列出可用模型
+├── providers             列出已配置的渠道及其账户
+├── stations              列出 agg 账户可以使用的预设站点
+├── login [provider]      登录一个站点，账户写入 config.json
+├── version               Hoshimi 及主要组件的版本
+├── env                   Hoshimi 读取的环境变量
+└── config                查看和修改 config.json
+    ├── show              显示配置
+    ├── get <key>         打印一项设置
+    ├── set <key> <value> 修改一项设置并保存
+    └── path              打印配置文件的路径
+```
+
+只输入 `hoshimi` 或 `hoshimi config`，会显示对应的帮助（退出码 2）。帮助中的命令按字母顺序排列。
+
+## 全局选项
+
+| 选项 | 位置 | 作用 |
+| --- | --- | --- |
+| `--debug` | 任意一级，例如 `hoshimi --debug check` 或 `hoshimi check --debug` | 打印调试日志 |
+| `--help` | 任意一级 | 显示帮助并退出 |
+| `--install-completion` | 仅 `hoshimi` | 为当前 shell 安装命令补全 |
+| `--show-completion` | 仅 `hoshimi` | 打印当前 shell 的补全脚本，便于复制或自行安装 |
+
+```bash
+hoshimi --install-completion     # 安装后重新打开终端，Tab 即可补全命令和选项
+```
+
+## 命令如何工作
+
+- **所有命令共用同一份配置。** 每条命令都读取数据目录里的 `config.json`（路径由 `hoshimi config path` 打印），与当前工作目录无关。Web UI 读写的也是这个文件。数据目录可以用 `HOSHIMI_DATA_DIR` 换到别处，见[环境变量](/docs/cli-env)。
+- **不需要服务器在运行。** `check`、`models`、`providers`、`login`、`config` 等命令在自己的进程里按配置构建渠道，执行完就退出，不会连接正在运行的服务器。
+- **修改要重启才对运行中的服务器生效。** `hoshimi config set` 和 `hoshimi login` 只写入 `config.json`；正在运行的服务器不会重新读取文件。修改后重启服务器，或者直接在 Web UI 的 **设置** 和 **渠道** 页修改，那里的修改立即生效（监听地址和端口除外）。
+- **`serve` 的选项只作用于这一次启动。** 例如 `hoshimi serve --port 11000 --access-token …` 不会写入配置文件。优先级为：`serve` 的选项 ＞ `config.json` ＞ 默认值。
+
+## 输出与 `--json`
+
+列表类命令默认打印表格；加 `--json` 打印 JSON，适合脚本处理。支持 `--json` 的命令：`check`、`models`、`providers`、`stations`、`version`、`env`、`config show`。`config get` 总是打印 JSON。
+
+```bash
+hoshimi models --json | jq -r '.[].id'               # 所有模型 id
+hoshimi models --provider kilo --json                 # 只看一个渠道
+hoshimi check --json | jq .models                     # 模型数量
+```
+
+数据写到标准输出，日志和错误写到标准错误，所以管道里只会得到数据。
+
+读取配置的命令会隐藏凭据：`config show` 和 `config get` 把 `server.access_token`、`server.model_api_key`，以及渠道和网络设置中的 API Key、令牌、密钥和代理地址显示为 `***`；`env` 把名字中含 `TOKEN` 或 `KEY` 的变量值显示为 `***`。
+
+## 退出码
+
+| 退出码 | 含义 |
+| --- | --- |
+| `0` | 成功 |
+| `1` | 一般错误：命令失败、被取消、登录失败或超时、配置文件无法读取 |
+| `2` | 用法错误或无效值（未知选项、`config set` 的值没有通过检查）；`check` 发现没有启用任何渠道；`login` 的站点不支持交互登录；没有子命令时显示帮助 |
+| `3` | `serve` 找不到可用端口（或在 `--strict-port` 下端口被占用） |
+| `4` | 输入无效：`config get` 的键不存在；`serve` 监听非本机地址但没有配置工具访问密钥或允许的网段 |
+| `5` | 上游服务出错 |
+| `130` | 被 <kbd>Ctrl</kbd>+<kbd>C</kbd> 中断 |
+
+`serve` 运行时按 <kbd>Ctrl</kbd>+<kbd>C</kbd> 会正常关闭服务器：先结束实时用量等长连接，再退出。
+
+## 日志
+
+日志写到标准错误。默认级别是 `INFO`；`--debug` 打开调试日志，环境变量 `HOSHIMI_LOG_LEVEL` 可以设为 `DEBUG`、`INFO`、`WARNING` 或 `ERROR`：
+
+```bash
+HOSHIMI_LOG_LEVEL=WARNING hoshimi serve     # 只显示警告和错误
+hoshimi serve --debug                        # 调试日志
+```
+
+## 常用组合
+
+```bash
+# 第一次使用：看配置在哪里、有哪些渠道
+hoshimi config path
+hoshimi check
+
+# 登录一个免费站点，然后确认账户已经加入
+hoshimi login cline
+hoshimi providers
+
+# 修改端口和密钥，然后启动
+hoshimi config set server.port 11000
+hoshimi config set server.access_token "换成一个长随机字符串"
+hoshimi serve --no-open
+
+# 关掉一个匿名渠道
+hoshimi config set providers.kilo.enabled false
+```
+
+## 配置文件损坏时
+
+`config.json` 无法解析时，所有读取配置的命令（包括 `serve`）都会拒绝运行，并在出错前把原文件复制一份为 `config.json.corrupt-<时间>`，错误信息里会给出这个副本的路径。修好或删除 `config.json` 后再试。文件位置和格式见[配置](/docs/config)。

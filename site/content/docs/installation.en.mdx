@@ -1,0 +1,211 @@
+---
+title: "Installation"
+description: "Requirements, installing with pip, uv or pipx, the optional cloud extras, upgrading and uninstalling, installing from source, running in the background, and how the port is chosen."
+icon: Download
+---
+
+Hoshimi is a pure Python package: the server, the Web UI and the command line come in one distribution. The Web UI is prebuilt inside the package, so an ordinary install needs neither Node nor Bun, nor any system program.
+
+## Requirements
+
+| Item | Requirement |
+| --- | --- |
+| Python | 3.10 or newer (CI checks 3.10–3.14) |
+| Operating system | Linux, Windows, macOS |
+| Network | PyPI to install; at run time, the upstream services you enable. A proxy can be used, see [Network and proxies](/docs/config-network) |
+| Browser | Any modern browser, for the Web UI |
+
+## Install
+
+Install into an environment of its own: a virtual environment, or a tool environment managed by uv or pipx.
+
+<Tabs items={["pip", "uv", "pipx"]}>
+<Tab value="pip">
+
+```bash
+python -m pip install -U hoshimi
+hoshimi serve
+```
+
+</Tab>
+<Tab value="uv">
+
+Installed as a tool, the `hoshimi` command lands in uv's tool directory:
+
+```bash
+uv tool install hoshimi
+hoshimi serve
+```
+
+To install into the current virtual environment instead: `uv pip install hoshimi`.
+
+</Tab>
+<Tab value="pipx">
+
+```bash
+pipx install hoshimi
+hoshimi serve
+```
+
+</Tab>
+</Tabs>
+
+`python -m hoshimi` is the same as the `hoshimi` command, which helps when `hoshimi` is not on your `PATH`. After installing, a quick check:
+
+```bash
+hoshimi version   # versions of Hoshimi, Python and the main components
+hoshimi check     # validate the configuration and list the enabled channels
+```
+
+## Optional extras
+
+Two cloud platforms need an extra SDK; install the matching extra when you use them:
+
+| Extra | Installs | Needed for |
+| --- | --- | --- |
+| `google` | `google-auth[requests]` | Vertex with application default credentials (ADC) or a service account file; Vertex's API key mode does not need it |
+| `bedrock` | `boto3` | Amazon Bedrock, including bearer (API key) mode: decoding Bedrock's event stream needs it too |
+
+<Tabs items={["pip", "uv", "pipx"]}>
+<Tab value="pip">
+
+```bash
+python -m pip install -U "hoshimi[google]"            # Vertex ADC / service accounts
+python -m pip install -U "hoshimi[bedrock]"           # Bedrock
+python -m pip install -U "hoshimi[google,bedrock]"    # both
+```
+
+</Tab>
+<Tab value="uv">
+
+```bash
+uv tool install "hoshimi[google,bedrock]"
+```
+
+</Tab>
+<Tab value="pipx">
+
+```bash
+pipx install "hoshimi[google,bedrock]"
+```
+
+</Tab>
+</Tabs>
+
+No other channel needs these SDKs; ordinary HTTP API channels work without them. Setting up the accounts is covered in [Cloud platforms](/docs/providers-cloud).
+
+## Upgrade
+
+<Tabs items={["pip", "uv", "pipx"]}>
+<Tab value="pip">
+
+```bash
+python -m pip install -U hoshimi
+```
+
+</Tab>
+<Tab value="uv">
+
+```bash
+uv tool upgrade hoshimi
+```
+
+</Tab>
+<Tab value="pipx">
+
+```bash
+pipx upgrade hoshimi
+```
+
+</Tab>
+</Tabs>
+
+Restart the server after upgrading. While the update check is on (`server.check_updates`, on by default), the server asks PyPI at startup and once a day whether a newer release exists, and shows the answer as **Latest version** in the **Server** section of the **Overview** page.
+
+Configuration and data live in the data folder, which an upgrade leaves alone. Two things to know when upgrading from an older release (details in [Data folder](/docs/config-paths)):
+
+- The `--config` option and the `HOSHIMI_CONFIG` environment variable are gone, and a configuration file in the working directory is neither read nor migrated. Before starting the new release, move the old file to the path that `hoshimi config path` prints.
+- On the first start, old `stats.json`, `checkin.json` and `probe.json` files are imported into the `hoshimi.db` database and renamed to `*.migrated`.
+
+## Install from source
+
+A source checkout has no built Web UI. Build it once with [Bun](https://bun.sh):
+
+```bash
+git clone https://github.com/licyk/Hoshimi.git
+cd Hoshimi
+python -m pip install -e .
+python scripts/dev.py web-install   # install the Web UI's dependencies
+python scripts/dev.py web           # build into hoshimi/webui/dist
+hoshimi serve
+```
+
+Without a Web UI build, the server logs a warning and serves the API only. The development setup (dev dependencies, a hot-reloading UI) is in [Development setup](/docs/development-setup).
+
+## Ports and addresses
+
+`hoshimi serve` listens on `127.0.0.1:10600` by default, reachable from this machine only.
+
+- **When the port is taken**: the server binds the socket itself, so the port it tested is the port it serves. If the requested port is taken or reserved by the system, it tries the next port, up to 65535, then wraps around to the ports from 1024 up to the requested one; any other bind error (such as an address this machine does not have) fails at once. When it moves, the log says `Port 10600 is unavailable. Using port 10601.`
+- **A fixed port**: when a client needs a fixed address, use `--strict-port` (or `server.strict_port: true` in the configuration). Only the requested port is tried, and if it is taken the command ends with exit code 3.
+- **Any free port**: `--port 0` lets the system pick one.
+- **Where to find the actual address**: the `SERVER_READY url=…` line in the terminal; `server.json` in the data folder (host, actual port, URL and process PID, removed when the server exits); and **Listening on …** under **Settings › Access › Listening address**.
+
+```bash
+hoshimi serve --port 11000 --strict-port
+```
+
+`--host` and `--port` on the command line apply to that start only. To change them for good, run `hoshimi config set server.port 11000` or edit them in **Settings › Access** (they take effect after a restart).
+
+<Callout type="warn" title="Listening on a non-local address">
+
+With `--host` set to `0.0.0.0` or a LAN address, anyone who can reach this machine could spend your upstream accounts. Hoshimi refuses to start until both a tool access key (`server.access_token`) and allowed networks (`security.allow_cidrs`) are configured. The full procedure is in [Security](/docs/config-security).
+
+</Callout>
+
+## Running in the background
+
+On a server or a machine without a desktop, add `--no-open` so no browser is opened. Use the system's service manager to keep it running, for example a systemd user service on Linux (`~/.config/systemd/user/hoshimi.service`):
+
+```ini
+[Unit]
+Description=Hoshimi gateway
+After=network-online.target
+
+[Service]
+ExecStart=/path/to/hoshimi serve --no-open --strict-port
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+Replace `/path/to/hoshimi` with the output of `which hoshimi`, then:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now hoshimi
+journalctl --user -u hoshimi -f     # follow the log
+```
+
+The service uses the data folder of the user it runs as; to choose the location, add `Environment=HOSHIMI_DATA_DIR=/srv/hoshimi` under `[Service]` (see [Environment variables](/docs/cli-env)). `GET /health` needs no key and returns `{"status":"ok"}`, which makes it a liveness check:
+
+```bash
+curl http://127.0.0.1:10600/health
+```
+
+## Uninstall
+
+```bash
+python -m pip uninstall hoshimi     # or uv tool uninstall hoshimi / pipx uninstall hoshimi
+```
+
+Uninstalling leaves the data folder in place. It holds the configuration (including channel credentials), the usage database and the Playground conversations; delete it by hand when you no longer need them:
+
+| Platform | Default data folder |
+| --- | --- |
+| Linux | `~/.local/share/hoshimi`, or `$XDG_DATA_HOME/hoshimi` when `XDG_DATA_HOME` is set |
+| Windows | `%APPDATA%\hoshimi` |
+| macOS | `~/Library/Application Support/hoshimi` |
+
+When `HOSHIMI_DATA_DIR` is set, the data folder is wherever it points. `hoshimi config path` prints the full path of the configuration file; the folder it is in is the data folder.

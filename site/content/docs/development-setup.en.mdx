@@ -1,0 +1,209 @@
+---
+title: "Development setup"
+description: "From a fresh clone to the dev mode that runs the API and the Web UI together: the repository layout, the Python environment, bun, and every scripts/dev.py task."
+icon: Wrench
+---
+
+A Hoshimi development setup has two parts: a Python environment with Hoshimi installed editable together with its development dependencies, and [bun](https://bun.sh) to install, build and test the Web UI and this documentation site. Everyday tasks run through `scripts/dev.py`, which uses only the standard library, behaves the same on Linux, macOS and Windows, and runs the same tools CI runs.
+
+## Repository layout
+
+```text
+hoshimi/
+  core/          all logic; imports no web or command-line framework
+    providers/   one adapter per provider, plus shared transport and protocol code
+    login/       one interactive login flow per station
+    translate/   translation between the public protocols and upstream ones
+    net/         upstream networking: clients, proxy policy, port binding
+    agent/       the Playground's built-in tools
+  api/           the FastAPI app, middleware, routers/, the Web UI's static files
+  cli/           Typer commands (commands/)
+  webui/         Vue 3 + Vite; the built dist/ ships in the package
+  version.py     the version, its only source
+tests/           core/, api/, cli/, and the shared fixtures in conftest.py
+scripts/         dev.py and the build, release and generator scripts
+site/            this documentation site
+.github/workflows/  the CI, checks, build, release and docs-site workflows
+pyproject.toml   distribution metadata, dependencies, Ruff, ty and pytest settings
+config.example.json  a template for the config file
+```
+
+The scripts in `scripts/`:
+
+| Script | What it does |
+| --- | --- |
+| `dev.py` | The task runner; see below |
+| `build_wheel.py` | Builds the Web UI, then the wheel and the sdist; see [CI and releases](/docs/development-release) |
+| `smoke_install.py` | Checks that an installed distribution works, run with that installation's interpreter |
+| `ci.py` | CI's release plan: whether this push publishes |
+| `generate_openapi.py` | Prints the OpenAPI document on standard output, for the Web UI's types |
+| `generate_provider_inventory.py` | Writes the [Provider inventory](/docs/providers-inventory) pages |
+| `check_layout.py` | Looks for sideways overflow in the Web UI in real browsers; see [Testing](/docs/development-testing) |
+
+## The Python environment
+
+<Steps>
+<Step>
+
+### Clone and create a virtual environment
+
+Hoshimi supports Python 3.10 and newer; CI lints and builds with 3.11. `.venv/` is already in `.gitignore`.
+
+<Tabs items={["venv", "uv"]}>
+<Tab value="venv">
+
+```bash
+git clone https://github.com/licyk/Hoshimi.git
+cd Hoshimi
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+```
+
+</Tab>
+<Tab value="uv">
+
+```bash
+git clone https://github.com/licyk/Hoshimi.git
+cd Hoshimi
+uv venv .venv --python 3.11
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+```
+
+</Tab>
+</Tabs>
+
+</Step>
+<Step>
+
+### Install editable, with the development dependencies
+
+<Tabs items={["pip", "uv"]}>
+<Tab value="pip">
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+</Tab>
+<Tab value="uv">
+
+```bash
+uv pip install -e ".[dev]"
+```
+
+</Tab>
+</Tabs>
+
+The `dev` extra holds pytest, Ruff, ty, build and the official Anthropic SDK (the Messages regression tests use it). To cover the cloud providers' code as well, add `google` (`google-auth[requests]`) and `bedrock` (`boto3`): CI's type checks and tests install `.[dev,google,bedrock]`.
+
+</Step>
+<Step>
+
+### Check the environment
+
+```bash
+python -m hoshimi version
+python scripts/dev.py lint test-py
+```
+
+`dev.py` runs Ruff, ty and pytest with the interpreter running it (`sys.executable`), not whichever is on `PATH`, so running it with the virtual environment's `python` is enough.
+
+</Step>
+</Steps>
+
+## The Web UI: bun
+
+The Web UI (`hoshimi/webui/`) and the documentation site (`site/`) both use bun to install, build and test; CI uses bun 1.4.2. When `bun` is not on `PATH`, `dev.py` prints one line saying so and exits with status 127 rather than a traceback.
+
+```bash
+python scripts/dev.py web-install   # bun install in hoshimi/webui
+python scripts/dev.py web           # vue-tsc type-check, then build into hoshimi/webui/dist
+```
+
+The built `dist/` ships in the wheel as package data. When `hoshimi serve` runs from a checkout with no `dist/index.html`, the server logs a warning and serves the API only.
+
+## Dev mode: the API and Vite together
+
+```bash
+python scripts/dev.py dev
+```
+
+It starts two processes and tags each line of their output with the process name (`api` or `web`):
+
+- **API**: `python -m hoshimi serve --no-open --no-ui --port 10600 --strict-port`, with the repository root first on `PYTHONPATH`, so the code in the working tree is what runs.
+- **Vite**: `bun run dev --port 5173 --strictPort` in `hoshimi/webui`, with `HOSHIMI_BACKEND=http://127.0.0.1:10600`.
+
+Open only `http://localhost:5173`: Vite proxies `/api`, `/v1`, `/health`, `/openapi.json`, `/docs` and `/redoc` to the API, so the interface and the model API share that one address. Interface changes reload in place; Python changes need the task restarted.
+
+| Option | Default | What it sets |
+| --- | --- | --- |
+| `--api-port` | `10600` | The API server's port |
+| `--web-port` | `5173` | Vite's port |
+
+- <kbd>Ctrl</kbd>+<kbd>C</kbd> stops both processes; when one exits, the other is stopped too and the task ends with its exit status.
+- Before the Web UI's dependencies are installed, the task says to run `python scripts/dev.py web-install` first.
+- While the API restarts, Vite's proxy prints at most one "API is not answering" line every 5 seconds and answers requests with HTTP 502 and `{"code": "api_unreachable", ...}`, instead of a screen full of connection errors.
+
+### A separate data folder
+
+To keep the development configuration, accounts and usage apart from your everyday data, set `HOSHIMI_DATA_DIR`:
+
+<Tabs items={["bash", "PowerShell"]}>
+<Tab value="bash">
+
+```bash
+HOSHIMI_DATA_DIR=/tmp/hoshimi-dev python scripts/dev.py dev
+```
+
+</Tab>
+<Tab value="PowerShell">
+
+```powershell
+$env:HOSHIMI_DATA_DIR = "$env:TEMP\hoshimi-dev"
+python scripts/dev.py dev
+```
+
+</Tab>
+</Tabs>
+
+What else lives in the data folder is in [Paths and data folder](/docs/config-paths).
+
+### The interface alone
+
+With an API already running elsewhere, `python scripts/dev.py web-dev` starts only Vite. It proxies to `http://127.0.0.1:10600` by default; for an API at another address, set the `HOSHIMI_BACKEND` environment variable to it first (for example `http://127.0.0.1:10601`).
+
+## `scripts/dev.py` tasks
+
+`python scripts/dev.py` with no arguments lists every task. Several tasks can be named at once; they run in order and stop at the first failure. Everything from the first argument that starts with `-` belongs to the task; options can only be given when running a single task, and a task that takes none fails with status 2 when given some.
+
+| Task | What it does |
+| --- | --- |
+| `lint` | `ruff check hoshimi tests scripts`, changing nothing |
+| `format` | `ruff check --fix` and `ruff format` over the same folders |
+| `typecheck-py [ty options…]` | `ty check`; extra options go to ty unchanged (CI passes the Python version and platform this way) |
+| `test-py` | Runs pytest (every test under `tests/`) |
+| `web-install` | `bun install` in `hoshimi/webui` |
+| `web` | `bun run build`: the vue-tsc type-check, then the build into `hoshimi/webui/dist` |
+| `web-dev` | Vite only (expects an API already running) |
+| `dev [--api-port] [--web-port]` | The API and Vite together; see above |
+| `test-web` | `bun run test` (Vitest), then `bun run typecheck` (vue-tsc) |
+| `openapi` | Prints the OpenAPI document on standard output (`scripts/generate_openapi.py`) |
+| `typegen` | Regenerates `hoshimi/webui/src/api/schema.d.ts` from the OpenAPI document (commit the result) |
+| `typegen-check` | `typegen`, then `git diff --exit-code`: fails when the generated types are out of date |
+| `wheel` | Builds the Web UI, then writes the wheel and sdist to `dist/` (`scripts/build_wheel.py`) |
+| `test` | `test-py` and `test-web` |
+| `check` | Everything CI checks: `lint`, `typecheck-py`, `test-py`, `test-web`, `typegen-check` |
+| `site-install` | Installs the documentation site's dependencies in `site/` |
+| `site-dev` | Previews the documentation site locally, with hot reload |
+| `site` | Builds the documentation site |
+| `test-site` | The documentation site's tests and type-check |
+
+The site tasks are covered in [Documentation site](/docs/development-site). Run `python scripts/dev.py check` once before committing: it covers CI's Python and Web UI checks.
+
+<Callout type="info" title="test-py takes no options">
+`test-py` always runs the whole suite. To run part of it, call pytest directly, for example `python -m pytest tests/core/test_registry.py -k prefixed`.
+</Callout>
+
+## Clones of the reference projects
+
+To compare against upstream protocols, clone the reference repositories into the repository root (`dsh-our-free-model/`, `codex-api/`, `Hanaikada/`, `pi/`, `pi-free/`, `free-claude-code/` and so on). They are all in `.gitignore` and never committed; development, tests and builds do not need them. What each one is for is in [Development](/docs/development).

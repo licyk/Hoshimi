@@ -1,0 +1,233 @@
+---
+title: "Playground tools"
+description: "Turn the Playground into an agent: give a model built-in tools to read and edit files, run commands and search the web, choose when it asks first, approve its calls, and steer it while it works."
+icon: Wrench
+---
+
+With tools on, a Playground reply becomes an agent loop. The model is offered built-in tools; each round it streams its words, the tools it called run one after another (after you approve the ones that need it), their results go back to it, and it goes on until a round calls nothing. The reply shows every call as a card you can open.
+
+<Callout type="warn" title="Tools act on this computer">
+
+Commands and file edits run on the machine that runs Hoshimi, with the permissions of the user running it. There is no sandbox. All tools are off by default: turn on only what you need, and keep approvals on. The Safety section below says what each mode lets through.
+
+</Callout>
+
+## Turn tools on
+
+<Steps>
+<Step>
+
+### Choose the tools new chats start with
+
+Open **Settings › Tools**. Under **Tools for new chats**, switch on the tools you want (see [Settings](/docs/guide-settings)). This is the starting set for new chats; it does not force tools on any chat.
+
+</Step>
+<Step>
+
+### Turn tools on or off per chat
+
+In the composer, the **Tools** menu (the wrench) lists all six tools, each with a short description and an on/off switch; the menu stays open while you switch them. Its button shows how many are on, or **Off**. A chat can turn on a tool Settings leaves off, or turn off one Settings turns on. The menu is locked while a reply is coming in.
+
+</Step>
+<Step>
+
+### Pick a model that calls tools
+
+Tools are offered only to models that make tool calls. A model whose catalogue entry says it has no tool calls answers without them, and the reply notes "*model* can’t call tools, so it answered without them." The same happens when a station refuses the tools before the reply starts: the reply is tried once more without them.
+
+</Step>
+</Steps>
+
+A chat keeps only how it differs from Settings (the tools it turned on, and the ones it turned off). A new chat starts again from Settings.
+
+## The six tools
+
+| Switch (in Settings and the Tools menu) | Tool names the model sees | What it does | Asks first (never in Full access) |
+| --- | --- | --- | --- |
+| **Read files** | `read` | Read a text file, or list a folder | Only for paths outside the workspace |
+| **Edit files** | `apply_patch` | Create, change, move and delete files with a patch | Always in **Ask first**; in **Ask outside the workspace**, only for files outside it |
+| **Run commands** | `shell` | Run a command and wait for it | Only in **Ask first** |
+| **Background commands** | `exec_command`, `write_stdin`, `kill_session` | Start a command that keeps running, read its output, type into it, stop it | Starting one, only in **Ask first** |
+| **Search the web** | `web_search` | Search DuckDuckGo, or your own SearXNG | Never |
+| **Read web pages** | `web_fetch` | Read a public web page as Markdown | Never |
+
+Relative paths are taken from the workspace (see Workspace below). Whatever a tool returns, a model is sent at most 32,000 characters of it; the middle of a longer output is cut, keeping the start and the end.
+
+### Read files (`read`)
+
+- Returns text with numbered lines (`L12: …`). Reads 2000 lines from the start unless the model asks for an `offset` (from 1) and a `limit` (up to 10,000).
+- A line longer than 500 characters is cut; one read returns at most 60,000 characters and says where to go on.
+- A path that is a folder returns its listing: folders first, up to 500 entries.
+- Binary files (with a NUL byte near the start) are refused.
+
+### Edit files (`apply_patch`)
+
+Takes a patch in the Codex `apply_patch` format, so a model that knows the tool from Codex knows it here:
+
+```text
+*** Begin Patch
+*** Add File: hello.txt
++Hello world
+*** Update File: src/app.py
+*** Move to: src/main.py
+@@ def greet():
+-print("Hi")
++print("Hello, world!")
+*** Delete File: obsolete.txt
+*** End Patch
+```
+
+- The whole patch is worked out against the files before anything is written: if one hunk does not apply, no file is changed.
+- Files must be UTF-8 text. Line endings are kept (a CRLF file stays CRLF), and a file always ends with a line ending.
+- The result lists the files added (`A`), modified (`M`) and deleted (`D`).
+- A patch that names a file outside the workspace (or moves one there) needs **Edit files** approval for outside files: **Change files outside the workspace?**
+
+### Run commands (`shell`)
+
+- Runs the command with `bash -c` (`sh -c` where there is no bash; PowerShell on Windows), in the workspace unless the model gives a `workdir`.
+- Waits for it to finish: 60 seconds by default, at most 10 minutes. A command that runs longer is stopped, with everything it started, and reported as timed out (exit code -1).
+- Returns the exit code, the time taken and the output, standard error included. The command gets no input (standard input is closed), and pagers and colours are turned off (`PAGER=cat`, `NO_COLOR=1`, `TERM=dumb`, `GIT_TERMINAL_PROMPT=0`).
+- For something that keeps running or asks for input, the model is told to use a background command instead.
+
+### Background commands (`exec_command`, `write_stdin`, `kill_session`)
+
+- `exec_command` starts a command and waits a little (10 seconds by default, from 0.25 to 30). If it finishes, it returns its exit code and output; if not, it keeps running as a *session* and returns what it printed so far and a session ID.
+- `write_stdin` types into a session (with `\n` for Enter) and returns its new output, waiting 0.25 seconds by default after writing; with nothing to type it just waits for new output (5 seconds by default, up to 2 minutes). It says whether the command still runs, or its exit code.
+- `kill_session` stops a session and everything it started, and returns its last output.
+- A session keeps up to 1,000,000 characters of unread output (the middle of more is dropped); colour codes are stripped.
+- At most 16 background commands run at once on the server. Sessions belong to the chat that started them, and stop when that chat is deleted and when the server stops.
+
+Only `exec_command` can ask first; `write_stdin` and `kill_session` act on a command already approved.
+
+### Search the web (`web_search`)
+
+- Asks DuckDuckGo's light page (no key needed), or a SearXNG instance set in **SearXNG address** (`playground.search_url`), whose JSON format must be turned on.
+- Returns up to 8 results by default (at most 20), each with its title, address and a snippet.
+- DuckDuckGo limits how often it is asked; if it stops answering, wait a little or set up SearXNG.
+
+### Read web pages (`web_fetch`)
+
+- Reads a public `http://` or `https://` address (`https://` is added when none is given) and returns it with its final address and title. HTML is converted to Markdown, keeping headings, paragraphs, links, lists, code and tables; scripts, styles, navigation and forms are dropped, and a page's main content is preferred.
+- Only text is read (HTML, plain text, JSON, XML, RSS and the like); at most 5 MB is downloaded and 60,000 characters returned.
+- Local and private addresses are refused: `localhost`, names ending in `.localhost`, `.local` or `.internal`, and any name that resolves to a loopback, private, link-local, reserved or multicast address. The check is repeated at every redirect (at most 5). Addresses with a user name or password are refused too. This keeps a model from reading the gateway itself, which holds your account credentials, or anything else on your network.
+
+Both web tools go out through the gateway's network settings, including its proxy (see [Network](/docs/config-network)).
+
+## When tools ask first
+
+The approval mode decides which calls wait for you. New chats start with **Settings › Tools › How tools run › When tools ask first**; each chat can choose its own.
+
+| Mode (`playground.approval`) | Short name | Asks before |
+| --- | --- | --- |
+| **Ask first** (`ask`, default) | **Ask** | Every command (`shell`, `exec_command`), every file change, and reading anything outside the workspace |
+| **Ask outside the workspace** (`auto`) | **Auto** | Only reading or changing files outside the workspace. Commands and changes inside it run without asking |
+| **Full access** (`full`) | **Full access** | Nothing. Tools do whatever the model calls for |
+
+Searching and reading web pages never ask, and neither do reads inside the workspace.
+
+### The shield menu in the composer
+
+When a chat has at least one tool on, a shield appears in the composer next to **Tools**. It shows the chat's mode (**Ask**, **Auto**, or **Full access** in red) and opens **When tools ask first** to change it for this chat alone. It works even while a reply is running: the new mode applies from the next tool call. A new chat starts as Settings say again. On a phone the shield shows only its icon.
+
+## Answer an approval
+
+A call that must ask stops with **Needs approval**, opens, and shows what it would do (the command, or the patch with its added and removed lines) and a question:
+
+| Question | Asked for |
+| --- | --- |
+| **Run this command?** | `shell` or `exec_command` |
+| **Apply these changes?** | A patch inside the workspace |
+| **Change files outside the workspace?** | A patch that touches a file outside it |
+| **Read this file outside the workspace?** | `read` outside the workspace |
+
+Answer with:
+
+- **Allow**: run this call.
+- **Always allow**: run this call, and calls like it in this chat, without asking again. "Like it" means the same tool switch, and inside versus outside the workspace counts separately: always allowing edits in the workspace does not allow edits outside it. The permission lasts until the server restarts, and is forgotten when the chat is deleted.
+- **Deny**: skip it. The model is told you declined and not to try again unless you ask, and the card shows **Declined**.
+
+A call waits 10 minutes for an answer; no answer counts as a denial. Stopping the reply stops a waiting call.
+
+## Tool cards
+
+Each call is a line in the reply: an icon, a verb and what it acted on (**Read** `path`, **Edit** `files`, **Run** `command`, **Start** `command`, **Check** or **Type into** *session n*, **Stop** *session n*, **Search** "query", **Open** *address*), then its state:
+
+| State | Meaning |
+| --- | --- |
+| **Preparing…** | The model is still writing the call |
+| **Needs approval** | Waiting for your answer |
+| A spinner with the time | Running |
+| A check with the time | Done |
+| **Exit** *code* or **Failed** | The command exited with an error, or the tool failed; the model reads why |
+| **Declined** | You denied it |
+| **Stopped** | The reply was stopped before it finished, or it was not run because of the round limit |
+
+Click a card to open it: the command, the patch, or the arguments as sent, and what came back. Between rounds the reply shows **Working…**.
+
+## Steer a reply while it works
+
+While a reply with tools is running, you can add to it without stopping it. The box reads "Add to what it’s doing…"; type and press <kbd>Enter</kbd> (or the button, now **Send to the reply under way**).
+
+- Your message shows faded under the reply with **Read after the current step**. The model reads it at the start of its next round, after the calls in progress, and it then appears in the reply where it was read.
+- A message sent just as the model finishes keeps the reply going for one more round, to answer it.
+- If the reply had already ended, the message goes back in the box ("The reply had already ended; your message is back in the box.") for you to send as a new message. If the reply is stopped or fails before reading it, the text comes back to the box too.
+- With an empty box, the button is still **Stop**, and <kbd>Esc</kbd> always stops.
+
+## Background commands above the composer
+
+Commands a chat's tools started with `exec_command` and that are still running are listed above the composer (**Background commands**): the command, **running**, and a stop button (**Stop** *command*) that stops it and everything it started. They keep running between replies until the model stops them, you stop them, the chat is deleted or the server stops.
+
+## Workspace
+
+The workspace is where the tools start: relative paths resolve there, and `shell` and background commands run there unless the model names another folder. It is **Settings › Tools › How tools run › Workspace** (`playground.workspace`; `~` is expanded); empty uses `workspace` in the data folder (see [Data folder and paths](/docs/config-paths)). It is created when a reply with tools first runs.
+
+The workspace is the line the approval modes draw: reading or changing files outside it asks in **Ask first** and **Ask outside the workspace**. It is not a boundary for commands: a command can `cd` anywhere and touch anything the user running Hoshimi can.
+
+## Round limit
+
+**Rounds of tool calls per reply** (`playground.max_steps`, 1 to 500, default 50) caps how many rounds of calls one reply makes. After that many, the model is asked once more with tools withheld, so it answers with what it has. If it still calls a tool, the call is not run (its card shows **Stopped**) and the reply notes "This reply reached its limit of *n* rounds of tool calls."
+
+## Stopping
+
+**Stop** (or <kbd>Esc</kbd>) ends the reply at once. A running `shell` command is stopped with everything it started; a call waiting for approval is dropped; calls not yet run are marked **Stopped**. What the reply said and did so far is kept. Background commands keep running: stop them above the composer.
+
+## Safety
+
+There is no sandbox. Tools run as the user running Hoshimi, on that machine, with its files, credentials and network.
+
+- **Ask first** is the only mode where you see every command and every file change before it happens. Read each one before you allow it.
+- **Ask outside the workspace** runs any command without asking. A command is not confined to the workspace, so in this mode a model can change or delete files anywhere the user can, and reach your network. Use it only with a model and a task you trust.
+- **Full access** runs every call without asking, including edits outside the workspace.
+- **Always allow** removes the question for the rest of the chat (until the server restarts). Prefer **Allow** for anything you want to check each time.
+- `web_fetch` refuses local and private addresses, but `shell` and background commands do not: a command can reach anything the machine can, including the gateway's own API.
+- What a model reads (web pages, files, command output) can contain instructions meant to steer it. Keep approvals on when tools read untrusted content.
+- If the server is reachable from other machines, anyone who can sign in to the Web UI can use these tools. Set an access key and limit who can connect (see [Access and security](/docs/config-security)).
+
+## Settings reference
+
+| Setting (**Settings › Tools**) | Key | Default |
+| --- | --- | --- |
+| **Tools for new chats** | `playground.tools`: any of `read`, `apply_patch`, `shell`, `terminal`, `web_search`, `web_fetch` | `[]` (none) |
+| **When tools ask first** | `playground.approval`: `ask`, `auto` or `full` | `ask` |
+| **Workspace** | `playground.workspace` | empty: `workspace` in the data folder |
+| **Rounds of tool calls per reply** | `playground.max_steps` (1–500) | `50` |
+| **SearXNG address** | `playground.search_url` (an `http(s)` address) | empty: DuckDuckGo |
+
+`terminal` is the switch for the three background-command tools.
+
+```json
+{
+  "playground": {
+    "tools": ["read", "apply_patch", "shell", "web_search", "web_fetch"],
+    "approval": "ask",
+    "workspace": "~/hoshimi-work",
+    "max_steps": 50,
+    "search_url": ""
+  }
+}
+```
+
+<Cards>
+<Card title="Playground" href="/docs/guide-playground" description="Chats, attachments, versions, branches and Copy as API request." />
+<Card title="Playground API" href="/docs/api-playground" description="Tool events, steps, approvals, steering and background commands over HTTP." />
+</Cards>

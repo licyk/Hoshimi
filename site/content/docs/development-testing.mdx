@@ -1,0 +1,130 @@
+---
+title: "测试"
+description: "Hoshimi 的各类检查：pytest 的布局与共享夹具、写渠道和路由测试的方式、Web UI 的 Vitest 规则测试、生成类型的检查、在真实浏览器里查横向溢出的 check_layout.py，以及 CI 怎样运行它们。"
+icon: TestTube
+---
+
+Hoshimi 的测试不访问网络，也不需要任何真实的渠道凭据：上游由假的渠道或 `httpx.MockTransport` 代替，每个测试都有自己的临时数据目录。提交前运行一次 `python scripts/dev.py check`，它覆盖 CI 的 Python 与 Web UI 检查。
+
+## 一览
+
+| 检查 | 命令 | 内容 |
+| --- | --- | --- |
+| Lint | `python scripts/dev.py lint` | Ruff 检查 `hoshimi`、`tests`、`scripts` |
+| Python 类型 | `python scripts/dev.py typecheck-py` | ty |
+| Python 测试 | `python scripts/dev.py test-py` | `tests/` 下的 pytest |
+| Web UI 测试 | `python scripts/dev.py test-web` | Vitest，然后 vue-tsc 类型检查 |
+| 生成的类型 | `python scripts/dev.py typegen-check` | `schema.d.ts` 与当前的 OpenAPI 文档一致 |
+| 浏览器中的布局 | `python scripts/check_layout.py` | 在 Chromium 和 Firefox 中查找横向溢出（可选，需要 Playwright） |
+| 文档站 | `python scripts/dev.py test-site` | 文档站的测试与类型检查，见[文档站](/docs/development-site) |
+
+## Python 测试
+
+### 布局
+
+pytest 的配置在 `pyproject.toml`：`testpaths = ["tests"]`，并跳过沙箱运行留下的 `tests/_pytest_tmp` 与 `tests/_tmp`。
+
+| 路径 | 内容 |
+| --- | --- |
+| `tests/core/` | 不经过 HTTP 的领域逻辑：每个渠道适配器、归一化分片、路由、协议转换、推理强度、失败分类与退避、目录、用量与数据库、续期、登录、Playground 的工具与补丁，以及分层规则（`test_architecture.py`） |
+| `tests/api/` | 经 `TestClient` 访问的路由：Chat Completions、Responses、Messages（含官方 Anthropic SDK）、心跳、管理 API、认证边界、网络设置、Playground 与它的工具 |
+| `tests/cli/` | 命令行（命令树快照、每个命令都有 `--debug`、`config` 的读写）、`scripts/dev.py` 与 `build_wheel.py`、发布计划 `scripts/ci.py` |
+| `tests/test_package_api.py` | `import hoshimi` 不加载服务器依赖，惰性导出的对象就是实现里的那些 |
+| `tests/fixtures/apply_patch/` | 来自 Codex（codex-rs/apply-patch，Apache-2.0）的 `apply_patch` 场景，每个场景一个目录 |
+
+只运行一部分时直接调用 pytest（`test-py` 不接受选项）：
+
+```bash
+python -m pytest tests/core/test_registry.py
+python -m pytest tests/api -k messages
+python -m pytest -x -q
+```
+
+### 共享夹具
+
+`tests/conftest.py` 提供一个不访问网络的渠道和建立在它之上的服务与应用：
+
+| 名称 | 类型 | 作用 |
+| --- | --- | --- |
+| `isolated_data_dir` | 自动使用的夹具 | 把 `HOSHIMI_DATA_DIR` 指向测试自己的 `tmp_path`，配置和数据永远碰不到真实的数据目录 |
+| `FakeProvider` | `Provider` 子类，ID `fake` | 回显模型名和消息数：产出 `text_delta` `echo:<模型>:`、消息数、`usage`、`finish`；模型为 `fake-1`（标记为免费）和 `fake-2`；`provider.seen` 记录收到的请求体 |
+| `make_services(*extra, **settings)` | 函数 | 一个 `fake` 渠道在配置中声明的 `Services`，所以保存设置后渠道池能按原样重建；`extra` 里的渠道以 `fake0`、`fake1` 的名字加入池中 |
+| `services` | 夹具 | `make_services()` |
+| `client` | 夹具 | `TestClient(create_app(services, serve_ui=False), base_url="http://localhost")` |
+
+`FakeProvider` 注册在 `PROVIDER_CLASSES["fake"]` 中，否则保存设置时的重建会把 `fake` 当作未知渠道丢掉。
+
+一个路由测试的样子：
+
+```python
+def test_messages_defaults_to_json_and_counts_one_turn(client, services):
+    response = client.post("/v1/messages", json=body(), headers={"anthropic-version": "2023-06-01"})
+    assert response.status_code == 200
+    message = response.json()
+    assert message["id"].startswith("msg_")
+    assert message["content"] == [{"type": "text", "text": "echo:fake-1:1"}]
+```
+
+### 常用写法
+
+- **渠道适配器**：用 `httpx.MockTransport` 构造适配器的客户端，检查请求的地址、头和体，以及 `stream_raw` 产出的分片类型。例子见[渠道适配器](/docs/development-providers)。
+- **Anthropic Messages**：`tests/api/test_native_messages.py` 用官方 Anthropic SDK（`dev` 附加依赖中）的 JSON 与流式辅助函数访问网关，上游是本地的模拟传输，所以不需要真实凭据。`tests/api/test_messages_heartbeat.py` 单独检查心跳的时机、心跳不会切开完整的 SSE 帧，以及客户端断开时释放上游。用真实的 Claude Code 试用一个已配置的网关，见 [Claude Code](/docs/clients-claude-code)。
+- **只在 POSIX 上运行的测试**：Playground 的 shell 与后台命令测试在 Windows 上跳过（`pytest.mark.skipif(os.name == "nt", ...)`）；需要切换本地时区的用量测试在没有 `time.tzset` 的平台上跳过。
+- **自己的 Services**：需要特定设置时调用 `make_services(default_model=..., ...)`；需要多个渠道时传入额外的 `FakeProvider` 或子类。
+
+## Web UI 测试
+
+在 `hoshimi/webui` 中，`bun run test` 运行 Vitest，`bun run typecheck` 运行 vue-tsc；`python scripts/dev.py test-web` 依次运行两者。测试环境是 happy-dom，`src/test/setup.ts` 补上 `@material/web` 需要的 `ElementInternals`，`src/test/motion-zero.css` 把所有动效时长设为 0，测试永远不必等待过渡。Vitest 用 `vmThreads` 池运行（Windows 上工作线程会争抢创建临时目录）。
+
+测试和被测文件放在一起（`*.test.ts`）。除了组件、仓库和查询的测试，有几组测试检查的是全局规则：
+
+| 测试 | 规则 |
+| --- | --- |
+| `src/layout.test.ts` | 布局规则：可收缩的行、有界的列表、只通过 `.app-scroll` 滚动、滚动条通道、底部导航、图表不被拉伸，见 [Web UI](/docs/development-webui) |
+| `src/tokens.test.ts` | `src/theme/` 之外的 `.vue` 和 `.css` 中没有十六进制颜色 |
+| `src/imports.test.ts` | 模块之间用 `@/` 别名导入，没有相对路径 |
+| `src/i18n/i18n.test.ts` | 英文、简体中文、日文的键和占位符一致；系统语言的识别 |
+| `src/devProxy.test.ts` | 开发代理只把“API 没启动”这类错误缩成一行，其他错误照常完整打印 |
+| `src/ui/layers.test.ts`、`src/ui/motion/motion.test.ts` 等 | 图层叠放与焦点、动效辅助函数 |
+
+## 生成类型的检查
+
+`python scripts/dev.py typegen-check` 由当前代码重新生成 `hoshimi/webui/src/api/schema.d.ts`，再用 `git diff --exit-code` 比较。失败说明管理 API 的模型变了而类型没有重新生成：运行 `python scripts/dev.py typegen` 并提交 `schema.d.ts`。
+
+## 在浏览器里检查布局：`check_layout.py`
+
+Web UI 中每个滚动区域只朝一个方向滚动（`.app-scroll` 纵向，`.app-scroll-x` 横向，例如代码块、表格和步骤条），所以其他任何地方出现横向滚动条都是布局错误。单元测试只能读源码；`scripts/check_layout.py` 在真实浏览器里找出这类错误。
+
+```bash
+pip install playwright && playwright install chromium firefox
+python scripts/check_layout.py --url http://127.0.0.1:10600
+```
+
+先启动一个服务器（`hoshimi serve` 或 `python scripts/dev.py dev`），最好在 Playground 里有一段对话，这样聊天列表、编辑器和菜单都有东西可以打开。脚本：
+
+- 依次打开 `/overview`、`/models`、`/channels`、`/usage`、`/playground`、`/settings`；
+- 在 Chromium（显示滚动条，与桌面一致）和 Firefox（滚动条浮动）中，以 320、360、600、900、1280、1600 像素的窗口宽度检查；
+- 每个页面先检查打开时的样子，再打开第一个菜单；Playground 还会切换聊天列表、打开消息编辑器和对话菜单；
+- 报告每个内部比可见部分更宽的区域，以及超出的元素和超出的像素。
+
+| 选项 | 默认值 | 作用 |
+| --- | --- | --- |
+| `--url` | `http://127.0.0.1:10600` | 服务器地址 |
+| `--engine` | 两者都检查 | `chromium` 或 `firefox`，可重复 |
+| `--width` | 320 到 1600 的六个宽度 | 一个窗口宽度，可重复 |
+
+没有发现溢出时退出码为 0，发现时为 1，没有安装 Playwright 时为 2，所以它可以作为发布前的一道检查。Playwright 不是项目依赖，CI 也不运行它。
+
+## CI 中的检查
+
+CI 的共享检查（`.github/workflows/checks.yml`）运行：
+
+| 作业 | 环境 | 内容 |
+| --- | --- | --- |
+| Ruff | Ubuntu，Python 3.11 | `python scripts/dev.py lint` |
+| ty | Ubuntu、Windows、macOS × Python 3.10–3.14 | `typecheck-py`，带上对应的 Python 版本与平台，警告也算失败 |
+| pytest | Ubuntu，Python 3.10、3.12、3.14 | `python scripts/dev.py test-py` |
+| Web UI and API contract | Ubuntu，Python 3.11，Node 24，bun 1.4.2 | `bun install --frozen-lockfile`，`test-web`，`typegen-check` |
+| CI passed | — | 上面任何一个失败、取消或跳过时失败；发布等待它 |
+
+依赖用 uv 安装：ty 与 pytest 作业安装 `.[dev,google,bedrock]`。共享检查还会对文档站做类型检查、测试和构建。发布流程见 [CI 与发布](/docs/development-release)。

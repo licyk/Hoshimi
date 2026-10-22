@@ -1,0 +1,74 @@
+---
+title: "NVIDIA NIM"
+description: "Connect NVIDIA-hosted NIM models with an API key: adding the account, choosing models, catalogue filtering, and the request translations the adapter makes for NIM."
+icon: Cpu
+---
+
+The `nvidia` channel connects to NVIDIA's hosted NIM inference service (`https://integrate.api.nvidia.com/v1`) over OpenAI Chat Completions. An account needs only an NVIDIA API key.
+
+## Adding an account
+
+<Tabs items={["Web UI", "config.json"]}>
+<Tab value="Web UI">
+
+Open **Channels** › **NVIDIA NIM**, click **Add account**, enter the **API key** and click **Save account**. The account takes effect immediately.
+
+</Tab>
+<Tab value="config.json">
+
+Find the configuration file with `hoshimi config path` and add:
+
+```json
+{
+  "providers": {
+    "nvidia": {
+      "accounts": [{"id": "nvidia-1", "api_key": "<NVIDIA API key>"}]
+    }
+  }
+}
+```
+
+Restart after editing the file.
+
+</Tab>
+</Tabs>
+
+The account also accepts `access_token` in place of `api_key`, and `models` on the account declares a model list in place of the live catalogue; the channel option `options.base_url` replaces the default address. This upstream key is a different thing from the gateway's own model API key and management key; see [Security](/docs/config-security).
+
+## Choosing a model
+
+```bash
+hoshimi models --provider nvidia
+curl http://127.0.0.1:10600/v1/models
+```
+
+Use `nvidia/<model-id>` to select this channel explicitly. When the model ID itself contains a slash, the `nvidia/` prefix makes sure the request lands here rather than on an earlier channel in the routing order:
+
+```bash
+curl http://127.0.0.1:10600/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "nvidia/<model-id>", "messages": [{"role": "user", "content": "hi"}]}'
+```
+
+## Catalogue
+
+The adapter reads the model list live and excludes recognised non-chat tasks: embeddings (`embed`), rerankers (`rerank`), `nvclip`, reward scorers (`-reward`), detectors (`-detector`), document parsers (`nemotron-parse`) and `gliner`. This is a task filter, not an outage list.
+
+A model being listed does not prove there is quota for it or that inference will succeed. `nvidia` takes part in the default availability probe, so you can confirm with one real request from the **Models** page or `POST /api/v1/probe`; see [Model behaviour](/docs/advanced-models). Capability metadata and account options follow the same [model rules](/docs/advanced-models).
+
+## Request translations
+
+NIM does not accept some OpenAI fields, so the adapter changes requests before sending them:
+
+| Translation | Details |
+| --- | --- |
+| Removed fields | `store`, `reasoning_effort`, `reasoning`, `prompt_cache_retention` |
+| `max_completion_tokens` | Becomes `max_tokens` when no `max_tokens` was given |
+| `developer` messages | Become `system` |
+| Tool definitions | `strict` is removed; boolean sub-schemas such as `additionalProperties` or `items`, and boolean properties, are cleaned out of parameter schemas |
+| Tool calls from MiniMax models | Tool calls the model writes as native text blocks are parsed into standard tool calls |
+| Request header | `NVCF-POLL-SECONDS: 3600` is sent |
+
+These translations make requests acceptable to NIM; they are not full OpenAI feature parity. Whether a request succeeds is finally decided by the key's permissions, quota and model access.
+
+Client setup is in [Connecting clients](/docs/clients); general account handling is in [Provider concepts](/docs/providers).

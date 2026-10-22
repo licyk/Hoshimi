@@ -1,0 +1,210 @@
+---
+title: "Channels"
+description: "The Channels page: each provider's state, signing into stations or adding API keys, account renewal, expiry, balances and check-in, the allowance, and a network route per channel."
+icon: Plug
+---
+
+The **Channels** page manages where models come from. A channel is one provider: a free station (such as Cline, TRAE, Qoder), a cloud service (such as Azure, Bedrock, Vertex), a local server (such as Ollama, LM Studio), or `agg` aggregator accounts. A channel can hold several accounts, and the gateway rotates between them. How providers differ and how to choose is in [Providers](/docs/providers).
+
+The list of channels is on the left and the chosen channel's details on the right; on a narrow window only one of them shows, and the back button at the top left of the details returns to the list. The chosen channel is part of the address (such as `#/channels/cline`), so a reload opens it again.
+
+## The channel list
+
+The list holds the channels that are set up, plus the stations you can sign into or give a key that are not set up yet. Each row shows:
+
+- A state dot and the name, with a state badge on the right when it is not **Ready**.
+- The number of accounts (**N accounts**); **No account needed** for an anonymous channel, **Not set up** for one with nothing yet.
+- Today's tokens, when it was used today (**N tokens today**).
+- An allowance bar underneath when the station reports one: red at 10% or less left, amber at 25% or less.
+
+| State | Meaning |
+| --- | --- |
+| **Ready** | Serving normally |
+| **Needs attention** | Still serving, but something wants a human: an account needs a new login, a token has expired, an account is held out of rotation, or the channel was rate limited or has 10% or less of its allowance left |
+| **Off** | You switched the channel off |
+| **Not set up** | No usable account, and not an anonymous channel |
+
+Above the list:
+
+- **Search providers**: by channel id or name.
+- Filters: **All**, **In use** (ready and needing attention), **Needs attention**, **Not set up**, **Off**, each with its count.
+- On the right, the daily check-in status (**Done · time** or **Not yet today**; hover for the last result), **Check in all**, and the **Renew every account** icon button; see [Check-in and balances](#check-in-and-balances) and [Credential renewal](#credential-renewal) below.
+
+Saving a channel (switching it on, adding its first account) can move it in the order the server lists channels, but rows keep their places so nothing jumps from under the pointer; a reload takes the new order.
+
+## Channel details
+
+Click a row to open its details. At the top are the name, the channel id and the **Enabled** switch; below them a row of actions:
+
+| Action | What it does |
+| --- | --- |
+| **Sign in** | The main action of a station with a browser login; see [Sign into a station](#sign-into-a-station) |
+| **Add account** | The main action of a channel that takes an API key or other credential; see [Add an account](#add-an-account) |
+| **Renew now** | With accounts: runs a renewal round for this channel |
+| ⋮ menu | **Renew now** and **Claim now** (with accounts); **Add account** when the channel takes both and it is not the main action; **View usage** opens the [Usage](/docs/guide-usage) page |
+
+When the channel needs attention, a banner under the actions lists why, such as **2 need a new login**, **1 expired**, **1 held out of rotation**, **Rate limited ×3**, **Quota header unreadable ×1**, **Only 8% of the allowance is left**.
+
+### Switching a channel on and off
+
+The **Enabled** switch writes `providers.<id>.enabled` in `config.json` and applies at once. Switched off, the channel no longer serves and its models leave the catalogue; its accounts stay in the configuration and come back when you switch it on. Adding an account to a channel that is off switches it back on.
+
+## Sign into a station
+
+Free stations hand out credentials through the browser, so there is no key to paste. Click **Sign in**; the dialog shows three steps: **Request a link**, **Finish in the browser**, **Signed in**.
+
+<Steps>
+<Step>
+
+### Request a link
+
+The gateway asks the station for a login link, showing **Asking the station for a login link…**.
+
+</Step>
+<Step>
+
+### Finish in the browser
+
+As soon as the link arrives the browser opens the station's login page in a new tab (**A browser tab opened with the station's login page. Finish there.**). The dialog also shows the link with a copy button, for when the tab did not open.
+
+- A station with a device code shows the **Verification code** with a copy button: enter it on the authorization page.
+- A station that finishes through a callback to this machine (such as Codex, Gemini, TRAE, CodeArts, LobsterAI) shows an **Authorization code or callback URL** field. When the browser is on another machine than Hoshimi, the callback cannot reach the server: after logging in, copy the whole final callback URL from the browser's address bar, paste it here and click **Submit code**. Anthropic also accepts `code#state`.
+- The dialog ends with **This sign-in expires at …**.
+
+</Step>
+<Step>
+
+### Signed in
+
+When the station answers, the account is written to `config.json` and joins the account pool at once, with **Signed in as** *account id*. Click **Done** to close.
+
+</Step>
+</Steps>
+
+Closing the dialog, however it is closed, cancels a login still pending, so a late callback no longer saves an account. On failure the dialog shows the reason, and **Retry** starts over. Signing in again with the same station identity replaces the account rather than adding a second one.
+
+Cline has two login methods, chosen under **Cline login method** in the **Network** section of the Cline channel: **Device code (SDK)** (the default) or **Browser (extension)**. A change applies to later logins; existing accounts keep the identity they logged in with.
+
+The same logins work from the command line, which suits a server without a desktop:
+
+```bash
+hoshimi login            # list the stations that offer a login
+hoshimi login qoder      # open the login page and wait
+hoshimi login codex --no-open --manual   # print the link only and paste the callback by hand
+```
+
+Each station's login, models and caveats are in [Free stations](/docs/providers-stations); the EAC login is in [EAC](/docs/advanced-eac).
+
+## Add an account
+
+For a channel that takes an API key or other credential, click **Add account**. The form depends on the provider: the server builds it from the fields that provider actually accepts.
+
+- When a provider has several ways to authenticate, choose one under **Authentication method** first, such as Bedrock's **API key**, **AWS access keys**, **AWS profile**, **AWS default credentials**; Vertex's **API key**, **Google default credentials**, **Google service account file**; EAC's **Bundled EAC relay (GitHub sign-in)**, **Custom EAC worker relay**, **Direct EAC Bearer relay**.
+- Common fields are **API key**, **API base URL (optional)** (blank for the default endpoint), **Model IDs** (separated by spaces or commas, or a JSON array), **Protocol**, and fields of particular cloud services such as **Azure resource name**, **Deployment mapping (JSON)**, **Cloudflare account ID**, **AWS region (default: us-east-1)**.
+- Local servers (Ollama, LM Studio, llama.cpp) use **Local server (optional key)**; the gateway contacts a local server only after an account is added.
+- **Account ID (optional)**: left blank, the gateway names the account. A name the channel already has is refused.
+
+Click **Save account**. The gateway first lets the provider check the credential, then **appends** it to the channel's accounts in `config.json` (existing accounts are never replaced) and adds it to the running pool at once, with **Account** *id* **was added.** The key is kept in `config.json` and is never sent back to the browser.
+
+The `agg` aggregator's form is different: under **Station**, pick a station from the searchable list, or choose **Custom address…** and enter the station's OpenAI-compatible root in **Base URL**; then the **API key**. `hoshimi stations` lists the stations; see [Aggregator accounts](/docs/providers-agg).
+
+Which fields each cloud service needs is in [Cloud services](/docs/providers-cloud) and [Local and compatible endpoints](/docs/providers-local).
+
+## Accounts
+
+The **Accounts** section lists each account of the channel:
+
+- The account id.
+- A status line: when the token expires ("expires in 3 hours", "expired 2 days ago"; hover for the exact time), the balance (amount and unit, or the station's message), and why the account is held out of rotation and when it returns ("Rate limited, back in 10 minutes"). A failing account gets a second line with its last error.
+- On the right, today's tokens and when it was last used.
+- A state badge and a ⋮ menu.
+
+| State | Meaning |
+| --- | --- |
+| **Ready** | Usable |
+| **Needs login** | The station refused the refresh token; sign in again |
+| **Expired** | The token has expired |
+| **Resting** | Held out of rotation for a while, **Rate limited** or **Blocked by policy**; it returns by itself |
+| **Failing** | The last renewal failed; the next round tries again |
+
+How long an account rests follows the reset time the station gives, or an hour when it gives none. Holds are kept in memory and cleared by a restart. The full rotation and retry rules are in [Models and reasoning effort](/docs/advanced-models).
+
+An account's ⋮ menu:
+
+- **Renew now**: for an account with a refresh token; runs a renewal round for this channel.
+- **Forget**: after **Forget this account?**, the credential is removed from `config.json` and from the running pool. Sign in again to bring it back.
+
+<Callout type="warn" title="config.json is a credential store">
+
+Account keys and tokens are stored in plain text in `config.json` in the data folder (made readable by the owner only, where the system allows). Do not share a filled-in config file. `hoshimi config path` prints where it is; see [Data folder and paths](/docs/config-paths).
+
+</Callout>
+
+## Credential renewal
+
+With **Settings › Automation › Credential renewal** on (the default), the gateway starts 30 seconds after launch and goes over every account with a refresh token every 30 minutes, renewing those whose token expires within the hour or that record no expiry at all. The renewed token is written back to that account in `config.json`.
+
+- When the station refuses the refresh token (401/403, or a body that says the token is invalid), the account is marked **Needs login** and is not retried: sign in again.
+- Any other failure (network trouble, a station error) is marked **Failing** and retried on the next round.
+- **Renew now** and **Renew every account** run a round at once with the same rule as the timer: only accounts close to expiry are renewed.
+
+While timed renewal is on, the Channels page refreshes every 30 seconds, so renewal results show up by themselves.
+
+## Check-in and balances
+
+Some stations hand out free credits each day, claimed by a "check-in". With **Settings › Automation › Daily check-in** on (the default), the gateway checks in 30 seconds after launch and looks again every 24 hours, skipping a day (Beijing time, UTC+8, which the stations agree on) that is already covered. It goes one account after another, never several stations at once, to stay clear of the stations' risk controls. Stations without a check-in are skipped.
+
+- **Check in all** above the list claims for every account of every channel at once; **Claim now** in a channel's ⋮ menu claims for that channel only. Stations usually answer "already claimed" to a second try, so clicking again does no harm.
+- The status above the list reflects the daily timer only: **Done · time** when today's timed check-in got through, **Not yet today** otherwise.
+- **Recent check-ins** in the channel details lists its last 5 results: **Claimed** or **Failed**, the account, the station's message, the credits received (**+N**) and the time. Every check-in result is kept for 365 days and can be read from `GET /api/v1/credits/checkins`.
+
+Balances are asked of each station once when the Channels page opens (`GET /api/v1/credits`) and appear in each account's status line. Stations without a balance endpoint show none.
+
+## Today
+
+The **Today** section shows the channel's **Tokens**, **Calls**, **Cache hit** and **Failed** for today (the server's local day).
+
+## Allowance
+
+Many stations report the remaining allowance in rate-limit headers on every response. The gateway reads it off ordinary responses, with no extra requests; when there is a reading, the details show an **Allowance** section:
+
+| Item | Meaning |
+| --- | --- |
+| Allowance bar | The percentage left; red at 10% or less, amber at 25% or less |
+| **Remaining** | What is left / the limit |
+| **Reported in** | The header the reading came from |
+| **Updated** | When the last reading was taken; past five minutes the subtitle says **The last reading is more than five minutes old.** |
+| **Responses seen** | Responses read |
+| **Rate limited** | How many 429s |
+| **Credential refusals** | How many 401/403s |
+| **Server errors** | How many 5xx |
+
+The gateway takes the first remaining/limit header pair it can parse, in this order:
+
+| Remaining | Limit |
+| --- | --- |
+| `x-ratelimit-remaining-requests` | `x-ratelimit-limit-requests` |
+| `x-ratelimit-remaining` | `x-ratelimit-limit` |
+| `ratelimit-remaining-requests` | `ratelimit-limit-requests` |
+| `ratelimit-remaining` | `ratelimit-limit` |
+| `x-ratelimit-remaining-requests-day` | `x-ratelimit-limit-requests-day` |
+| `x-ratelimit-remaining-day` | `x-ratelimit-limit-day` |
+
+A malformed pair counts as "quota header unreadable". Readings are kept in memory only, and the interface shows the header names, never their raw values.
+
+## Network
+
+Each channel can have its own network route, overriding the global one in **Settings › Network**. Choose under **Route**:
+
+| Option | Effect |
+| --- | --- |
+| **Inherit global settings** | The default: use **Settings › Network** |
+| **Automatic (environment proxy)** | Reads the `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY` environment variables; **Use Windows system proxy when no environment proxy exists** can then be turned on |
+| **Direct** | No proxy at all |
+| **Proxy** | Enter an HTTP(S) or SOCKS5 address in **Proxy URL** and click **Save**; **Clear** goes back to inheriting |
+
+The route covers every request the gateway makes for this channel: model catalogue, inference, login, token refresh, balance and check-in. Once saved, a proxy address is never shown again, only **Proxy configured; save to replace it.** A proxy that cannot be reached never falls back to a direct connection.
+
+Under it, the section lists the channel's recent failed network operations: the operation (such as **Model catalogue**, **Inference**, **Token refresh**, **Check-in**), the kind of failure (such as **Connection timed out**, **Proxy connection failed**, **Region restriction**, **Browser authorization required**), the HTTP status and the time; hover for the host and the route used. Successful operations are not listed.
+
+The network settings in full are in [Network and proxies](/docs/config-network).

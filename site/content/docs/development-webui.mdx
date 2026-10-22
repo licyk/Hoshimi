@@ -1,0 +1,172 @@
+---
+title: "Web UI"
+description: "Vue 应用的结构与技术栈、由 OpenAPI 生成的类型、数据请求与实时连接、i18n、主题与设计令牌、图层与动效，以及由测试保证的布局规则。"
+icon: Layers
+---
+
+Web UI 位于 `hoshimi/webui/`，是一个 Vue 3 + Vite + TypeScript 应用，遵循与姊妹项目 Mizuoto 共用的 Material Design 3 体系。它只通过 HTTP 访问服务器；构建产物 `dist/` 随 Python 包发布，由服务器以静态文件提供。本页讲它的结构、它和服务器之间的契约，以及修改界面时必须遵守的规则——其中大部分由 `src/` 下的测试保证。
+
+## 技术栈与命令
+
+| 用途 | 依赖 |
+| --- | --- |
+| 框架与路由 | Vue 3、vue-router（hash 模式）、Pinia |
+| 组件 | `@material/web`（`md-*` 自定义元素）、`@lucide/vue` 图标、Roboto Flex 字体 |
+| 颜色 | `@material/material-color-utilities` |
+| 数据 | `@tanstack/vue-query`、`openapi-fetch` |
+| 内容 | markdown-it、highlight.js、pdfjs-dist（读取 PDF 附件） |
+| 测试 | Vitest、happy-dom、`@vue/test-utils`、vue-tsc |
+
+`package.json` 的脚本（在 `hoshimi/webui` 中用 `bun run <脚本>` 运行，或通过 `scripts/dev.py`）：
+
+| 脚本 | 作用 | 对应的 `dev.py` 任务 |
+| --- | --- | --- |
+| `dev` | Vite 开发服务器（端口 5173） | `web-dev`、`dev` |
+| `build` | `vue-tsc --noEmit` 后 `vite build` | `web` |
+| `build:only` | 只 `vite build`（CI 打包时类型检查已单独运行） | — |
+| `typecheck` | `vue-tsc --noEmit` | `test-web` 的一部分 |
+| `test` | `vitest run` | `test-web` 的一部分 |
+| `typegen` | `openapi-typescript openapi.json -o src/api/schema.d.ts` | `typegen` |
+
+## 源码布局
+
+| 路径 | 内容 |
+| --- | --- |
+| `src/main.ts` | 创建应用：Pinia、路由、Vue Query；加载 `theme/tokens.css` 并测量滚动条 |
+| `src/App.vue`、`src/router.ts` | 外壳与导航目的地；路由表 |
+| `src/views/` | 六个页面：概览、模型、渠道、用量、Playground、设置 |
+| `src/components/` | 跨页面的组合组件（添加账号、登录对话框、渠道详情、实时调用……），`components/chat/` 是 Playground 的消息 |
+| `src/ui/` | 共享组件库，由 `ui/index.ts` 导出；还有 `layers.ts`、`motion/` |
+| `src/api/` | `client.ts`（openapi-fetch 客户端）、`baseUrl.ts`、`sse.ts`、生成的 `schema.d.ts`、`types.ts`、`queries/` |
+| `src/stores/` | `auth`（访问密钥）、`preferences`（主题、语言、动效）、`live`（实时调用）、`chat`（Playground） |
+| `src/i18n/` | `en.ts`、`zh-CN.ts`、`ja.ts` 与 `index.ts` |
+| `src/theme/` | `scheme.ts`、`applyTheme.ts`、`tokens.css`、`scrollbars.ts`、`breakpoints.ts` |
+| `src/test/` | 测试环境：`setup.ts`（为 happy-dom 补上 `ElementInternals`）、`motion-zero.css`（所有动效时长为 0） |
+
+模块之间一律用 `@/` 别名导入（`@/` 指向 `src/`），不写相对路径。
+
+## 部署根路径与路由
+
+界面不编译进任何 API 地址：
+
+- Vite 的 `base` 是 `./`，资源用相对路径，同一份构建可以放在根路径，也可以放在反向代理的子路径下。
+- `src/api/baseUrl.ts` 从当前脚本的 URL 推导部署根：脚本在 `<根>/assets/` 下，取 `/assets/` 之前的部分。所以服务器使用 `api_prefix` 或位于反向代理之后时，界面无需改动。
+- 路由使用 hash 模式（`#/overview`），不需要服务器做任何重写。`/channels/:id` 把选中的渠道放进地址，刷新或返回手势都能回到原处。
+
+## 与服务器的契约：生成的类型
+
+界面的 TypeScript 类型来自服务器的 OpenAPI 文档。改了管理 API 的请求或响应模型后，重新生成并提交：
+
+```bash
+python scripts/dev.py typegen
+```
+
+它把 `scripts/generate_openapi.py` 的输出写进临时的 `hoshimi/webui/openapi.json`，运行 `bun x openapi-typescript` 生成 `src/api/schema.d.ts`，再删掉临时文件。手动做同一件事：
+
+```bash
+python scripts/generate_openapi.py > hoshimi/webui/openapi.json
+cd hoshimi/webui && bun run typegen
+```
+
+- `generate_openapi.py` 用空设置和一个临时数据目录构建应用，所以生成的文档只描述数据的形状，与本机的配置无关。
+- `openapi.json` 被 `.gitignore` 排除；`schema.d.ts` 要提交。
+- `python scripts/dev.py typegen-check` 重新生成后运行 `git diff --exit-code`，CI 用它在类型过期时失败。
+
+代码通过 `src/api/types.ts` 的别名使用这些类型（`S['SettingsView']` 等），通过 `client.ts` 导出的 `api`（openapi-fetch）发请求，并用 `unwrap()` 把失败变成带服务器消息的 `ApiError`。
+
+## 数据请求
+
+- **认证**：`api` 的中间件给每个请求加上 `Authorization: Bearer <访问密钥>`。密钥保存在浏览器的 `localStorage`（`hoshimi:access-token`）；服务器以 `auth_required` 回答 401 时，界面弹出输入访问密钥的对话框。
+- **查询**：`src/api/queries/` 按领域封装 Vue Query，查询键集中在 `queries/keys.ts`，层级结构，使某个前缀失效就使其下所有键失效。4xx 的 `ApiError` 不重试，其他失败最多重试 2 次；窗口获得焦点时不自动重新请求。
+- **实时数据**：`stores/live.ts` 维持唯一一条到 `GET /api/v1/stats/live` 的连接，它驱动顶栏的实时调用面板、**用量** 页面和 **概览** 页面的卡片。连接用 `fetch` 读取（`api/sse.ts`），因为 `EventSource` 不能在请求头里带访问密钥。REST 仍是事实来源：一次调用结束会使用量和渠道的查询失效并重新请求；断线后以 1、2、4、8、15、30 秒的间隔重连，并从新的快照开始。
+
+## i18n
+
+界面文字放在 `src/i18n/` 的三个文件里：`en.ts` 是来源，`zh-CN.ts` 和 `ja.ts` 是翻译。组件里这样用：
+
+```ts
+import { useI18n } from '@/i18n';
+
+const { t } = useI18n();
+t('settings.listeningOn', { address: '127.0.0.1:10600' });
+```
+
+- `t(key, params)` 先找当前语言，找不到时用英文，再找不到时返回键本身；`{name}` 形式的占位符由 `params` 替换。
+- 语言偏好默认为 `auto`，跟随浏览器的首选语言（`zh*` 为简体中文，`ja*` 为日文，其他为英文），并在系统语言变化时更新。
+- `src/i18n/i18n.test.ts` 要求三个文件的键完全相同、每条消息的占位符也相同。加一条文字就要在三个文件里都加上。
+
+## 主题与设计令牌
+
+- **颜色**：所有颜色角色由一个种子色生成（`theme/scheme.ts`，默认 `#5267d8`，用户可以换），使用 Material 的 Tonal Spot 方案，有标准、中、高三档对比度。`theme/applyTheme.ts` 把它们写成 `:root` 上的 `--md-sys-color-*`，并跟随系统的明暗设置。
+- **静态令牌**：字体、形状、高度、动效时长与缓动、状态层等在 `theme/tokens.css`，变量名为 `--md-sys-*` 和 `--app-*`。
+- **规则**：组件只用令牌，不写字面量颜色、圆角或时长。`src/tokens.test.ts` 检查 `src/theme/` 之外的 `.vue` 和 `.css` 文件里没有十六进制颜色。
+- **图表**：数据系列按固定顺序使用 `--app-chart-1` 到 `--app-chart-8` 这八个经过色盲校验的颜色槽；图表带图例和悬停 / 聚焦提示。
+
+## 组件、图层与动效
+
+- **共享组件**：页面和组合组件从 `@/ui` 取用共享组件，不重新设定它们的样式（`ui/index.ts` 的约定）。页面的骨架是一行 `Toolbar`，下面是一列 `PageSection`；页面按内容区的宽度调整布局（`@container app-content`）。可能无限增长的列表放在 `ScrollArea` 或 `DataTable` 里（`DataTable` 可排序，超过 200 行时只渲染可见部分）。渠道页面是 `ListDetail` 布局。
+- **选择**：从少数几项中选一项（列表筛选、报表范围）用 `SegmentedControl`，放不下时变成下拉选择；日期用 `DatePicker`。
+- **图层**：浮在页面上的东西（对话框、侧边面板、菜单、打开的选择器）都通过 `ui/layers.ts` 叠放：后打开的画在上面；<kbd>Esc</kbd> 和点击外部只关闭最上层；模态层打开时，页面和它下面的层都设为 `inert`；层关闭后把焦点还给打开它的元素。
+- **动效**：页面之间用 View Transitions 淡入淡出；标签页和筛选沿共享的水平轴滑动（`AxisPanes`）；列表-详情的详情区在条目之间纵向移动（`shared-axis-y`）；一个视图替换另一个时淡入淡出（`FadeSwap`）；列表项使用 `list` 动效。**设置 › 外观 › 动画**（或系统的“减少动态效果”）把所有过渡换成简短的淡入淡出。
+
+## 布局规则
+
+`src/layout.test.ts` 把下面这些规则写成测试，违反任何一条 `bun run test` 就失败：
+
+| 规则 | 原因 |
+| --- | --- |
+| 把名字和控件放在同一行的行，其文字元素有 `min-width: 0`（测试列出了具体的组件和选择器） | 模型 ID 常常是一个很长、不能断开的词，没有它，按钮会被挤出视野 |
+| 模型和用量页面的列表用 `DataTable`，渠道详情的账号列表用 `ScrollArea` | 可能无限增长的列表在自身内部滚动，不把页面拉成无尽的一列 |
+| 任何组件的样式里都不写会滚动的 `overflow: auto` / `scroll`，也不写 `scrollbar-width`、`scrollbar-color`、`scrollbar-gutter`（只有 `ui/NavigationRail.vue` 例外，它有意隐藏滚动条） | 每个滚动区域都通过 `.app-scroll` 滚动，见下文 |
+| `.app-scroll` 纵向滚动、横向裁剪；`.app-scroll.app-scroll-x` 横向滚动、纵向不滚动，纵向滑动交给外层 | 一个区域只朝一个方向滚动 |
+| Markdown 的代码块和表格、`Stepper` 自己横向滚动（`app-scroll app-scroll-x`） | 有意比所在列更宽的内容 |
+| `tokens.css` 里没有作用于 `.app-scroll` 子元素的规则 | 这类规则会覆盖组件自己的外边距，使页面、菜单项、Playground 的对话列一个接一个地溢出 |
+| `ui/` 里的组件不在根元素上声明 `transition`（`AppCard`、`StackedBarChart` 例外） | 切换面板时由动效系统移动根元素，自己的 `transition` 会覆盖它 |
+| 每个页面的根元素、`AppDialog` 与 `SideSheet` 的 `.body`、`DataTable` 的 `.row`，其 `padding-inline-end` 用到 `var(--app-scroll-lane)` | 滚动条的通道只在末端一侧，末端的内边距要减去它，内容两侧才对称 |
+| Playground 路由带 `meta: { fill: true }`，外壳此时不保留滚动条通道，它的 `.thread` 用负的 `margin-inline-end` 伸进内边距；`ListDetail` 的详情区同理 | 占满整个框架的页面在自身内部滚动 |
+| 底部导航栏的目的地 `min-width: 0`，指示器 `max-width: 64px` 而不是固定 `width: 64px` | 六个 64px 的目的地比小屏手机还宽 |
+| 带 `viewBox` 的 SVG 不使用 `preserveAspectRatio="none"` | 图表按自己的尺寸绘制，被拉伸的图会把圆点变成椭圆 |
+
+### `.app-scroll`
+
+`theme/tokens.css` 中的 `.app-scroll` 让滚动条拥有自己的通道，位于内容旁边而不是覆盖在内容上：
+
+- Chromium 和 WebKit 使用带样式的滚动条，即使系统使用浮动滚动条（macOS、Windows 11、GTK），它也占据布局空间。设置了 `scrollbar-width` 或 `scrollbar-color` 后这些引擎会忽略 `::-webkit-scrollbar`，所以任何地方都不设置它们。
+- Firefox 使用细滚动条和主题颜色；Firefox 的滚动条浮动时，`theme/scrollbars.ts` 的 `applyScrollbars()` 把 `data-scrollbars` 设为 `overlay`，通道宽度设为 0。
+- 没有溢出时也保留滚动条的位置（`scrollbar-gutter: stable`），滚动条出现时内容不会移动；菜单和选择器用 `app-scroll-auto` 放弃这个位置。
+- `--app-scroll-lane` 是通道实际占用的宽度（启动时测量）；`--app-scroll-head` 让纵向轨道从吸顶标题下方开始，`--app-scroll-inset` 让滑块避开圆角。
+
+单元测试检查的是源码；真实浏览器中的横向溢出由 `scripts/check_layout.py` 检查，见[测试](/docs/development-testing)。
+
+## 加一个页面
+
+<Steps>
+<Step>
+
+### 写视图
+
+在 `src/views/` 加一个 `<名称>View.vue`。根元素的类要在 `padding-inline-end` 中减去 `var(--app-scroll-lane)`，页面由 `Toolbar` 和 `PageSection` 组成，组件从 `@/ui` 取用。
+
+</Step>
+<Step>
+
+### 加路由与导航
+
+在 `src/router.ts` 加一条懒加载的路由；在 `src/App.vue` 的导航目的地中加一项，图标取自 `@/ui` 导出的 `icons`。
+
+</Step>
+<Step>
+
+### 加文字
+
+在 `en.ts`、`zh-CN.ts`、`ja.ts` 中加上 `nav.<名称>` 和页面用到的所有键。
+
+</Step>
+<Step>
+
+### 检查
+
+运行 `python scripts/dev.py test-web`；把新页面的路径加入 `scripts/check_layout.py` 的 `PAGES`，在真实浏览器里检查一遍；页面用到新的 API 时先运行 `typegen`。最后在[使用教程](/docs/guide)中为它写一页，中英文都要写。
+
+</Step>
+</Steps>

@@ -1,0 +1,278 @@
+---
+title: "OpenAI-compatible API"
+description: "Reference for the OpenAI-compatible endpoints under /v1: request fields, responses and stream events of Chat Completions and Responses, the model list, model routing, how reasoning effort is mapped, and classification."
+icon: FileJson
+---
+
+These endpoints serve OpenAI-compatible clients at `http://127.0.0.1:10600/v1`, authenticated with the model API key (see [API overview](/docs/api)). Usage examples are in [OpenAI SDKs and curl](/docs/clients-openai).
+
+| Method and path | Purpose |
+| --- | --- |
+| `POST /v1/chat/completions` | Chat Completions; streams when `stream` is absent |
+| `POST /v1/responses` | Responses, stateless, converted to Chat internally; streams when `stream` is absent |
+| `GET /v1/models` | The model catalogue |
+| `GET /v1/classifiers` | Available classifiers |
+| `POST /v1/classify` | Answer questions with a classifier |
+
+The inference endpoints and `/v1/messages` share one model catalogue and the same account rotation, retries and usage recording. Every call is recorded on the **Usage** page, with the origin `chat`, `responses` or `classify`.
+
+## Chat Completions
+
+`POST /v1/chat/completions`
+
+### Request
+
+The body is a standard Chat Completions object. The fields Hoshimi reads itself:
+
+| Field | Notes |
+| --- | --- |
+| `model` | The model name; see "Model routing" below. When absent, `server.default_model` is used; with no default model either, the answer is `400` (`Missing 'model' field.`) |
+| `messages` | The whole conversation; Hoshimi keeps no history |
+| `stream` | Defaults to `true`. Send `false` explicitly to get one JSON object |
+| `reasoning_effort` | The effort level; see "Reasoning effort" below |
+| `max_tokens` / `max_completion_tokens` | The output ceiling; rewritten by the effort budget when an effort is given, see below |
+| `tools` / `tool_choice` | `function` tools; `tool_choice` is `auto`, `none`, `required` or a named function |
+
+Other fields (`temperature`, `top_p`, `stop` and so on) go to the upstream's adapter, and whether they take effect depends on the upstream protocol and model. Message content may include `image_url` parts (a `data:` URL or an HTTP(S) address); only models that read images understand them.
+
+### Non-streaming response
+
+```json
+{
+  "id": "chatcmpl_e1cd177a2e2c4cf69f9cdf7d7ccf87ba",
+  "object": "chat.completion",
+  "created": 1792685596,
+  "model": "<model from the request>",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Hi! What can I help you with today?"
+      },
+      "finish_reason": "stop",
+      "logprobs": null
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 826,
+    "completion_tokens": 13,
+    "total_tokens": 839,
+    "prompt_tokens_details": {"cached_tokens": 768, "cache_write_tokens": 0},
+    "completion_tokens_details": {"reasoning_tokens": 0}
+  }
+}
+```
+
+- `model` echoes the model name from the request, `provider/` prefix included.
+- `message` may also carry `reasoning_content` (the reasoning text), `reasoning_details` (structured reasoning data from the upstream) and `tool_calls`.
+- `finish_reason` is `stop`, `tool_calls` or `length`.
+- The `usage` details depend on what the upstream reports; with no usage from the upstream every count is `0`.
+
+### Streaming response
+
+```text
+data: {"id":"chatcmpl_…","object":"chat.completion.chunk","created":…,"model":"…","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {…,"choices":[{"index":0,"delta":{"reasoning_content":"…"},"finish_reason":null}]}
+
+data: {…,"choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}
+
+data: {…,"choices":[],"usage":{"prompt_tokens":830,"completion_tokens":5,"total_tokens":835,…}}
+
+data: {…,"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+```
+
+- The first chunk carries only `role`. Later `delta`s carry `content`, `reasoning_content`, `reasoning_details` or `tool_calls`.
+- A tool call's first chunk has its `id`, `type` and `function.name`; later chunks append `function.arguments` by `index`.
+- When the upstream reports usage, one chunk has empty `choices` and a `usage` object; `stream_options` is not needed.
+- When the upstream fails mid-stream, Hoshimi sends `data: {"error": {"message": "…", "type": "upstream_error"}}` and ends without `[DONE]`.
+
+## Responses
+
+`POST /v1/responses`
+
+Hoshimi's Responses is stateless: the request is converted to Chat Completions, routed exactly like Chat, and the result converted back to the Responses format. Send the whole conversation in `input` every time.
+
+### Request fields
+
+| Field | Handling |
+| --- | --- |
+| `model` | As for Chat Completions; may be omitted to use the default model |
+| `input` | A string (one user message) or an array of items, see the next table |
+| `instructions` | Becomes a system message at the front |
+| `stream` | Defaults to `true` |
+| `max_output_tokens` | Becomes `max_tokens` |
+| `temperature`, `top_p` | Passed through |
+| `tools` | Only `type: "function"` tools (`name`, `description`, `parameters`); other types are dropped |
+| `tool_choice` | `auto`, `none`, `required`, or `{"type": "function", "name": "…"}` |
+| `reasoning.effort` | The effort level |
+| `previous_response_id` | Refused with `400` (`invalid_input`), asking for the whole conversation in `input` |
+| `text.format` (any type other than `text`) | Refused with `400` (`invalid_input`): structured output is not supported |
+
+`store`, `include` and other fields are ignored.
+
+Items in an `input` array:
+
+| Item | Becomes |
+| --- | --- |
+| `{"role": "user", "content": …}` (or `type: "message"`) | A user message; `input_text` and `input_image` (with a string `image_url`) parts are kept |
+| `role` `system` or `developer` | A system message (text only) |
+| `role` `assistant` | An assistant message (text only) |
+| `{"type": "function_call", "call_id", "name", "arguments"}` | An assistant tool call |
+| `{"type": "function_call_output", "call_id", "output"}` | A tool result |
+| `{"type": "reasoning", …}` | Reasoning data from the previous turn, handed back to the upstream (its `provider_details` when present) |
+
+Put the previous response's `output` items back into `input` unchanged, then append the `function_call_output` items, to carry tool calls and reasoning forward.
+
+### Response
+
+```json
+{
+  "id": "resp_3510bef283d648b98e2cdaf46ec132db",
+  "object": "response",
+  "created_at": 1792685597,
+  "status": "completed",
+  "model": "<model from the request>",
+  "output": [
+    {
+      "type": "message",
+      "id": "msg_3510bef283d648b98e2cdaf46ec132db",
+      "status": "completed",
+      "role": "assistant",
+      "content": [{"type": "output_text", "text": "Hi! How can I help you today?", "annotations": []}]
+    }
+  ],
+  "parallel_tool_calls": true,
+  "tool_choice": "auto",
+  "tools": [],
+  "metadata": {},
+  "usage": {
+    "input_tokens": 826,
+    "output_tokens": 12,
+    "total_tokens": 838,
+    "input_tokens_details": {"cached_tokens": 768},
+    "output_tokens_details": {"reasoning_tokens": 0}
+  }
+}
+```
+
+`output` may hold, in order:
+
+- `reasoning`: present when the model reasoned, with the reasoning text in `summary`; structured reasoning data from the upstream rides along in `provider_details`, and an upstream that itself speaks Responses has its own `reasoning` items passed through.
+- `message`: the answer text. Left out when there are tool calls and no text.
+- `function_call`: one item per tool call, with `call_id`, `name` and `arguments`.
+
+### Stream events
+
+Each event is a `data: {...}` line with a `type` and a `sequence_number` counting from 0, followed at the end by `data: [DONE]`:
+
+| Event | When |
+| --- | --- |
+| `response.created`, `response.in_progress` | At the start |
+| `response.output_item.added` | A reasoning, message or tool-call item begins |
+| `response.reasoning_summary_text.delta` / `.done` | Reasoning text |
+| `response.output_text.delta` / `.done` | Answer text |
+| `response.function_call_arguments.delta` / `.done` | Tool-call arguments |
+| `response.output_item.done` | An item ends |
+| `response.completed` | The full response object, with `usage` |
+| `response.failed` | The upstream failed; `response.error` says why |
+
+Content-part events such as `response.content_part.added` are not sent, so client helpers that need them (the OpenAI Python SDK's `responses.stream()`, for one) do not work; iterate the events directly.
+
+## Model list
+
+`GET /v1/models`
+
+```json
+{
+  "object": "list",
+  "data": [
+    {"id": "big-pickle", "object": "model", "created": 0, "owned_by": "opencode", "free": null, "display_name": "Big Pickle"}
+  ]
+}
+```
+
+| Field | Notes |
+| --- | --- |
+| `id` | The upstream's model name; a name several providers share is listed once (the first provider in order) |
+| `owned_by` | The id of the provider that serves it |
+| `free` | `true` when the station says calls are free, `false` when it says they cost, `null` when it says nothing (the usual case) |
+| `display_name` | The display name; equal to `id` when unknown |
+
+The `limit` query parameter (1–1000) returns the first `limit` models and caps the wait for providers to refresh their catalogues at two seconds: slow providers are represented by cached, configured or built-in ids while the refresh continues in the background. Claude Code's model discovery uses `?limit=1000`. Without `limit`, the full catalogue is returned.
+
+Model capabilities (vision, reasoning, tools, context length, effort options) are not here; see the management endpoint `GET /api/v1/models` in [Management API](/docs/api-management).
+
+## Model routing
+
+The `model` of a request is resolved like this:
+
+1. `provider/model`, where `provider` is an enabled provider id: that provider serves it, and everything after the first slash (further slashes included) is the upstream model name.
+2. Otherwise the first provider, in provider order, whose catalogue has the name.
+3. If none has it and only one provider is enabled, the name goes to that provider as is.
+4. Otherwise `404`, code `model_not_found`.
+
+When `model` is absent, `server.default_model` is used (**Settings** › **General** › **Default model**, or `hoshimi serve --default-model`).
+
+Once a provider is chosen, Hoshimi rotates and retries across its accounts. When the station answers 404/410 for a model on every account, the model is held out for a while (`503`, `model_unavailable`). See [Model and account behaviour](/docs/advanced-models).
+
+## Reasoning effort
+
+`reasoning_effort` (Chat) and `reasoning.effort` (Responses) follow these rules. A request without an effort level is not touched, and a caller's own `max_tokens` stays as it is.
+
+**Models with their own thinking menu** (the **Models** page shows several levels, for example `disabled` / `low` / `high` / `max`): a level on the menu is used as is; anything else goes through these aliases:
+
+| Request | Becomes |
+| --- | --- |
+| `minimal`, `light` | `low` |
+| `balanced` | `medium` |
+| `deep` | `high` |
+| `xhigh` | `max` |
+
+If the result is still not on the menu, the model's default level is used. The chosen level is written into the upstream request the way the model declares; the output ceiling is then the smaller of the model's capacity and the request's own value, whatever the level.
+
+**Other reasoning models** use Hoshimi's three output budgets (one ceiling shared by thinking and the answer):
+
+| Level | Written in the request as | Output ceiling |
+| --- | --- | --- |
+| `light` | `light`, `minimal`, `low` | 2048 |
+| `balanced` (default) | `balanced`, `medium`, and anything unrecognised | 8192 |
+| `deep` | `deep`, `high`, `xhigh`, `max` | The model's maximum output |
+
+- For a model whose thinking cannot be turned off, each ceiling is doubled.
+- The ceiling never exceeds the model's maximum output or the request's own `max_tokens`, and never drops below 512.
+- For these models the `reasoning_effort` / `reasoning` fields are not sent upstream; only `max_tokens` controls the budget.
+
+For a model that neither reasons nor has a thinking menu, Hoshimi leaves the effort fields alone and passes them to the upstream as they are. Each model's levels and default are on the **Models** page, or in `efforts` and `effort_default` of `GET /api/v1/models`.
+
+## Classification
+
+TypeSafe classifiers are not chat models. They are not in `/v1/models` and are used through their own endpoints (with an account on the `typesafe` provider).
+
+```bash
+curl http://127.0.0.1:10600/v1/classifiers
+```
+
+```json
+{"data": [{"id": "typesafe/jev-latest", "owned_by": "typesafe"}]}
+```
+
+The body sent to `POST /v1/classify`:
+
+```json
+{
+  "model": "typesafe/jev-latest",
+  "state": {"…": "the conversation state, as TypeSafe defines it"},
+  "questions": {
+    "<question-name>": {"type": "bool"},
+    "<another-question-name>": {"type": "choice"}
+  }
+}
+```
+
+- `model` must be an id from `/v1/classifiers`; otherwise the answer is `404` (`Select a classifier from /v1/classifiers.`).
+- `state` is an object and `questions` a non-empty object; each question's `type` is `bool`, `score` or `choice`, and its other fields go to the upstream unchanged. Images are not supported.
+- The response is `{"provider", "model", "answers", "usage"}`: a `bool` answer is `{"type": "bool", "probability": …}`; a `score` answer carries `score` and `confidence`; a `choice` answer carries `choice`, `probabilities` and `confidence`.

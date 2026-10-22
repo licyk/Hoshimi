@@ -1,0 +1,144 @@
+---
+title: "环境变量"
+description: "Hoshimi 读取的全部环境变量：它自己的 HOSHIMI_DATA_DIR 与 HOSHIMI_LOG_LEVEL、决定默认数据目录和代理的标准变量、云 SDK 读取的凭据变量、Playground 工具运行命令时设置的变量，以及它刻意不读取的变量。"
+icon: Variable
+---
+
+Hoshimi 的设置都在 `config.json` 里，环境变量只决定两件事：**数据放在哪里**和**日志有多详细**。此外，它在选择默认数据目录和代理时会读取几个通用的系统变量。本页列出全部变量。
+
+## Hoshimi 自己的变量
+
+| 变量 | 默认值 | 作用 |
+| --- | --- | --- |
+| `HOSHIMI_DATA_DIR` | 平台的用户数据目录（见下文） | 数据目录：配置文件、数据库和运行时文件都放在这里 |
+| `HOSHIMI_LOG_LEVEL` | `INFO` | 日志级别：`DEBUG`、`INFO`、`WARNING` 或 `ERROR`（不区分大小写） |
+
+所有命令（包括 `serve`）都读取这两个变量。
+
+### `HOSHIMI_DATA_DIR`
+
+设置后，Hoshimi 的全部数据一起搬到这个目录：
+
+| 文件 | 内容 |
+| --- | --- |
+| `config.json` | 配置，包括各渠道账户的凭据 |
+| `hoshimi.db` | 用量统计、签到记录、探测结果和 Playground 对话 |
+| `server.json` | 正在运行的服务器的主机、实际端口、URL 和 PID |
+| `catalog-cache/` | 模型目录的缓存 |
+| `workspace/` | Playground 工具的默认工作区（`playground.workspace` 留空时） |
+
+配置文件总是 `<数据目录>/config.json`，无法单独指定。路径中的 `~` 会展开，相对路径按当前工作目录解析成绝对路径。
+
+没有设置时，数据目录是：
+
+| 平台 | 默认数据目录 |
+| --- | --- |
+| Linux | `$XDG_DATA_HOME/hoshimi`；没有设置 `XDG_DATA_HOME` 时为 `~/.local/share/hoshimi` |
+| Windows | `%APPDATA%\hoshimi` |
+| macOS | `~/Library/Application Support/hoshimi` |
+
+常见用法：同一台机器上运行多个互不干扰的实例（各用一个数据目录和端口）、把数据放在另一块磁盘上、让系统服务使用固定的位置，或者在不影响日常数据的情况下试验：
+
+<Tabs items={["bash", "PowerShell"]}>
+<Tab value="bash">
+
+```bash
+export HOSHIMI_DATA_DIR=/srv/hoshimi
+hoshimi config path                 # /srv/hoshimi/config.json
+hoshimi serve --no-open
+
+# 只对一条命令生效：一个临时的、全新的实例
+HOSHIMI_DATA_DIR=$(mktemp -d) hoshimi serve --port 0
+```
+
+</Tab>
+<Tab value="PowerShell">
+
+```powershell
+$env:HOSHIMI_DATA_DIR = "D:\hoshimi"
+hoshimi config path                 # D:\hoshimi\config.json
+hoshimi serve --no-open
+```
+
+</Tab>
+</Tabs>
+
+<Callout type="warn" title="服务器和命令行要用同一个数据目录">
+
+`hoshimi config set`、`hoshimi login` 等命令修改的是它们自己看到的数据目录。服务器用了 `HOSHIMI_DATA_DIR` 时，在另一个终端里执行这些命令也要设置同样的值，否则改的是另一份配置。
+
+</Callout>
+
+数据目录里各文件的细节和从旧版本迁移见[数据目录](/docs/config-paths)。
+
+### `HOSHIMI_LOG_LEVEL`
+
+控制 Hoshimi 自己的日志（写到标准错误）。`--debug` 选项与 `DEBUG` 级别效果相同，只作用于那一条命令：
+
+```bash
+HOSHIMI_LOG_LEVEL=WARNING hoshimi serve     # 只显示警告和错误
+HOSHIMI_LOG_LEVEL=DEBUG hoshimi check       # 等同于 hoshimi check --debug
+```
+
+## 查看当前的值
+
+```bash
+$ hoshimi env
+```
+
+第一张表列出上面两个变量和说明；当前环境中设置了以 `HOSHIMI_` 开头的变量时，第二张表 **Set now** 列出它们的值（名字含 `TOKEN` 或 `KEY` 的显示为 `***`）。`hoshimi env --json` 输出 `{"known": {…}, "set": {…}}`。见[命令参考](/docs/cli-commands)。
+
+## Hoshimi 还会读取的系统变量
+
+| 变量 | 什么时候读取 | 作用 |
+| --- | --- | --- |
+| `XDG_DATA_HOME` | Linux，没有设置 `HOSHIMI_DATA_DIR` 时 | 默认数据目录为 `$XDG_DATA_HOME/hoshimi` |
+| `APPDATA` | Windows，没有设置 `HOSHIMI_DATA_DIR` 时 | 默认数据目录为 `%APPDATA%\hoshimi` |
+| `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY`、`NO_PROXY` | 网络模式为 `auto`（默认）时，每次连接上游 | 选择代理，见下文 |
+
+### 代理变量
+
+网络模式为 `auto`（默认）时，Hoshimi 对每个上游请求读取代理变量：
+
+- `https://` 地址用 `HTTPS_PROXY`，`http://` 地址用 `HTTP_PROXY`；没有设置时用 `ALL_PROXY`。
+- `NO_PROXY` 中列出的主机直接连接：可以写主机名、域名后缀、带端口的主机、CIDR 网段，或 `*`（全部直连），用逗号或分号分隔。
+- 小写形式（`https_proxy` 等）优先于大写形式。
+- 回环地址（本机）总是直接连接。
+- 代理地址必须是有效的 HTTP(S) 或 SOCKS5 URL；写错时会报错，而不是悄悄忽略。
+- 没有任何代理变量时，在 Windows 上可以用 `network.system_proxy: true` 回退到系统代理。
+
+网络模式为 `direct`（直连）或 `proxy`（指定代理）时不读取这些变量，`NO_PROXY` 也只作用于自动模式。全局和单个渠道的网络设置见[网络与代理](/docs/config-network)。
+
+```bash
+HTTPS_PROXY=http://127.0.0.1:7890 NO_PROXY=localhost,192.168.0.0/16 hoshimi serve
+```
+
+### 云 SDK 读取的变量
+
+两种云平台的认证方式交给官方 SDK，由 SDK 按它自己的规则读取环境变量：
+
+- **Vertex，`auth: "adc"`**：Google 的应用默认凭据（ADC），例如 `GOOGLE_APPLICATION_CREDENTIALS` 指向的服务账户文件。需要 `hoshimi[google]`。
+- **Amazon Bedrock，AWS 默认凭据**（账户里没有写访问密钥或 profile 时）：AWS SDK 的默认凭据链，例如 `AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY`、`AWS_PROFILE` 和共享配置文件。需要 `hoshimi[bedrock]`。
+
+这些变量必须出现在启动 Hoshimi 的进程的环境里，以系统服务运行时尤其要注意。账户写法见[云平台](/docs/providers-cloud)。
+
+## Playground 工具运行命令时设置的变量
+
+Playground 的 **运行命令** 和 **后台命令** 工具在服务器进程的环境基础上，额外设置下面这些变量，让命令输出适合模型阅读、不会停下来等待输入：
+
+| 变量 | 值 | 目的 |
+| --- | --- | --- |
+| `PAGER` | `cat` | 不进入分页器 |
+| `GIT_PAGER` | `cat` | git 不进入分页器 |
+| `NO_COLOR` | `1` | 不输出颜色 |
+| `CLICOLOR` | `0` | 不输出颜色 |
+| `TERM` | `dumb` | 不使用终端控制序列 |
+| `GIT_TERMINAL_PROMPT` | `0` | git 不在终端里询问用户名和密码 |
+
+命令在 Linux 和 macOS 上用 `bash -c`（没有 bash 时用 `/bin/sh -c`）运行，在 Windows 上用 PowerShell 运行。工具的完整说明见 [Playground 工具](/docs/guide-agent)。
+
+## 不会读取的变量
+
+- **渠道的密钥变量。** `hoshimi stations` 的 **Key env** 一列（如 `ZENMUX_API_KEY`）以及其他上游工具惯用的密钥变量，Hoshimi 都不读取。渠道的凭据只来自 `config.json` 中的账户，避免出现第二个来源。
+- **`HOSHIMI_CONFIG`。** 旧版本用它指定配置文件，已经移除；配置文件总是 `<数据目录>/config.json`。仍然设置着它不会有任何效果。
+- **设置项。** 没有与 `config.json` 键对应的环境变量（例如不存在 `HOSHIMI_PORT`）。要临时改变端口、密钥等，用 `hoshimi serve` 的选项；要长期修改，用 `hoshimi config set` 或 Web UI。

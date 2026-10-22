@@ -1,0 +1,172 @@
+---
+title: "Web UI"
+description: "How the Vue app is built and laid out, types generated from OpenAPI, data fetching and the live connection, i18n, theme and design tokens, layers and motion, and the layout rules the tests enforce."
+icon: Layers
+---
+
+The Web UI lives in `hoshimi/webui/`: a Vue 3 + Vite + TypeScript app following the Material Design 3 system it shares with its sister project Mizuoto. It talks to the server over HTTP only; the built `dist/` ships in the Python package and the server serves it as static files. This page covers its structure, its contract with the server, and the rules a change to the interface must keep, most of them enforced by tests under `src/`.
+
+## Stack and commands
+
+| For | Dependencies |
+| --- | --- |
+| Framework and routing | Vue 3, vue-router (hash mode), Pinia |
+| Components | `@material/web` (`md-*` custom elements), `@lucide/vue` icons, the Roboto Flex font |
+| Colour | `@material/material-color-utilities` |
+| Data | `@tanstack/vue-query`, `openapi-fetch` |
+| Content | markdown-it, highlight.js, pdfjs-dist (reading PDF attachments) |
+| Tests | Vitest, happy-dom, `@vue/test-utils`, vue-tsc |
+
+The `package.json` scripts (run with `bun run <script>` in `hoshimi/webui`, or through `scripts/dev.py`):
+
+| Script | What it does | `dev.py` task |
+| --- | --- | --- |
+| `dev` | The Vite dev server (port 5173) | `web-dev`, `dev` |
+| `build` | `vue-tsc --noEmit`, then `vite build` | `web` |
+| `build:only` | `vite build` alone (CI packaging, where the type-check already ran separately) | — |
+| `typecheck` | `vue-tsc --noEmit` | part of `test-web` |
+| `test` | `vitest run` | part of `test-web` |
+| `typegen` | `openapi-typescript openapi.json -o src/api/schema.d.ts` | `typegen` |
+
+## Source layout
+
+| Path | Contents |
+| --- | --- |
+| `src/main.ts` | Creates the app: Pinia, the router, Vue Query; loads `theme/tokens.css` and measures the scrollbars |
+| `src/App.vue`, `src/router.ts` | The shell and its navigation destinations; the route table |
+| `src/views/` | The six pages: Overview, Models, Channels, Usage, Playground, Settings |
+| `src/components/` | Composites used across pages (adding an account, the login dialog, channel details, live calls…); `components/chat/` holds the Playground's messages |
+| `src/ui/` | The shared component library, exported from `ui/index.ts`; also `layers.ts` and `motion/` |
+| `src/api/` | `client.ts` (the openapi-fetch client), `baseUrl.ts`, `sse.ts`, the generated `schema.d.ts`, `types.ts`, `queries/` |
+| `src/stores/` | `auth` (the access key), `preferences` (theme, language, motion), `live` (live calls), `chat` (the Playground) |
+| `src/i18n/` | `en.ts`, `zh-CN.ts`, `ja.ts` and `index.ts` |
+| `src/theme/` | `scheme.ts`, `applyTheme.ts`, `tokens.css`, `scrollbars.ts`, `breakpoints.ts` |
+| `src/test/` | The test environment: `setup.ts` (gives happy-dom an `ElementInternals`), `motion-zero.css` (every motion duration at zero) |
+
+Modules always import each other through the `@/` alias (`@/` is `src/`), never by a relative path.
+
+## Deployment root and routing
+
+No API address is compiled into the interface:
+
+- Vite's `base` is `./`, so assets use relative paths and the same build works at the root or under a reverse proxy's sub-path.
+- `src/api/baseUrl.ts` derives the deployment root from the URL of the running script: the script is under `<root>/assets/`, so the root is everything before `/assets/`. When the server uses `api_prefix` or sits behind a reverse proxy, the interface needs no change.
+- Routing uses hash mode (`#/overview`) and needs no server-side rewrites. `/channels/:id` keeps the chosen channel in the address, so a reload or the back gesture returns to it.
+
+## The contract with the server: generated types
+
+The interface's TypeScript types come from the server's OpenAPI document. After changing a management API request or response model, regenerate and commit:
+
+```bash
+python scripts/dev.py typegen
+```
+
+It writes the output of `scripts/generate_openapi.py` to a temporary `hoshimi/webui/openapi.json`, runs `bun x openapi-typescript` to produce `src/api/schema.d.ts`, then deletes the temporary file. The same by hand:
+
+```bash
+python scripts/generate_openapi.py > hoshimi/webui/openapi.json
+cd hoshimi/webui && bun run typegen
+```
+
+- `generate_openapi.py` builds the app with empty settings and a throwaway data folder, so the document describes shapes only, not this machine's configuration.
+- `openapi.json` is excluded by `.gitignore`; `schema.d.ts` is committed.
+- `python scripts/dev.py typegen-check` regenerates and then runs `git diff --exit-code`; CI uses it to fail when the types are stale.
+
+Code refers to these types through the aliases in `src/api/types.ts` (`S['SettingsView']` and so on), sends requests with the `api` client (openapi-fetch) exported by `client.ts`, and uses `unwrap()` to turn a failure into an `ApiError` carrying the server's message.
+
+## Data fetching
+
+- **Authentication**: the `api` middleware adds `Authorization: Bearer <access key>` to every request. The key is kept in the browser's `localStorage` (`hoshimi:access-token`); when the server answers 401 with `auth_required`, the interface opens the access-key dialog.
+- **Queries**: `src/api/queries/` wraps Vue Query per area, with the query keys collected in `queries/keys.ts`, hierarchically, so invalidating a prefix invalidates every key under it. A 4xx `ApiError` is not retried, other failures at most twice; a window regaining focus does not refetch.
+- **Live data**: `stores/live.ts` keeps the one connection to `GET /api/v1/stats/live`, which drives the top bar's live-calls sheet, the **Usage** page and the **Overview** card. It is read with `fetch` (`api/sse.ts`), because `EventSource` cannot send the access key as a header. REST stays the source of truth: a finished call invalidates the usage and channel queries, which refetch; after a drop it reconnects at 1, 2, 4, 8, 15 and 30 second intervals and starts from a fresh snapshot.
+
+## i18n
+
+The interface text lives in three files in `src/i18n/`: `en.ts` is the source, `zh-CN.ts` and `ja.ts` are the translations. In a component:
+
+```ts
+import { useI18n } from '@/i18n';
+
+const { t } = useI18n();
+t('settings.listeningOn', { address: '127.0.0.1:10600' });
+```
+
+- `t(key, params)` looks in the current language, then English, then returns the key itself; `{name}` placeholders are filled from `params`.
+- The language preference defaults to `auto`, which follows the browser's first language (`zh*` is Simplified Chinese, `ja*` Japanese, anything else English) and updates when the system language changes.
+- `src/i18n/i18n.test.ts` requires the three files to have exactly the same keys and every message the same placeholders. A new string goes into all three files.
+
+## Theme and design tokens
+
+- **Colour**: every colour role is generated from one seed colour (`theme/scheme.ts`, `#5267d8` by default, which users can change) with Material's Tonal Spot scheme, at standard, medium or high contrast. `theme/applyTheme.ts` writes them as `--md-sys-color-*` on `:root` and follows the system's light or dark setting.
+- **Static tokens**: type, shape, elevation, motion durations and easing, state layers and the rest are in `theme/tokens.css`, named `--md-sys-*` and `--app-*`.
+- **The rule**: components use tokens only, never a literal colour, radius or duration. `src/tokens.test.ts` checks that no `.vue` or `.css` file outside `src/theme/` contains a hex colour.
+- **Charts**: series take the eight colour-blind-checked slots `--app-chart-1` to `--app-chart-8` in a fixed order; charts carry a legend and a hover / focus tooltip.
+
+## Components, layers and motion
+
+- **Shared components**: pages and composites take shared components from `@/ui` and do not restyle them (the convention stated in `ui/index.ts`). A page is a `Toolbar` row over one column of `PageSection`s, and adapts to the content area's width (`@container app-content`). A list that can grow without bound sits in a `ScrollArea` or a `DataTable` (sortable, rendering only what is in view past 200 rows). Channels is a `ListDetail` layout.
+- **Choices**: one choice out of a few (a list filter, a report range) is a `SegmentedControl`, which becomes a select where it does not fit; days are picked with `DatePicker`.
+- **Layers**: everything that opens over the page (dialogs, sheets, menus, an open picker) stacks through `ui/layers.ts`: what opened later paints above; <kbd>Esc</kbd> and an outside click close the topmost layer alone; while a modal layer is open, the page and every layer under it are `inert`; a closing layer gives focus back to what opened it.
+- **Motion**: navigation fades through with View Transitions; tabs and filters slide along a shared horizontal axis (`AxisPanes`); a list-detail pane moves vertically between items (`shared-axis-y`); one view replacing another fades through (`FadeSwap`); list items use the `list` motion. **Settings › Appearance › Motion** (or the system's reduced-motion setting) turns every transition into a short fade.
+
+## Layout rules
+
+`src/layout.test.ts` writes these rules as tests; breaking any of them fails `bun run test`:
+
+| Rule | Why |
+| --- | --- |
+| In a row pairing a name with a control, the text element has `min-width: 0` (the test lists the components and selectors) | A model ID is often one long unbreakable word; without it, the buttons are pushed out of view |
+| The Models and Usage lists use `DataTable`; the channel details' account list uses `ScrollArea` | A list that can grow without bound scrolls inside itself instead of stretching the page into an endless column |
+| No component style sets a scrolling `overflow: auto` / `scroll`, nor `scrollbar-width`, `scrollbar-color` or `scrollbar-gutter` (except `ui/NavigationRail.vue`, which hides its scrollbar on purpose) | Every scrolling area scrolls through `.app-scroll`; see below |
+| `.app-scroll` scrolls down and clips sideways; `.app-scroll.app-scroll-x` scrolls sideways, never down, and passes vertical swipes on | An area scrolls in one direction |
+| Markdown's code blocks and tables and the `Stepper` scroll sideways on their own (`app-scroll app-scroll-x`) | Content that is wider than its column on purpose |
+| `tokens.css` has no rule aimed at the children of `.app-scroll` | Such a rule overrides the components' own margins, and a page, a menu item and the Playground's column overflowed one after another |
+| Components in `ui/` declare no `transition` on their root element (`AppCard` and `StackedBarChart` excepted) | A pane switch moves the root through the motion system, and the component's own `transition` would replace it |
+| Every page's root, the `.body` of `AppDialog` and `SideSheet`, and `DataTable`'s `.row` use `var(--app-scroll-lane)` in `padding-inline-end` | The scrollbar lane is on the end side only, so the end padding takes it out and content sits evenly between both sides |
+| The Playground route has `meta: { fill: true }`, the shell then keeps no lane, and its `.thread` reaches into the padding with a negative `margin-inline-end`; `ListDetail`'s detail pane does the same | A page that fills the frame scrolls inside itself |
+| Bottom-bar destinations have `min-width: 0`, and the indicator `max-width: 64px` rather than a fixed `width: 64px` | Six 64px destinations are wider than a small phone |
+| No SVG with a `viewBox` uses `preserveAspectRatio="none"` | Charts are drawn at their own size; a stretched one turns round points into ovals |
+
+### `.app-scroll`
+
+`.app-scroll` in `theme/tokens.css` gives an area's scrollbar a lane of its own beside the content rather than over it:
+
+- Chromium and WebKit use a styled scrollbar that takes layout space even where the system draws overlay scrollbars (macOS, Windows 11, GTK). These engines ignore `::-webkit-scrollbar` once `scrollbar-width` or `scrollbar-color` is set, so neither is set anywhere.
+- Firefox gets a thin scrollbar in the theme's colours; where Firefox's scrollbars float, `applyScrollbars()` in `theme/scrollbars.ts` sets `data-scrollbars` to `overlay` and the lane to 0.
+- The scrollbar's place is kept while nothing overflows (`scrollbar-gutter: stable`), so content does not shift when a scrollbar appears; menus and pickers give it up with `app-scroll-auto`.
+- `--app-scroll-lane` is the width the lane actually takes (measured at startup); `--app-scroll-head` starts the vertical track below a sticky header, and `--app-scroll-inset` keeps the thumb clear of rounded corners.
+
+The unit tests read the source; sideways overflow in real browsers is checked by `scripts/check_layout.py`, see [Testing](/docs/development-testing).
+
+## Adding a page
+
+<Steps>
+<Step>
+
+### Write the view
+
+Add a `<Name>View.vue` in `src/views/`. Its root class takes `var(--app-scroll-lane)` out of its `padding-inline-end`; the page is built from `Toolbar` and `PageSection`, with components from `@/ui`.
+
+</Step>
+<Step>
+
+### Add the route and the navigation
+
+Add a lazily loaded route in `src/router.ts`, and a destination in `src/App.vue`, with an icon from the `icons` that `@/ui` exports.
+
+</Step>
+<Step>
+
+### Add the text
+
+Add `nav.<name>` and every key the page uses to `en.ts`, `zh-CN.ts` and `ja.ts`.
+
+</Step>
+<Step>
+
+### Check
+
+Run `python scripts/dev.py test-web`; add the new page's path to `PAGES` in `scripts/check_layout.py` and check it in real browsers; if the page uses a new API, run `typegen` first. Finally, give it a page in the [Web UI guides](/docs/guide), in both languages.
+
+</Step>
+</Steps>

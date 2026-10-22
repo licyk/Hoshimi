@@ -1,0 +1,144 @@
+---
+title: "Environment variables"
+description: "Every environment variable Hoshimi reads: its own HOSHIMI_DATA_DIR and HOSHIMI_LOG_LEVEL, the standard variables behind the default data folder and proxies, the credential variables the cloud SDKs read, the variables set for the Playground's commands, and the ones it deliberately ignores."
+icon: Variable
+---
+
+Hoshimi's settings live in `config.json`; environment variables decide only two things: **where the data lives** and **how much is logged**. Beyond that, a few standard system variables are read to choose the default data folder and proxies. This page lists them all.
+
+## Hoshimi's own variables
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `HOSHIMI_DATA_DIR` | The platform's user data folder (see below) | The data folder: the configuration file, the database and the runtime file all live here |
+| `HOSHIMI_LOG_LEVEL` | `INFO` | Log level: `DEBUG`, `INFO`, `WARNING` or `ERROR` (case-insensitive) |
+
+Every command, `serve` included, reads both.
+
+### `HOSHIMI_DATA_DIR`
+
+When set, all of Hoshimi's data moves to this folder together:
+
+| File | Content |
+| --- | --- |
+| `config.json` | The configuration, including channel account credentials |
+| `hoshimi.db` | Usage statistics, check-in records, probe verdicts and Playground conversations |
+| `server.json` | The running server's host, actual port, URL and PID |
+| `catalog-cache/` | Cached model catalogues |
+| `workspace/` | The Playground tools' default workspace (when `playground.workspace` is empty) |
+
+The configuration file is always `<data folder>/config.json` and cannot be set on its own. A `~` in the path is expanded, and a relative path is resolved against the current working directory.
+
+When it is not set, the data folder is:
+
+| Platform | Default data folder |
+| --- | --- |
+| Linux | `$XDG_DATA_HOME/hoshimi`; `~/.local/share/hoshimi` when `XDG_DATA_HOME` is not set |
+| Windows | `%APPDATA%\hoshimi` |
+| macOS | `~/Library/Application Support/hoshimi` |
+
+Typical uses: several independent instances on one machine (each with its own data folder and port), keeping the data on another disk, giving a system service a fixed location, or experimenting without touching your everyday data:
+
+<Tabs items={["bash", "PowerShell"]}>
+<Tab value="bash">
+
+```bash
+export HOSHIMI_DATA_DIR=/srv/hoshimi
+hoshimi config path                 # /srv/hoshimi/config.json
+hoshimi serve --no-open
+
+# For one command only: a temporary, brand-new instance
+HOSHIMI_DATA_DIR=$(mktemp -d) hoshimi serve --port 0
+```
+
+</Tab>
+<Tab value="PowerShell">
+
+```powershell
+$env:HOSHIMI_DATA_DIR = "D:\hoshimi"
+hoshimi config path                 # D:\hoshimi\config.json
+hoshimi serve --no-open
+```
+
+</Tab>
+</Tabs>
+
+<Callout type="warn" title="Use the same data folder for the server and the command line">
+
+`hoshimi config set`, `hoshimi login` and the other commands change the data folder they see. When the server runs with `HOSHIMI_DATA_DIR`, set the same value in any other terminal where you run these commands, or they change a different configuration.
+
+</Callout>
+
+The files in the data folder and migration from older releases are covered in [Data folder](/docs/config-paths).
+
+### `HOSHIMI_LOG_LEVEL`
+
+Controls Hoshimi's own logging (written to standard error). The `--debug` option has the same effect as `DEBUG`, for that one command:
+
+```bash
+HOSHIMI_LOG_LEVEL=WARNING hoshimi serve     # warnings and errors only
+HOSHIMI_LOG_LEVEL=DEBUG hoshimi check       # same as hoshimi check --debug
+```
+
+## Seeing the current values
+
+```bash
+$ hoshimi env
+```
+
+The first table lists the two variables above with their meaning; when any variable starting with `HOSHIMI_` is set in the current environment, a second table, **Set now**, shows their values (`***` for names containing `TOKEN` or `KEY`). `hoshimi env --json` prints `{"known": {…}, "set": {…}}`. See the [Command reference](/docs/cli-commands).
+
+## System variables Hoshimi also reads
+
+| Variable | When it is read | What it does |
+| --- | --- | --- |
+| `XDG_DATA_HOME` | On Linux, when `HOSHIMI_DATA_DIR` is not set | The default data folder becomes `$XDG_DATA_HOME/hoshimi` |
+| `APPDATA` | On Windows, when `HOSHIMI_DATA_DIR` is not set | The default data folder is `%APPDATA%\hoshimi` |
+| `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` | On every upstream connection while the network mode is `auto` (the default) | Choose a proxy, see below |
+
+### Proxy variables
+
+With the network mode `auto` (the default), Hoshimi reads the proxy variables for each upstream request:
+
+- `https://` addresses use `HTTPS_PROXY`, `http://` addresses `HTTP_PROXY`; when that is not set, `ALL_PROXY`.
+- Hosts listed in `NO_PROXY` are reached directly: host names, domain suffixes, hosts with a port, CIDR networks, or `*` (everything direct), separated by commas or semicolons.
+- The lowercase forms (`https_proxy` and so on) take precedence over the uppercase ones.
+- Loopback (this machine) is always reached directly.
+- A proxy address must be a valid HTTP(S) or SOCKS5 URL; a mistake is reported as an error, not silently ignored.
+- With no proxy variable at all, `network.system_proxy: true` falls back to the system proxy on Windows.
+
+With the network mode `direct` or `proxy` (a configured proxy), these variables are not read, and `NO_PROXY` applies to automatic mode only. Global and per-channel network settings are in [Network and proxies](/docs/config-network).
+
+```bash
+HTTPS_PROXY=http://127.0.0.1:7890 NO_PROXY=localhost,192.168.0.0/16 hoshimi serve
+```
+
+### Variables read by the cloud SDKs
+
+Two cloud platforms leave authentication to the official SDK, which reads environment variables by its own rules:
+
+- **Vertex with `auth: "adc"`**: Google's application default credentials (ADC), such as a service account file named by `GOOGLE_APPLICATION_CREDENTIALS`. Needs `hoshimi[google]`.
+- **Amazon Bedrock with AWS default credentials** (no access keys or profile in the account): the AWS SDK's default credential chain, such as `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_PROFILE` and the shared configuration files. Needs `hoshimi[bedrock]`.
+
+These variables must be in the environment of the process that runs Hoshimi, which matters especially for a system service. The account formats are in [Cloud platforms](/docs/providers-cloud).
+
+## Variables set for the Playground's commands
+
+The Playground's **Run commands** and **Background commands** tools add these variables on top of the server process's environment, so command output suits a model and nothing stops to wait for input:
+
+| Variable | Value | Why |
+| --- | --- | --- |
+| `PAGER` | `cat` | No pager |
+| `GIT_PAGER` | `cat` | No pager for git |
+| `NO_COLOR` | `1` | No colour |
+| `CLICOLOR` | `0` | No colour |
+| `TERM` | `dumb` | No terminal control sequences |
+| `GIT_TERMINAL_PROMPT` | `0` | git does not prompt for a user name or password |
+
+Commands run with `bash -c` on Linux and macOS (`/bin/sh -c` when there is no bash) and with PowerShell on Windows. The tools are covered in full in [Playground tools](/docs/guide-agent).
+
+## Variables Hoshimi does not read
+
+- **Channel key variables.** The **Key env** column of `hoshimi stations` (such as `ZENMUX_API_KEY`) and other key variables upstream tools use are not read. Channel credentials come only from the accounts in `config.json`, so there is no second source.
+- **`HOSHIMI_CONFIG`.** Older releases used it to name the configuration file; it has been removed, and the configuration file is always `<data folder>/config.json`. Leaving it set has no effect.
+- **Settings.** No environment variable maps to a `config.json` key (there is no `HOSHIMI_PORT`, for example). To change the port, keys and so on for one start, use the `hoshimi serve` options; to change them for good, use `hoshimi config set` or the Web UI.

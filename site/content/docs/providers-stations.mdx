@@ -1,0 +1,289 @@
+---
+title: "免费站点"
+description: "每个登录型站点适配器的用法：Cline、Gemini Code Assist、ZCode、MiniMax、TRAE、Qoder、CodeBuddy/WorkBuddy、CodeArts、Loomy、Raccoon、LobsterAI、Codex、EAC 和 Zhipu，怎样登录、提供什么、有哪些限制。"
+icon: KeyRound
+---
+
+这些渠道对应各家 AI 编程工具或平台的免费、试用或订阅额度。大多数站点不提供可粘贴的 API 密钥，而是通过浏览器登录发放令牌：Hoshimi 代替官方客户端完成登录，把得到的凭据存为账号，并负责续期和签到。
+
+<Callout type="info" title="适配器支持什么，不等于站点一定提供什么">
+
+本页描述的是 Hoshimi 适配器实现了什么。各站点的免费额度、模型和规则由站点决定，随时可能变化；内置的模型列表只是站点目录不可达时的回退。实际可用以站点当前的响应为准。
+
+</Callout>
+
+## 登录
+
+<Tabs items={["网页界面", "命令行"]}>
+<Tab value="网页界面">
+
+1. 打开 **渠道**，在列表中选择站点（尚无账号的站点在 **未设置** 筛选下）。
+2. 点 **登录**。对话框依次显示 **获取链接**、**在浏览器中完成**、**已登录** 三步，并在新标签页打开站点的登录页。
+3. 设备码类站点会显示 **验证码**，在授权页面输入即可。
+4. 浏览器不在运行 Hoshimi 的机器上时，在 **授权码或回调地址** 中粘贴浏览器最后跳转到的地址，点 **提交授权码**。
+
+</Tab>
+<Tab value="命令行">
+
+```bash
+hoshimi login                   # 列出支持交互登录的渠道
+hoshimi login trae              # 打印并打开登录链接，等待完成
+hoshimi login trae --no-open    # 只打印链接
+hoshimi login trae --manual     # 提示粘贴授权码或回调地址
+```
+
+成功时输出 `Signed into <渠道> as <账号 ID>.`，账号写入 `config.json`。
+
+</Tab>
+</Tabs>
+
+- 每次登录最长等待 10 分钟。网页界面中可以取消，取消后迟到的回调不会再保存账号。
+- 同一站点身份再次登录，会更新原账号而不是新增一个。
+- 需要本地回调的站点只在 `127.0.0.1`（或 `localhost`）上临时监听端口，不对外网开放。浏览器在另一台机器上时，用 `--manual` 或网页中的 **授权码或回调地址** 粘贴回调；不支持手动粘贴的流程（Loomy）需要在本机浏览器中完成。
+
+## 一览
+
+| 渠道 | 站点 | 登录方式 | 续期 | 签到 | 余额 |
+| --- | --- | --- | --- | --- | --- |
+| `cline` | Cline（`api.cline.bot`） | WorkOS 设备码；可选浏览器扩展方式 | 支持 | — | 支持 |
+| `gemini` | Gemini Code Assist | Google 授权，本地回调 | 支持 | — | 额度窗口 |
+| `zcode` | ZCode（`zcode.z.ai`，智谱） | 站点中转的授权链接，无本地回调 | — | — | — |
+| `minimax` | MiniMax Agent（`agent.minimax.cn`） | 设备码 + PKCE | 支持 | 支持 | 支持 |
+| `trae` | TRAE 国内版 | 控制台登录，本地回调（优先端口 18080） | 支持 | 支持 | 支持 |
+| `qoder` / `qodercn` | Qoder 国际版 / 国内版 | 设备授权链接，轮询 | 支持 | 支持 | 支持 |
+| `buddy` / `workbuddy` | 腾讯 CodeBuddy / WorkBuddy 国际版 | 外部登录页，轮询 | 支持 | 仅 `buddy` | 支持 |
+| `codearts` | 华为云 CodeArts | 门户登录，PKCE + DPoP，本地回调 | — | 支持 | 支持 |
+| `loomy` | 讯飞 Loomy | 本机页面上的微信扫码 | — | 支持 | 支持 |
+| `raccoon` | 商汤小浣熊 | 微信扫码页，网关轮询 | 支持 | — | 支持 |
+| `lobsterai` | 有道 LobsterAI | 门户登录，本地回调 | 支持 | 支持 | 支持 |
+| `codex` | ChatGPT / Codex 订阅 | OpenAI 授权，本地回调固定端口 1455 | 支持 | — | — |
+| `eac` | EAC 合租中继 | 经网关的 GitHub 授权 | — | — | — |
+| `zhipu` | 智谱 BigModel | API 密钥 | — | — | — |
+
+“续期”指适配器能用续期令牌换新令牌；不支持续期的站点，令牌过期后需要重新登录。“签到”和“余额”见本页末尾。
+
+## Cline（`cline`）
+
+Cline 的免费模型通道。模型目录来自 Cline 公开的推荐模型接口中的免费列表，不需要账号也能读取；回退列表包括 `stealth/space-bunny-alpha`、`cline-free/mimo-v2.6-flash` 和 `cline-free/muse-spark-1.3-contributor`。
+
+- **登录**：`hoshimi login cline` 默认走 WorkOS 设备授权，然后向 Cline 注册换取站点令牌。令牌带 `workos:` 前缀保存，每次请求原样发送。
+- **登录方式**：渠道详情的 **网络** 部分有 **Cline 登录方式**，可选 **设备码（SDK）**（默认）或 **浏览器（扩展）**，对应 `providers.cline.options.client_profile` 的 `sdk` 和 `extension`。扩展方式在本机 48801–48811 端口中找一个接收回调，支持手动粘贴回调地址。新账号记录登录时的方式，切换选项只影响之后的登录。
+- **余额**：需要账号中的 `account_id`（形如 `usr-…`，登录时自动保存）。
+- **账号字段**：`access_token`、`refresh_token`、`client_profile`、`account_id`。
+
+## Gemini Code Assist（`gemini`）
+
+Google Code Assist 通道（`daily-cloudcode-pa.googleapis.com`），用 Google 账号登录。它和 Gemini Developer API（`google`）、Vertex AI（`google-vertex`）是不同的服务，见[云平台](/docs/providers-cloud)。
+
+- **登录**：`hoshimi login gemini` 打开 Google 授权页，回调到本机 `localhost` 的临时端口；支持手动粘贴回调地址。登录时把公开桌面客户端的 `client_id` 和 `client_secret` 一并存入账号，续期不需要额外配置。`options.client_id` / `options.client_secret` 可以覆盖它们。
+- **模型**：只有一个 `gemini-3.8-flash`，思考级别 `low`、`medium`、`high`、`tiered`（未指定时为 `medium`）。级别决定思考预算，并作为后缀拼到上游模型名上。
+- **余额**：显示五小时和每周两个额度窗口的剩余比例，不是积分。
+
+```json
+{
+  "providers": {
+    "gemini": {
+      "accounts": [
+        {"id": "gemini-1", "access_token": "<oauth access token>", "refresh_token": "<oauth refresh token>"}
+      ],
+      "options": {"client_id": "<google oauth client id>", "client_secret": "<google oauth client secret>"}
+    }
+  }
+}
+```
+
+## ZCode（`zcode`）
+
+智谱 ZCode 客户端的免费套餐通道，使用 Anthropic Messages 协议。模型为 `GLM-5.3-Flash` 和 `GLM-5.3`，思考级别 `low`、`high`、`max`，通过 `output_config.effort` 发送。
+
+- **登录**：`hoshimi login zcode` 由站点中转完成，用智谱账号授权，不需要本地回调，适合远程服务器。登录时生成并保存一个固定的 `device_mid`。
+- **续期**：适配器不续期，令牌失效后重新登录。
+- **注意**：适配器在调用方的系统提示词之前加上 ZCode 官方客户端的身份说明和环境说明，并在第一条用户消息前插入日期提醒。调用方的系统提示词仍然保留，排在这些内容之后。
+- **选项**：`options.app_version`（默认 `3.14.3`）。
+- **账号字段**：`zcode_jwt`（或 `access_token`）、`device_mid`。
+
+## MiniMax（`minimax`）
+
+MiniMax Agent 的登录通道（Anthropic Messages 协议），与按密钥计费的 `minimax-api`、`minimax-cn`、`minimax-chat` 无关。
+
+- **登录**：`hoshimi login minimax` 使用 `account.minimax.cn` 的设备码，同时校验 PKCE。
+- **模型**：`MiniMax-M3.1-Flash-Preview`、`MiniMax-M3`、`MiniMax-M2.7-highspeed`、`MiniMax-M2.7`。M3.1 系列必须使用自适应思考，适配器在未指定级别时也会打开；M2.7 没有声明级别，调用方的级别不会转发。
+- **签到与余额**：按北京时间领取每日积分；余额为各积分包剩余量之和。
+- **账号字段**：`access_token`、`refresh_token`。
+
+## TRAE（`trae`）
+
+字节跳动 TRAE 国内版的 SOLO 通道（`api.trae.com.cn`、`trae-api-cn.mchost.guru`）。
+
+- **登录**：`hoshimi login trae` 打开 `www.trae.cn` 的登录页，站点把令牌直接回调到本机，端口优先 18080，被占用时换一个空闲端口；支持手动粘贴回调地址。
+- **模型**：回退列表包括 `DeepSeek-V4-Flash-Official`、`Doubao-Seed-2.1-Pro`、`glm-5.2`、`kimi-k3` 等。TRAE 只提供上下文长度表，不提供思考菜单，调用方的 `reasoning_effort` 原样转发。
+- **签到与余额**：设备身份由账号的 `uid` 推导，缺少 `uid` 的账号无法签到。
+- **账号字段**：`access_token`、`refresh_token`、`device_id`、`machine_id`、`uid`。
+
+| 选项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `channel` | `solo_work_lite` | 请求使用的功能通道 |
+| `user_agent` | `Trae/0.1.52` | User-Agent |
+| `app_id` | 内置值 | `X-App-Id` |
+| `ide_version` | `0.1.52` | `X-Ide-Version` |
+| `ide_version_code` | `20260811` | `X-Ide-Version-Code` |
+| `os_version` | `macOS 15.7.4` | `X-OS-Version` |
+| `device_brand` | `Apple` | `X-Device-Brand` |
+
+```json
+{
+  "providers": {
+    "trae": {
+      "accounts": [
+        {"id": "trae-1", "access_token": "<access token>", "refresh_token": "<refresh token>",
+         "device_id": "<device id>", "machine_id": "<machine id>", "uid": "<user id>"}
+      ],
+      "options": {"channel": "solo_work_lite"}
+    }
+  }
+}
+```
+
+## Qoder（`qoder`、`qodercn`）
+
+阿里 Qoder 的国际版（`qoder`，`openapi.qoder.sh`）和国内版（`qodercn`，`openapi.qoder.com.cn`）是两个渠道，账号和模型都不通用。
+
+- **登录**：`hoshimi login qoder` 或 `hoshimi login qodercn` 打开 `qoder.com` / `qoder.cn` 的设备授权页，网关轮询结果，不需要本地回调。登录时生成一个 `machine_id`，续期请求会带上它，账号要一直保留它。
+- **模型**：两个站点的模型表不同。国际版 17 个（`auto`、`ultimate`、`performance`、`efficient`、`smodel`、`cmodel`、`qmodel_38max` 等），国内版 14 个（含国内独有的 `q37fmodel`、`gm51model`）；把一个站点独有的 ID 发给另一个站点必然失败。
+- **签到**：领取活动奖励需要 Qoder 桌面客户端缓存的机器令牌。适配器在 `%APPDATA%`、`~/Library/Application Support` 或 `~/.config` 下的 `Qoder`（或 `Qoder CN`）`/SharedClientCache/cache/machine_token.json` 中查找；运行 Hoshimi 的机器没有安装 Qoder 桌面版时签到会失败。站点的活动在北京时间 10:00 刷新。
+- **注意**：官方客户端走加密的 WASM 推理路径，Hoshimi 使用公开的 OpenAI 兼容端点，该端点可能返回 `503`。请求头、模型和续期行为一致，不代表推理效果与官方客户端完全相同。
+- **账号字段**：`access_token`、`security_oauth_token`、`refresh_token`、`machine_id`。
+
+## CodeBuddy / WorkBuddy（`buddy`、`workbuddy`）
+
+腾讯 CodeBuddy（`buddy`，`copilot.tencent.com`）和 WorkBuddy 国际版（`workbuddy`，`www.workbuddy.ai`）使用同一套协议、不同的主机。
+
+- **登录**：`hoshimi login buddy` 或 `hoshimi login workbuddy` 打开外部登录页，网关轮询登录状态，不需要本地回调。
+- **模型**：CodeBuddy 回退列表 16 个（hy4/hy3、deepseek-v4、glm-5.x、kimi、minimax-m3）；WorkBuddy 23 个（含 `default-model` 等别名、gpt-5.x、gemini-3.5-flash、glm、kimi）。WorkBuddy 会按模型家族切换 User-Agent。
+- **签到**：只有 CodeBuddy 有每日签到；WorkBuddy 国际版没有签到接口，余额查询仍可用。
+- **账号字段**：`access_token`、`refresh_token`，登录时还会保存 `user_id`、`enterprise_id` 等，余额查询会用到。
+
+## CodeArts（`codearts`）
+
+华为云 CodeArts 的 ModelArts 通道（`snap-access.cn-north-4.myhuaweicloud.com`），请求使用华为云 SDK-HMAC-SHA256 签名。
+
+- **登录**：`hoshimi login codearts` 打开华为云门户授权页，回调到本机 10000 以上的随机端口（门户拒绝更低的端口），换取令牌时附带 DPoP 证明；回调等待最长 5 分钟，支持手动粘贴回调地址。
+- **凭据**：得到的是带过期时间的临时 AK/SK 和安全令牌。适配器不续期，过期后重新登录。
+- **模型**：从站点的内置模型列表发现（排除 `-VL` 模型），失败时回退到 `GLM-5.x`、`deepseek-v4*`、`openpangu-2.0-*` 等。
+- **优惠模型**：`options.benefit_models`（默认 `glm-5.3-flash`、`deepseek-v4.1-flash`）中的模型请求时附带 `maas_type: benefit` 头；站点拒绝该头时自动去掉重试。
+- **签到**：领取“每日登录”活动；按 token 计费或非积分计费的账号不在活动范围内。
+
+```json
+{
+  "providers": {
+    "codearts": {
+      "accounts": [
+        {"id": "codearts-1", "access_key_id": "<AK>", "secret_access_key": "<SK>", "security_token": "<temporary token>"}
+      ],
+      "options": {"benefit_models": ["glm-5.3-flash", "deepseek-v4.1-flash"]}
+    }
+  }
+}
+```
+
+## Loomy（`loomy`）
+
+讯飞 Loomy（`loomyad.xunfei.cn`），OpenAI 兼容。
+
+- **登录**：`hoshimi login loomy` 在本机启动一个页面显示微信二维码，扫码确认即可。首次使用的微信账号需要在同一页面绑定手机号（获取并填写短信验证码）。页面只在 `127.0.0.1` 上提供，需要用本机浏览器打开。
+- **凭据**：会话有效期约 14 天，适配器不续期，到期后重新登录。
+- **请求**：令牌同时作为 `Authorization: Bearer` 和 `token` 头发送（聊天接口和控制接口各认一个）。
+- **账号字段**：`access_token`、`userid`、`expires_at`。
+
+## Raccoon（`raccoon`）
+
+商汤小浣熊（`xiaohuanxiong.com`），OpenAI 兼容。
+
+- **登录**：`hoshimi login raccoon` 打开站点的微信扫码页，由网关轮询结果，不需要本地回调。
+- **模型**：`sn-sensenova-6-8-flash`、`sn-glm-5-3`、`sn-kimi-k3`、`sn-deepseek-v4-1-flash` 等固定列表。
+- **账号字段**：`access_token`、`refresh_token`、`device_id`、`office_identity`（组织代码，作为 `X-Org-Code` 发送）。
+
+## LobsterAI（`lobsterai`）
+
+有道 LobsterAI（`lobsterai-server.youdao.com`），OpenAI 兼容，模型目录从站点实时读取，失败时回退到 19 个内置 ID。
+
+- **登录**：`hoshimi login lobsterai` 打开 `lobsterai.youdao.com` 门户，回调到本机临时端口；支持手动粘贴回调地址。
+- **注意**：登录时生成的 `uuid` 和 `firstKeyfrom` 会随续期请求发送，不要从账号中删除，否则续期失败。
+- **账号字段**：`access_token`、`refresh_token`、`uuid`。
+
+## Codex（`codex`）
+
+用 ChatGPT 账号登录的 Codex 通道（`chatgpt.com/backend-api/codex`），走 OpenAI Responses 协议，额度来自 ChatGPT 订阅。
+
+- **登录**：`hoshimi login codex` 打开 OpenAI 授权页，回调固定到本机 `localhost:1455`（这是 Codex 客户端注册的回调地址），该端口必须空闲；同一时间只能进行一次 Codex 登录。支持手动粘贴回调地址。
+- **请求**：系统和 developer 消息合并为 `instructions`，不发送 `max_output_tokens`、`temperature`、`top_p`；账号的 `account_id` 作为 `ChatGPT-Account-Id` 头发送。
+- **模型**：从账号的模型目录读取，或在账号中用 `models` 声明。
+
+```json
+{
+  "providers": {
+    "codex": {
+      "accounts": [
+        {"id": "codex-1", "access_token": "<oauth access token>", "refresh_token": "<oauth refresh token>",
+         "account_id": "<ChatGPT account id>", "client_id": "<oauth client id>", "expires_at": "<epoch milliseconds>"}
+      ]
+    }
+  }
+}
+```
+
+## EAC（`eac`）
+
+EAC 是合租中继：没有匿名模式，只有配置了账号才启用，在 **渠道** 中标记为需要授权。新安装时运行 `hoshimi login eac`（或在 **渠道** 中点 **登录**），通过 GitHub 授权内置中继，成功后创建 `relay: "bundled"` 的 `eac-default` 账号；也可以添加自定义的 Worker 中继或 Bearer 直连中继。模型包括 `deepseek-ai/deepseek-v4.1-flash`、`moonshotai/kimi-*`、`z-ai/glm-5.3*`、`openai/gpt-oss-20b`，以及经中继转发的 `opencode/deepseek-v4.1-flash-free`、`opencode/glm-5.3-flash-free`。中继模式、签名和授权文件的细节见 [EAC](/docs/advanced-eac)。
+
+## Zhipu（`zhipu`）
+
+智谱 BigModel 开放平台（`open.bigmodel.cn/api/paas/v4`）。它是按密钥接入的固定站点，不是聚合入口。
+
+- **添加账号**：在 bigmodel.cn 控制台创建 API 密钥，然后在 **渠道** › **Zhipu GLM (BigModel)** 中 **添加账号**，或写入 `config.json`。
+- **模型**：优先读取实时目录（账号余额能覆盖的其他模型也会出现）。目录不可达时回退到 7 个免费 ID：`glm-4.7-flash`、`glm-4.5-flash`、`glm-4-flash-250414`、`glm-z1-flash`、`glm-4.6v-flash`、`glm-4.1v-thinking-flash`、`glm-4v-flash`。
+- **国际站**：`options.base_url` 设为 `https://api.z.ai/api/paas/v4` 可以把整个渠道切到 api.z.ai。
+- **思考**：没有菜单的文本模型不改动调用方的请求；Z1 和 V-Thinking 这类本身就是思考模型的，使用预算阶梯控制。
+
+```json
+{
+  "providers": {
+    "zhipu": {
+      "accounts": [{"id": "zhipu-1", "api_key": "<bigmodel.cn API key>"}],
+      "options": {"base_url": "https://open.bigmodel.cn/api/paas/v4"}
+    }
+  }
+}
+```
+
+## 续期、签到与余额
+
+两个定时任务在 **设置** 中开关：**凭据续期**（`server.auto_refresh`）和 **每日签到**（`server.auto_checkin`），默认都开启。
+
+**续期**：网关启动 30 秒后开始，每 30 分钟检查一次，续期一小时内到期、或没有记录到期时间的账号（只处理带 `refresh_token` 的账号）。站点拒绝续期令牌时，账号标记为 **需要登录** 并移出轮换，重新登录后恢复。续期得到的新令牌只写回对应账号。手动续期：渠道详情中的 **立即续期**（整个渠道，或账号菜单中的单个账号），或 **渠道** 页顶部的 **续期所有账户**；接口为 `GET /api/v1/refresh`（查看状态）和 `POST /api/v1/refresh`（立即续期）。
+
+**签到**：网关启动 30 秒后开始，每天按北京时间日期逐个账号领取一次（串行，避免触发站点风控）。站点回答“今天已领取”也算完成。手动签到：**渠道** 页顶部的 **全部签到**，或渠道详情菜单中的 **立即签到**；**最近签到** 显示该渠道最近的结果。
+
+**余额**：支持的站点可以查询余额或额度。另外，网关会从站点每次响应的限流头中被动读取剩余额度，显示在渠道详情的 **额度** 部分，不产生额外请求。
+
+| 能力 | 支持的渠道 |
+| --- | --- |
+| 续期 | `cline`、`gemini`、`minimax`、`trae`、`qoder`、`qodercn`、`buddy`、`workbuddy`、`raccoon`、`lobsterai`、`codex` |
+| 每日签到 | `minimax`、`trae`、`qoder`、`qodercn`、`buddy`、`codearts`、`loomy`、`lobsterai` |
+| 余额查询 | `cline`、`gemini`（额度窗口）、`minimax`、`trae`、`qoder`、`qodercn`、`buddy`、`workbuddy`、`codearts`、`loomy`、`raccoon`、`lobsterai` |
+
+相关接口见[管理接口](/docs/api-management)，界面操作见[渠道页面](/docs/guide-channels)。
+
+## 其他支持登录的渠道
+
+以下按密钥计费的服务也支持 `hoshimi login`，细节见各自页面：
+
+| 渠道 | 登录方式 | 页面 |
+| --- | --- | --- |
+| `anthropic` | claude.ai 授权，本地回调（可粘贴 `code#state`） | [本地与兼容端点](/docs/providers-local) |
+| `openai` | OpenAI 授权，本地回调固定端口 1455 | [本地与兼容端点](/docs/providers-local) |
+| `openrouter` | OpenRouter 授权，本地回调，换得 API 密钥 | [本地与兼容端点](/docs/providers-local) |
+| `github-copilot` | GitHub 设备码 | [本地与兼容端点](/docs/providers-local) |
+| `kimi-coding`、`meta`、`xai` | 设备码 | [本地与兼容端点](/docs/providers-local) |
+| `kilo` | 设备码 | [匿名入口](/docs/providers-anonymous) |
+| `radius` | 设备码 | [云平台](/docs/providers-cloud) |

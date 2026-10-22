@@ -1,0 +1,12 @@
+# The documentation site (site/), built by Netlify at https://hoshimi.netlify.app on every push to main,
+# with a preview for every pull request. GitHub Pages keeps a copy (.github/workflows/site.yml).
+[build]
+  base = "site"
+  command = "bun install --frozen-lockfile && bun run build"
+  publish = ".output/public"
+  # A push that changes neither the site nor this file builds nothing (paths are relative to `base`).
+  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- . ../netlify.toml"
+
+[build.environment]
+  NODE_VERSION = "24"
+  BUN_VERSION = "1.4.2"

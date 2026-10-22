@@ -1,0 +1,130 @@
+---
+title: "Claude Code"
+description: "Run Claude Code through Hoshimi: set ANTHROPIC_BASE_URL and the key, choose the main and background models, use model discovery, and know the current limits of upstreams reached through protocol conversion."
+icon: Bot
+---
+
+Claude Code speaks Anthropic Messages. Point its Base URL at Hoshimi and its requests go to Hoshimi's `/v1/messages`, authenticated with the gateway's model API key; upstream account credentials stay in Hoshimi.
+
+<Callout type="warn" title="Use a model served by native Messages">
+
+When a model's provider has a Messages endpoint of its own (the `anthropic` provider, for example), Hoshimi forwards the request unchanged except for the model name, and the upstream handles every field Claude Code sends. Models on other providers go through protocol conversion, and recent Claude Code versions send things the conversion does not support. Tested locally with Claude Code 2.1.308 (`claude -p`), converted models answered:
+
+- `400 <provider>: context_management requires a native Messages upstream.`
+- with `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`: `400 <provider>: Messages roles must be user or assistant; use top-level system.` (this version puts a `system`-role message inside `messages`)
+
+For now, choose models on a native Messages provider for Claude Code. The two paths are compared in [Anthropic-compatible API](/docs/api-anthropic).
+
+</Callout>
+
+## Setup
+
+<Steps>
+<Step>
+
+### Get a model and the key
+
+- Start Hoshimi and add an account on a provider with a Messages endpoint (such as an Anthropic API key) on the **Channels** page; see [Channels](/docs/guide-channels).
+- Find the model id on the **Models** page or with `curl http://127.0.0.1:10600/v1/models`. Writing it as `anthropic/<model-id>` makes sure that provider serves it.
+- If a **Model API key** is set (**Settings** › **Access** › **Keys**), have it ready; otherwise any non-empty string works.
+
+</Step>
+<Step>
+
+### Set the environment and start
+
+<Tabs items={["bash / zsh", "PowerShell"]}>
+<Tab value="bash / zsh">
+
+```bash
+export ANTHROPIC_BASE_URL="http://127.0.0.1:10600"
+export ANTHROPIC_API_KEY="your-model-api-key"
+unset ANTHROPIC_AUTH_TOKEN
+claude --model "anthropic/<model-id>"
+```
+
+</Tab>
+<Tab value="PowerShell">
+
+```powershell
+$env:ANTHROPIC_BASE_URL = "http://127.0.0.1:10600"
+$env:ANTHROPIC_API_KEY = "your-model-api-key"
+Remove-Item Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue
+claude --model "anthropic/<model-id>"
+```
+
+</Tab>
+</Tabs>
+
+- `ANTHROPIC_BASE_URL` has no `/v1`.
+- `ANTHROPIC_API_KEY` is sent as `x-api-key`. A stale `ANTHROPIC_AUTH_TOKEN` is sent as an `Authorization` header, which Hoshimi prefers when both are present, so clear it, or put the model API key in `ANTHROPIC_AUTH_TOKEN` instead.
+- This is the **Model API key**, not the tool access key and not an upstream Anthropic key.
+
+</Step>
+<Step>
+
+### Pin the background models
+
+Claude Code's background requests use its Haiku alias, and it has Sonnet and Opus aliases as well. When an alias points to a model id Hoshimi does not have, the request fails with a routing error. Point `ANTHROPIC_DEFAULT_HAIKU_MODEL` at a model the gateway has to pin background requests to it, and do the same for the Sonnet and Opus aliases when you use them:
+
+```bash
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="anthropic/<small-model-id>"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="anthropic/<model-id>"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="anthropic/<large-model-id>"
+```
+
+</Step>
+</Steps>
+
+## Keep it in settings.json
+
+Instead of exporting variables each time, put them in the `env` block of Claude Code's user settings `~/.claude/settings.json`, with `ANTHROPIC_MODEL` in place of `--model`:
+
+```json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:10600",
+    "ANTHROPIC_API_KEY": "your-model-api-key",
+    "ANTHROPIC_MODEL": "anthropic/<model-id>",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "anthropic/<small-model-id>"
+  }
+}
+```
+
+## Model discovery
+
+With `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`, Claude Code asks the gateway for its model list to fill the model picker. Hoshimi waits at most two seconds on the `GET /v1/models?limit=1000` it sends: slow providers are represented by cached, configured or built-in ids while discovery finishes in the background, and each entry carries a `display_name`.
+
+Claude Code's picker only shows ids that contain `claude` or `anthropic`. Name other models explicitly with `--model`, `ANTHROPIC_MODEL` or the alias variables above; Hoshimi does not rename other models to pass them off as Claude.
+
+## Environment variables
+
+| Variable | Purpose |
+| --- | --- |
+| `ANTHROPIC_BASE_URL` | The gateway, `http://127.0.0.1:10600` |
+| `ANTHROPIC_API_KEY` | The model API key, sent as `x-api-key` |
+| `ANTHROPIC_AUTH_TOKEN` | Sent as `Authorization: Bearer`; use this or the previous one, this one wins |
+| `ANTHROPIC_MODEL` | The default main model, same as `--model` |
+| `ANTHROPIC_DEFAULT_HAIKU_MODEL` / `_SONNET_MODEL` / `_OPUS_MODEL` | The gateway model ids behind the three aliases |
+| `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY` | `1` discovers models from the gateway's `/v1/models` |
+| `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | `1` turns off experimental beta features, useful to diagnose an upstream without beta support; the effect depends on the Claude Code version, it does not remove every beta header, effort or adaptive thinking, and it is no substitute for native forwarding |
+
+## How Claude Code's requests are handled
+
+- Claude Code sends `thinking: {"type": "adaptive"}` and `output_config.effort`. Native forwarding passes them to the upstream; conversion maps them onto the model's effort levels.
+- Native forwarding keeps `anthropic-beta` and the other `anthropic-*` headers, merged with the beta capabilities an OAuth account requires. The upstream's rate-limit headers (`retry-after`, `anthropic-ratelimit-*`, `x-should-retry`) come back unchanged so Claude Code can retry on them. An explicit `x-should-retry: false` from the upstream also stops Hoshimi from retrying on another account.
+- While waiting on the upstream, a streaming response gets a `ping` event every 15 seconds, only ever between complete events.
+- Hoshimi keeps no history; Claude Code sends the whole conversation every turn.
+
+When Claude Code does not recognise a model id it prints a notice that it assumes a 200k context window; that notice comes from Claude Code itself.
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+| --- | --- |
+| `401`, `A model API key is required` | A model API key is set but not sent, or a stale `ANTHROPIC_AUTH_TOKEN` overrides `ANTHROPIC_API_KEY` |
+| `404`, `Model '…' not found` | The main model or an alias points to an id missing from the catalogue; check `--model` and the three `ANTHROPIC_DEFAULT_*_MODEL` |
+| `400`, `… requires a native Messages upstream` or `Messages roles must be user or assistant` | The model goes through protocol conversion; see the top of this page |
+| Connection refused, or `Host not allowed` | The port is not 10600 (use the address the server printed), or you connect from another machine or a container; see [Access control](/docs/config-security) |
+
+Every call, failed ones included, appears on the **Usage** page with its error and the provider and account that served it.

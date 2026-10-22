@@ -1,0 +1,189 @@
+---
+title: "Playground"
+description: "Chat with any model in the catalogue from the Web UI: keep, search and archive chats, attach images and files, edit questions, retry and branch replies, and copy a reply as an API request."
+icon: MessagesSquare
+---
+
+The **Playground** is a chat app built into the Web UI. It talks to models through the same gateway your clients use, so it is the quickest way to try a model, check an account, or see exactly what a request looks like. Chats are kept on the server, in the data folder, so they outlive the page and the process and come back from any browser.
+
+This page covers chatting. Letting a model read files, run commands and search the web is covered in [Playground tools](/docs/guide-agent); the HTTP routes behind the page are in [Playground API](/docs/api-playground).
+
+## Start a chat
+
+<Steps>
+<Step>
+
+### Open the Playground
+
+Choose **Playground** in the navigation. The page opens the chat you had open last (on any browser), or an empty one.
+
+</Step>
+<Step>
+
+### Pick a model
+
+The **Model** menu in the composer lists every model the server advertises; type to search when the list is long. The first model is picked when nothing is chosen yet. From the [Models](/docs/guide-models) page you can also open the Playground on one model, which starts a new chat with it.
+
+</Step>
+<Step>
+
+### Ask
+
+Type in the box and press <kbd>Enter</kbd>. The chat is created on the server with its first message, and the reply streams in.
+
+</Step>
+</Steps>
+
+The chat list sits beside the chat on a wide window and slides in as a drawer on a narrow one; the button at the start of the header opens and closes it. The button at the end of the header starts what comes next: **New chat**, or, on a new chat no one has written in yet, **Temporary chat**.
+
+| Key | Action |
+| --- | --- |
+| <kbd>Enter</kbd> | Send |
+| <kbd>Shift</kbd>+<kbd>Enter</kbd> | New line |
+| <kbd>Esc</kbd> | Stop the reply coming in |
+| <kbd>↑</kbd> in an empty box | Edit your last question |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> (<kbd>Cmd</kbd> on macOS) | New chat |
+
+Pressing **Stop** (or <kbd>Esc</kbd>) ends the reply; what came so far is kept and the reply is marked **Stopped**. Leaving the page does the same.
+
+## Temporary chats
+
+On a new, empty chat, the header button reads **Temporary chat**. A temporary chat works like any other but:
+
+- it never appears in the chat list and is never named;
+- it is deleted as soon as you leave it (open another chat or start a new one), and any left behind are deleted on the next start of the server;
+- it has no chat menu and no **Branch in new chat**.
+
+The box reads "Ask anything — this chat won’t be saved" while you are in one.
+
+## The chat list
+
+Chats are grouped by when they were last used: **Today**, **Yesterday**, **Previous 7 days**, **Previous 30 days** and **Older**. A chat branched from another carries a branch icon.
+
+- **Search chats** filters the list by title as you type.
+- Each chat has a menu (**Chat options**, the `…` button) with **Rename**, **Archive** and **Delete**. The same menu is in the header for the open chat.
+- **Rename** sets your own title, which is never replaced by a generated one.
+- **Archive** puts a chat away without deleting it. **Archived chats**, at the foot of the list, shows the archive; **Restore** brings a chat back, and so does sending a new message in it. **Back to chats** returns to the list. Archiving the open chat starts a new one.
+- **Delete** asks first, then removes the chat, its messages and the attachments only it carried, for good. Any background commands its tools started are stopped.
+
+### Titles
+
+Until a model names it, a chat is titled by its first question (up to 80 characters). Once the first reply is complete, a model names the chat in at most six words, in the language you wrote in. Which model does that is the **Title model** setting (see Playground settings below); by default it is the chat's own model. If the model cannot be reached, the first question stays the title. A title you set with **Rename** is kept.
+
+## Model and effort
+
+The model and the effort are chosen in the composer and kept with the chat, so reopening it picks them up again. Both menus are locked while a reply is coming in.
+
+- **Model**: any model the server advertises. Picking another model resets the effort to automatic.
+- **Effort**: shown only for a model with reasoning levels. **Auto (server default)** sends no level and leaves it to the model and the provider; any other entry is sent as the request's `reasoning_effort`. See [Model behaviour](/docs/advanced-models) for how levels map to each provider.
+
+## Attachments
+
+Use **Add photos and files** (the `+` button), drop files anywhere on the chat, or paste them into the box. Each file uploads right away and shows in a tray above the text; remove one with its close button before sending. A message can go with attachments and no text.
+
+| Kind | Accepted | How it is sent |
+| --- | --- | --- |
+| Images | PNG, JPEG, WebP, GIF | As an image. One larger than 2048 pixels on its longest side is scaled down in the browser (and re-encoded as WebP or JPEG); a smaller one under 1 MB, and any GIF that fits, goes as it is |
+| Text files | Any `text/*` type, JSON, XML, YAML, TOML, SQL, shell scripts, and source files by extension (`.py`, `.ts`, `.vue`, `.rs`, `.go`, `.md`, `.csv`, `.log`, `.diff` and many more) | As text inside your message, under the file's name. Up to 2,000,000 characters can be attached; a model is sent the first 200,000 and told the rest was cut |
+| PDF | Any PDF with a text layer | Its text is extracted in your browser page by page, then sent as a text file. A scanned PDF with no text is refused |
+
+Anything else is refused with "send an image, a text file or a PDF". An attachment uploaded but never sent is deleted after a day. Attachments are stored once and shared by branches, so branching a chat does not copy them.
+
+### Images and models that cannot read them
+
+A model that reads images gets them as images. For one that does not (its catalogue entry says no vision), the Playground asks another model to describe each image, and sends the description in its place:
+
+- The composer warns "This model can’t read images; another model will describe them." when you attach an image to such a model.
+- While a description is being written the reply shows "Reading the image with *model*…".
+- The reply carries a note saying which model described which image. The description is kept with the image, so it is asked for once, not on every turn.
+
+Which model describes images is the **Image model** setting. **Automatic** takes the first model in the catalogue that reads images, skipping any the last availability probe found unavailable or region-blocked. **Off** never asks: the image is left out and the reply says so. You can also pick one model.
+
+If a model listed as reading images is refused by its station because of the image, the reply is tried once more with descriptions, and a note says so.
+
+## Reasoning
+
+For a model that shows its reasoning, the reply starts with a folded line: **Thinking…** with the time so far while it reasons, then **Thought for** *time* once it answers. Click the line to read the reasoning; it stays as you left it. Models that do not return reasoning have no such line.
+
+## Edit, retry and versions
+
+A chat is a tree: editing a question or retrying a reply adds a new version beside the old one, and both stay readable.
+
+- **Edit message** (on a question, or <kbd>↑</kbd> in an empty box for the last one) opens the question in place. Change the text, remove attachments, and press **Send** (or <kbd>Enter</kbd>; <kbd>Esc</kbd> cancels). The edit becomes a new version of that question, answered afresh; what followed the old version stays with it.
+- **Try again** (on a reply) asks for another reply to the same question, with the model and effort now in the composer. Switch the model first to compare models on the same question. A failed reply also shows **Try again** next to its error.
+- A turn with versions shows **Previous version**, *n* / *total* and **Next version**. Moving to another version also brings back the newest replies under it. The version on screen is remembered with the chat.
+
+Editing, retrying and switching versions are unavailable while a reply is coming in.
+
+## Branch a chat
+
+**Branch in new chat** (on a reply) copies the chat up to that reply into a new chat and opens it ("Opened in a new chat"). The new chat keeps the title, the model and effort, and the chat's tool and approval choices; the original is untouched. Use it to take a conversation in two directions without switching versions back and forth.
+
+## Copy as API request
+
+Under **More actions** on a reply, **Copy as API request** copies a `curl` command that sends the same Chat Completions request through the gateway's public API:
+
+```bash
+curl http://127.0.0.1:10600/v1/chat/completions \
+  -H "Authorization: Bearer $HOSHIMI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d @- <<'JSON'
+{
+  "model": "your-model",
+  "messages": [
+    {"role": "system", "content": "Answer briefly."},
+    {"role": "user", "content": "Summarise this file.\n\n<file name=\"notes.txt\">\n...\n</file>"}
+  ],
+  "stream": true
+}
+JSON
+```
+
+The body is built on the server exactly as the reply was sent: the system prompt first, files inline, images as `data:` URLs (or as their descriptions, for a model that cannot read them), `reasoning_effort` when one was chosen, and the tool definitions with `tool_choice` when the chat has tools on. For a reply that used tools, it is the first round's request. Set `HOSHIMI_API_KEY` to your model API key, or drop the header when the server has none (see [Access and security](/docs/config-security)).
+
+Use **Copy** on a message to copy its text, and **Copy code** on a code block to copy just the code.
+
+## How a reply ended
+
+| What you see | Meaning |
+| --- | --- |
+| **Stopped** | You stopped it, or the page went away; the text that came is kept |
+| **This reply failed.** and a reason | The model or the station returned an error; **Try again** retries |
+| "The image … was described by …" | A model that cannot read images got a description |
+| "The image … was left out: no model could read it." | No describing model was available, or **Image model** is **Off** |
+| "… refused the image, so it was sent as a description." | The station refused the image; the reply was retried with descriptions |
+
+Notes about tools (a model that cannot call tools, the round limit) are explained in [Playground tools](/docs/guide-agent).
+
+## Playground settings
+
+The Playground's own settings are in **Settings › General › Playground** (see [Settings](/docs/guide-settings)), and in `config.json` under `playground` (see [config.json](/docs/config)):
+
+| Setting | Key | Default | What it does |
+| --- | --- | --- | --- |
+| **System prompt** | `playground.system_prompt` | empty | Sent first in every Playground chat, from its next message on. Empty sends none |
+| **Title model** | `playground.title_model` | empty (**The chat’s own model**) | The model that names new chats after their first reply |
+| **Image model** | `playground.vision_model` | `auto` (**Automatic**) | Describes images for models that cannot read them: `auto`, `off`, or a model id |
+
+```json
+{
+  "playground": {
+    "system_prompt": "Answer briefly.",
+    "title_model": "your-small-model",
+    "vision_model": "auto"
+  }
+}
+```
+
+The tool settings (`playground.tools`, `workspace`, `approval`, `max_steps`, `search_url`) are in [Playground tools](/docs/guide-agent).
+
+## Where chats are kept
+
+Chats, their messages and attachments live in `hoshimi.db` in the data folder (see [Data folder and paths](/docs/config-paths)), and are kept until you delete them. The chat open last is remembered there too, which is how the Playground comes back to it from any browser. A reply cut off by a server stop is kept as stopped.
+
+Every model call the Playground makes is recorded in [Usage](/docs/guide-usage) like any other call, under its own origin: `playground` for replies, `playground-title` for titles and `playground-vision` for image descriptions.
+
+<Cards>
+<Card title="Playground tools" href="/docs/guide-agent" description="Let a model read and edit files, run commands and search the web, with approvals." />
+<Card title="Playground API" href="/docs/api-playground" description="The conversation routes and streamed events behind this page." />
+</Cards>

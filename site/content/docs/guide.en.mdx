@@ -1,0 +1,72 @@
+---
+title: "Web UI overview"
+description: "How the Web UI is laid out: the navigation, live activity in the top bar, signing in with the access key, language and appearance, and the guide to each page."
+icon: LayoutGrid
+---
+
+This section walks through Hoshimi's Web UI page by page. Start `hoshimi serve` and open `http://127.0.0.1:10600` in a browser (if the port was taken, use the address the server prints). If Hoshimi is not installed yet, start with [Quick start](/docs/quick-start); for what you see the first time, see [First run](/docs/first-run).
+
+Changes you make on **Channels** and **Settings** (other than browser preferences such as appearance and language) are written to `config.json` in the data folder and take effect in the running gateway at once, without a restart (the listening address and port are the exception). Most of it can also be done from the [command line](/docs/cli) or the [management API](/docs/api-management).
+
+## Navigation
+
+On a wide window the navigation is a rail on the left; on a narrow one (a phone) it moves to the bottom. **Settings** sits at the foot of the rail.
+
+| Page | What it is for |
+| --- | --- |
+| **Overview** | Today's usage, endpoint addresses to copy, the channels in use, version and default model |
+| **Models** | Every model you can call: search, abilities, context length, availability probes, and a shortcut to try one in the Playground |
+| **Channels** | The accounts of every provider (free stations, cloud services, local servers): sign-in, API keys, renewal, check-in, allowance and network route |
+| **Usage** | Charts of tokens, cache hits, time to first token and speed, breakdowns by model, provider, account and API, and a record of every call |
+| **Playground** | Chat with any model in the browser; with tools turned on it can also read and edit files, run commands and search the web |
+| **Settings** | Language, default model, Playground and tools, listening address and keys, access limits, global network, timers, appearance |
+
+When channels need a hand (a new login, an expired token, an account held out of rotation, an allowance about to run out), the **Channels** icon shows how many.
+
+Each page keeps its state and scroll position while you are elsewhere, and the navigation takes you back to where you left it. Some state is part of the address, so a reload or a shared link opens the same view:
+
+| Address | Opens |
+| --- | --- |
+| `#/channels/kilo` | The Kilo channel on the **Channels** page |
+| `#/usage?range=30d` | **Usage** over **30 days** |
+| `#/usage?range=day&date=2026-10-20` | **Usage** for one day |
+| `#/settings?tab=access` | The **Access** tab of **Settings** |
+
+## Top bar
+
+Two buttons sit at the top right:
+
+- **Live activity**: an activity icon while nothing runs; a spinner with a count (**N calls running**) while calls are in flight. Click it for the live activity sheet:
+  - At the top, the connection state (**Live**, **Reconnecting…**, **Offline**) and today's **Tokens today**, **Calls** and **Cache hit**.
+  - **Running now (N)** shows a card per call: the model, provider / account (**Choosing an account…** until one is picked), the API, the reasoning effort, how many accounts were tried, a **Waiting**, **Thinking**, **Answering** track, and **TTFT**, **Tokens out** (estimated from the streamed text, marked ≈, until the station reports its own count) and **tok/s**.
+  - **Just finished** lists the last 10 calls, each **Served** or **Failed**.
+  - **Open usage** goes to the **Usage** page.
+- **Theme**: cycles between light, dark and following the system. More appearance options are in **Settings › Appearance**.
+
+Live activity, the **Overview** figures for today and the **Usage** page share one live connection to the server (`/api/v1/stats/live`). When it drops it reconnects by itself and starts again from a fresh snapshot, so nothing missed in between is left stale.
+
+## Access key
+
+When the server has a tool access key (`server.access_token`), the interface opens with **Tool access key required**. Enter the key and click **Sign in**; the interface checks it with the server first, then keeps it in this browser's localStorage and does not ask again. A wrong key shows **The tool access key is incorrect.** and does not replace a key saved earlier.
+
+When you change or clear the key in **Settings › Access**, this browser switches to the new key by itself; other browsers have to sign in again. The Playground uses the management API, so it needs only the tool access key, not the model API key. For the difference between the two keys see [Access and security](/docs/config-security).
+
+## Language and appearance
+
+The interface follows the system language by default: English, 简体中文 and 日本語 are available, and **Settings › General › Language** fixes one. Theme, colour, contrast and motion are in **Settings › Appearance**. These are browser preferences: they are kept in the current browser, not in the server's config file.
+
+## How the model catalogue loads
+
+**Models**, the **Playground** and the model pickers in **Settings** share one model catalogue. It arrives as a stream: cached models first, then each provider's own results as they come in, with **Loading providers: done/total** while it loads. A provider that fails or times out (after 20 seconds) is named with the reason, the models already received stay, and **Retry** loads again. See [Models](/docs/guide-models).
+
+## Guides to each page
+
+<Cards>
+  <Card title="Overview" href="/docs/guide-overview" description="Today's usage, endpoint addresses, channels at a glance, version and updates, default model." />
+  <Card title="Models" href="/docs/guide-models" description="The catalogue, ability marks, context length, availability probes, and trying a model in the Playground." />
+  <Card title="Channels" href="/docs/guide-channels" description="Signing in, adding keys, renewal and expiry, balances and check-in, allowance, network per channel." />
+  <Card title="Playground" href="/docs/guide-playground" description="Chats, history, temporary chats, branching, versions and retry, attachments and images, Copy as API request." />
+  <Card title="Playground tools" href="/docs/guide-agent" description="The six built-in tools, approval modes, approving in the chat, steering a reply, background commands and the workspace." />
+  <Card title="Usage" href="/docs/guide-usage" description="Ranges, headline tiles, tokens over time, speed, breakdowns and the call list." />
+  <Card title="Settings" href="/docs/guide-settings" description="General, Tools, Access, Security, Network, Automation, Appearance and About." />
+</Cards>

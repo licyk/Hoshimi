@@ -1,0 +1,327 @@
+---
+title: "Command reference"
+description: "Every hoshimi command: what it does, its arguments and options with their defaults, its output, the --json fields and examples, taken from each command's --help and the source."
+icon: SquareTerminal
+---
+
+This page lists every command, grouped by purpose. The shared conventions (where the configuration is read from, `--json`, exit codes, logging) are in the [Command line overview](/docs/cli), environment variables in [Environment variables](/docs/cli-env).
+
+Every command takes these two options; the tables leave them out:
+
+| Option | What it does |
+| --- | --- |
+| `--debug` | Print debug logs |
+| `--help` | Show the help and exit |
+
+Arguments written `<name>` are required, `[name]` optional.
+
+## Server
+
+### `serve`
+
+Start the server: the OpenAI- and Anthropic-compatible API plus the Web UI.
+
+```text
+hoshimi serve [OPTIONS]
+```
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `--host TEXT` | `server.host` from the configuration (`127.0.0.1`) | Address to bind |
+| `--port INTEGER` | `server.port` from the configuration (`10600`) | First port to try, 0–65535; `0` lets the system pick any free port |
+| `--strict-port / --no-strict-port` | `server.strict_port` from the configuration (off) | Fail when the port is taken instead of trying the next one |
+| `--open / --no-open` | `--open` | Open the Web UI in a browser once ready |
+| `--access-token TEXT` | `server.access_token` from the configuration | Tool access key for the Web UI and the management API |
+| `--model-api-key TEXT` | `server.model_api_key` from the configuration | Independent API key for external `/v1/` model requests |
+| `--default-model TEXT` | `server.default_model` from the configuration | Model used when a request omits `model` |
+| `--refresh / --no-refresh` | `--refresh` | Renew credentials on a timer (off: rotate tokens by hand) |
+| `--checkin / --no-checkin` | `--checkin` | Daily check-in timer for free credits (off: claim by hand) |
+| `--ui / --no-ui` | `--ui` | Serve the Web UI next to the API; `--no-ui` serves the API only |
+
+These options apply to this start only and are not written to `config.json`. An empty string for `--access-token`, `--model-api-key` or `--default-model` has no effect; the configured value is kept.
+
+<Callout type="info" title="--refresh and --checkin always override the configuration">
+
+`serve` always sets credential renewal and daily check-in from these two switches, and both default to on. So even with `server.auto_refresh: false` or `server.auto_checkin: false` in `config.json` (or after turning them off under **Settings › Automation**), they are on again after a start with plain `hoshimi serve`. To keep them off at start, add `--no-refresh` or `--no-checkin`.
+
+</Callout>
+
+What happens at start:
+
+1. The configuration is read, the options above are applied on top, and the channels are built from it.
+2. If the address is not a loopback address (`127.*`, `localhost`, `::1`), a warning is printed. Without a tool access key the server refuses to start (exit code 4); without a model API key it warns that external model APIs accept requests without a key. `security.allow_cidrs` must also be configured, or the server refuses to start (exit code 4). See [Security](/docs/config-security).
+3. The port is bound. If it is taken, the next port is tried, up to 65535, then wrapping around from 1024; a move is logged as `Port 10600 is unavailable. Using port 10601.` With `--strict-port` only the one port is tried. If no port can be bound, the command ends with exit code 3.
+4. The address is written to `server.json` in the data folder, the line `SERVER_READY url=<address>` is printed on standard output, and `Hoshimi running on <address>` is logged. When listening on `0.0.0.0` or `::`, the printed address uses `127.0.0.1`.
+5. With `--open`, the address is opened in a browser a moment later.
+
+Press <kbd>Ctrl</kbd>+<kbd>C</kbd> to stop; `server.json` is removed on exit. Without a built Web UI (a source install that was not built), the server logs a warning and serves the API only.
+
+```bash
+hoshimi serve                                      # defaults: 127.0.0.1:10600, opens a browser
+hoshimi serve --no-open --port 11000 --strict-port  # a fixed port, no browser
+hoshimi serve --port 0                             # any free port; read the SERVER_READY line
+hoshimi serve --no-ui                              # the API only
+hoshimi serve --default-model kilo-auto/free       # used when a request names no model
+```
+
+## Checking and listing
+
+### `check`
+
+Validate the configuration and report which channels and accounts would be served, without starting the server.
+
+```text
+hoshimi check [OPTIONS]
+```
+
+| Option | What it does |
+| --- | --- |
+| `--json` | Print JSON |
+
+It applies the same checks as saving settings in the Web UI: the network policy and proxy URLs, the port range, the limits, the Playground settings, and the security rules (for example, listening on a non-local address needs both `security.allow_cidrs` and `server.access_token`; `security.allow_origins` needs `server.access_token`). A problem ends the command with exit code 2 and the reason.
+
+```bash
+$ hoshimi check
+ok: 2 provider(s), 0 account(s) — kilo:0 (keyless), opencode:0 (keyless)
+config: /home/you/.local/share/hoshimi/config.json
+```
+
+Each channel is written `<id>:<accounts>`; a channel that needs no account is marked `(keyless)` while it has none. With no channel enabled at all, it prints an error line and exits with code 2.
+
+The `--json` fields:
+
+| Field | Content |
+| --- | --- |
+| `config_path` | Path of the configuration file |
+| `providers` | `{channel id: account count}` |
+| `accounts` | Total number of accounts |
+| `keyless` | Ids of the channels that need no account |
+| `models` | Number of models |
+
+With `--json`, the exit code is 0 even when no channel is enabled.
+
+### `models`
+
+List the available models: the same list `GET /v1/models` returns.
+
+```text
+hoshimi models [OPTIONS]
+```
+
+| Option | What it does |
+| --- | --- |
+| `--provider TEXT` | Only show this channel's models (a channel id, such as `kilo`) |
+| `--json` | Print JSON: `[{"id": "<model id>", "provider": "<channel id>"}, …]` |
+
+The table has **Model** and **Provider** columns. A model id offered by several channels is listed once, under the channel that comes first.
+
+```bash
+hoshimi models
+hoshimi models --provider opencode
+hoshimi models --json | jq -r '.[].id'
+```
+
+### `providers`
+
+List the configured channels with their account and model counts.
+
+```text
+hoshimi providers [OPTIONS]
+```
+
+| Option | What it does |
+| --- | --- |
+| `--json` | Print JSON |
+
+The table's columns are **Id**, **Name**, **Accounts** and **Models**; switched-off channels are listed under it as `disabled: …`. The account count leaves out the built-in anonymous identity of the anonymous channels.
+
+The `--json` shape:
+
+```json
+{
+  "providers": [
+    {"id": "opencode", "display_name": "OpenCode Zen", "accounts": [], "keyless": true, "models": 9},
+    {"id": "kilo", "display_name": "Kilo AI", "accounts": [], "keyless": true, "models": 17}
+  ],
+  "disabled": []
+}
+```
+
+`accounts` lists account ids, `disabled` the ids of switched-off channels. Model counts depend on the upstream catalogue at the time.
+
+### `stations`
+
+List the stations an `agg` account can name as its `preset`.
+
+```text
+hoshimi stations [OPTIONS]
+```
+
+| Option | What it does |
+| --- | --- |
+| `--json` | Print JSON |
+
+The table's columns are **Id**, **Name**, **Base URL** and **Key env**, followed by a usage hint:
+
+```text
+Use one in config.json:  "providers" → "agg" → "accounts" → {"preset": "<id>", "api_key": "..."}
+The key env var is the name the upstream reads its key from; Hoshimi reads config.json only.
+```
+
+**Key env** is only the environment variable name the upstream's own tools use, so you know which key to look for; Hoshimi does not read these variables, and the key goes into the account in `config.json`. `--json` prints `{"stations": [...]}`, each entry with `id`, `display_name`, `base_url`, `key_env` and `catalog_keyless` (whether the model list can be fetched without a key). Usage and every preset are in [agg aggregators](/docs/providers-agg).
+
+### `version`
+
+Show the versions of Hoshimi, Python and the main components (fastapi, uvicorn, pydantic, typer, httpx, rich).
+
+```text
+hoshimi version [OPTIONS]
+```
+
+| Option | What it does |
+| --- | --- |
+| `--json` | Print JSON: `{"hoshimi": "…", "python": "…", "components": {"fastapi": "…", …}}` |
+
+A component that is not installed shows `not installed` in the table and `null` in JSON.
+
+### `env`
+
+List the environment variables Hoshimi reads, and those currently set.
+
+```text
+hoshimi env [OPTIONS]
+```
+
+| Option | What it does |
+| --- | --- |
+| `--json` | Print JSON: `{"known": {name: meaning}, "set": {name: value}}` |
+
+The first table, **Environment variables**, lists the known variables and what they mean. When any variable starting with `HOSHIMI_` is set in the current environment, a second table, **Set now**, shows their values, with `***` for names containing `TOKEN` or `KEY`. What each variable does is in [Environment variables](/docs/cli-env).
+
+## Signing in
+
+### `login`
+
+Sign into a station (by browser authorization); when the station hands back the credential, the account is written to `config.json`.
+
+```text
+hoshimi login [OPTIONS] [PROVIDER]
+```
+
+| Argument / option | Default | What it does |
+| --- | --- | --- |
+| `[PROVIDER]` | — | The station to sign into; omit it to list the stations that offer an interactive login |
+| `--open / --no-open` | `--open` | Open the station's login page in a browser |
+| `--manual` | off | Prompt for the authorization code or callback URL (the input is not echoed) |
+
+Stations with an interactive login: `anthropic`, `buddy`, `cline`, `codearts`, `codex`, `eac`, `gemini`, `github-copilot`, `kilo`, `kimi-coding`, `lobsterai`, `loomy`, `meta`, `minimax`, `openai`, `openrouter`, `qoder`, `qodercn`, `raccoon`, `radius`, `trae`, `workbuddy`, `xai`, `zcode`.
+
+The flow:
+
+1. The command asks the station for a login link and prints `Authorize at <link>`; device-code stations also print `Authorization code: <code> — <link>`, the code to enter on the authorization page.
+2. With `--open`, the link opens in a browser; if no browser can be opened, you are asked to visit it by hand.
+3. It checks for the result every 2 seconds. On success it prints `Signed into <station> as <account id>.` and the account is in the configuration; on failure it exits with code 1.
+4. If the station has not answered within 10 minutes, it times out (exit code 1).
+
+Signing in again with the same station identity replaces that account instead of adding a second one. A station name that is not on the list gives exit code 2.
+
+```bash
+hoshimi login                    # list the stations that offer a login
+hoshimi login cline              # sign in through the browser
+hoshimi login codex --no-open    # only print the link, to open elsewhere
+hoshimi login gemini --manual    # browser on another machine: paste the callback URL back when done
+```
+
+`--manual` is for a browser that runs on a different machine from Hoshimi: many stations send the result to a loopback port on this machine, which a browser elsewhere cannot reach. Paste the callback URL the browser finally lands on (or the code the page shows) at the prompt. Each station's login method and callback port are in [Free stations](/docs/providers-stations).
+
+A running server does not pick up accounts added by a command-line login until it restarts; signing in on the Web UI's **Channels** page applies at once.
+
+## Configuration
+
+The `config` commands read and write `config.json` in the data folder. Keys are dotted, such as `server.port`, `security.allow_cidrs` or `providers.kilo.enabled`. Every key is listed in [Configuration](/docs/config).
+
+### `config path`
+
+Print the path of the configuration file. It prints where the file will be created even before it exists.
+
+```text
+hoshimi config path
+```
+
+```bash
+$ hoshimi config path
+/home/you/.local/share/hoshimi/config.json
+```
+
+### `config show`
+
+Show the configuration: the file's contents when it exists, the defaults when it does not. Credentials are shown as `***`.
+
+```text
+hoshimi config show [OPTIONS]
+```
+
+| Option | What it does |
+| --- | --- |
+| `--json` | Print plain JSON (no colour, and no file path on the last line) |
+
+Without `--json`, the JSON is coloured and the last line is the configuration file's path.
+
+### `config get`
+
+Print one setting as JSON. Credentials are shown as `***`.
+
+```text
+hoshimi config get <KEY>
+```
+
+| Argument | What it does |
+| --- | --- |
+| `<KEY>` | A dotted key, such as `server.port` |
+
+A key that does not exist gives `Unknown setting: <KEY>` and exit code 4. A whole section can be read too:
+
+```bash
+$ hoshimi config get server.port
+10600
+$ hoshimi config get security
+{
+  "allow_cidrs": [],
+  "allow_hosts": [],
+  "allow_origins": []
+}
+```
+
+Without a configuration file, the readable keys are those the defaults have (the entries under `network`, `server` and `security`).
+
+### `config set`
+
+Change one setting and save it.
+
+```text
+hoshimi config set <KEY> <VALUE>
+```
+
+| Argument | What it does |
+| --- | --- |
+| `<KEY>` | A dotted key, such as `server.port` or `security.allow_cidrs`; missing levels in between are created |
+| `<VALUE>` | The new value. Anything that parses as JSON is taken as JSON (numbers, `true`/`false`, lists, objects), anything else as a string; `null` (or `none`) clears the setting |
+
+```bash
+hoshimi config set server.port 10600
+hoshimi config set server.strict_port true
+hoshimi config set server.default_model kilo-auto/free
+hoshimi config set security.allow_cidrs '["192.168.1.0/24"]'
+hoshimi config set security.allow_cidrs 10.0.0.0/8,192.168.0.0/16   # the security lists also take commas
+hoshimi config set providers.kilo.enabled false
+hoshimi config set server.model_api_key null                         # clear it
+```
+
+Before saving, the whole configuration is checked with the same rules as `check`; if it fails, nothing is written and the reason is reported with exit code 2, for example when listening on a non-local address without allowed networks and a tool access key. On success it prints `<KEY> = <new value>` (`***` for credentials, `(cleared)` when cleared).
+
+Keep in mind:
+
+- The file is rewritten in Hoshimi's own form. Keys Hoshimi does not know are not saved; the contents of a channel's `accounts` and `options` are kept as they are.
+- A value of the wrong type is either refused (for example a `playground.max_steps` that is not a whole number, or a `server.access_token` that is not a string: exit code 2) or ignored with the old value kept (for example a string for `server.port`), while the command still prints the new value; check with `config get` afterwards.
+- Changes apply when the server restarts. Changes made on the Web UI's **Settings** page apply at once (except the listening address and port).
+- A key typed on the command line stays in your shell history; use the Web UI to set it if that matters.

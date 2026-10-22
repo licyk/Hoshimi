@@ -1,0 +1,257 @@
+---
+title: "管理 API"
+description: "网页界面使用的 /api/v1 管理接口逐一列出：应用信息、设置、渠道与账号、模型目录、可用性探测、凭据续期、余额与签到、登录、用量统计，以及每个接口的方法、用途和认证。"
+icon: Wrench
+---
+
+网页界面的每个操作都通过这些接口完成，脚本也可以直接调用它们。基础地址是 `http://127.0.0.1:10600/api/v1`。
+
+- **认证**：设置了工具访问密钥（`server.access_token`）时，除 `GET /api/v1/app/health` 外的所有接口都要带 `Authorization: Bearer <工具访问密钥>`，缺少或错误时返回 `401`（`auth_required`）。`x-api-key` 和模型 API 密钥在这里无效。
+- **错误**：`{"code": "...", "message": "...", "detail": {}}`，常见状态码为 `400`（`invalid_input`）、`404`（`not_found`）、`409`（`conflict`）；请求体不符合结构定义时为框架的 `422`。见 [API 概览](/docs/api)。
+- **字段**：运行中服务器的 `/openapi.json` 列出每个接口的完整结构，网页界面的类型也由它生成。
+- **Playground**：`/api/v1/playground/*` 见 [Playground API](/docs/api-playground)。
+
+示例中用 `ACCESS_KEY` 表示工具访问密钥：
+
+```bash
+export ACCESS_KEY=your-tool-access-key
+API=http://127.0.0.1:10600/api/v1
+curl -H "Authorization: Bearer $ACCESS_KEY" $API/app/meta
+```
+
+## 接口一览
+
+| 方法与路径 | 用途 |
+| --- | --- |
+| `GET /app/version` | 版本号 |
+| `GET /app/health` | 存活探针，**不需要密钥**；同时说明是否需要工具访问密钥 |
+| `GET /app/meta` | 版本、密钥是否设置、请求是否来自本机、数据目录、配置文件、默认模型、渠道与账号数量 |
+| `GET /app/update` | PyPI 上是否有新版本 |
+| `GET /settings` | 读取设置（密钥只报告是否设置） |
+| `PATCH /settings` | 深度合并修改设置，写入配置文件并立即应用 |
+| `GET /providers` | 渠道列表：账号、模型数量、是否启用、是否免密钥、是否需要授权 |
+| `GET /provider-forms` | 各渠道添加账号的表单字段 |
+| `POST /providers/{provider_id}/accounts` | 校验并追加一个账号 |
+| `DELETE /providers/{provider_id}/accounts/{account_id}` | 删除一个账号 |
+| `GET /stations` | `agg` 账号可用的站点预设 |
+| `GET /channels` | 渠道页的汇总：每个渠道的账号、续期、冷却、被动额度、网络诊断、今日用量、最近签到和状态 |
+| `GET /network/diagnostics` | 每个渠道每类网络操作最近一次的结果 |
+| `GET /models` | 模型能力目录与推理选项 |
+| `GET /catalog/stream` | 逐个渠道刷新目录的 SSE 流 |
+| `POST /models/unavailable/reset` | 解除所有被暂时停用的模型 |
+| `GET /probe` | 最近的可用性探测结果 |
+| `POST /probe` | 开始一轮可用性探测 |
+| `GET /refresh` | 各账号的凭据状态 |
+| `POST /refresh` | 立即续期到期的凭据 |
+| `GET /credits` | 余额、被动额度、冷却中的账号和签到状态 |
+| `GET /credits/checkins` | 签到历史 |
+| `POST /credits/claim` | 立即签到领取今日额度 |
+| `GET /login/providers` | 支持交互式登录的站点 |
+| `POST /login/start` | 开始一次登录 |
+| `GET /login/poll` | 查看登录进度 |
+| `POST /login/input` | 向登录过程提交输入（如验证码） |
+| `POST /login/cancel` | 取消登录 |
+| `GET /stats` | 一个时间范围的用量汇总 |
+| `GET /stats/days` | 每个有用量的日期 |
+| `GET /stats/calls` | 逐次调用记录，可筛选、分页 |
+| `GET /stats/live` | 进行中调用的 SSE 实时流 |
+| `DELETE /stats` | 清空用量统计 |
+| `/playground/*` | 见 [Playground API](/docs/api-playground) |
+
+此外，服务器根路径的 `GET /health` 也是不需要密钥的存活探针，返回 `{"status": "ok"}`。
+
+## 应用
+
+`GET /app/health` 返回 `{"status": "ok", "auth_required": true}`，`auth_required` 表示是否设置了工具访问密钥。网页界面用它决定是否显示登录框。
+
+`GET /app/meta` 返回：
+
+| 字段 | 说明 |
+| --- | --- |
+| `version` | 版本号 |
+| `auth_required` / `model_api_key_configured` | 是否设置了工具访问密钥 / 模型 API 密钥 |
+| `local` | 这个请求是否来自服务器本机 |
+| `api_prefix` | 嵌入到其他应用时的路径前缀，独立运行时为空 |
+| `data_dir` / `config_path` | 数据目录和配置文件路径 |
+| `default_model` | 默认模型，没有时为 `null` |
+| `providers` / `accounts` | 已启用的渠道数和账号数（不含匿名账号） |
+
+`GET /app/update` 返回 `status`、`current`、`latest`（PyPI 上最新的正式版本，知道后才有）和 `checked_at`（最近一次成功检查的 Unix 秒）。`status` 为 `checking`（首次检查尚未完成）、`available`、`current`、`failed`（还没有成功过；之后的失败保留上次的结果）或 `disabled`（`server.check_updates` 关闭）。
+
+## 设置
+
+`GET /settings` 返回当前设置：`data_dir`、`config_path`、`server`（地址、端口、`strict_port`、`access_token_configured`、`model_api_key_configured`、允许的 CIDR/主机/来源、`max_body_bytes`、`max_account_retries`、`default_model`、`auto_refresh`、`auto_checkin`、`check_updates`、`stats_keep_days`）、`providers`（每个渠道的 `id`、`enabled`、账号数、已设置的选项名、网络设置）、`network`、`playground`，以及：
+
+- `restart_required`：保存的 `server.host` / `server.port` 与本次启动时不同，需要重启才生效。
+- `listening`：实际监听的套接字，`port` 为绑定的端口，`requested_port` 为开始尝试的端口，`fallback` 表示请求的端口被占用而改用了其他端口（这不是需要重启的原因）。
+
+密钥本身永远不会返回。
+
+`PATCH /settings` 的请求体是部分配置，按 `config.json` 的结构深度合并，校验通过后写入配置文件并应用到运行中的网关，返回新的设置：
+
+```bash
+curl -X PATCH $API/settings \
+  -H "Authorization: Bearer $ACCESS_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"server": {"default_model": "<model-id>", "model_api_key": "一个足够长的随机字符串"}}'
+```
+
+- `server.access_token` 或 `server.model_api_key` 设为 `null`（或空字符串）表示清除。
+- 无效的值返回 `400` 并说明原因，例如绑定非回环地址却没有同时设置 `security.allow_cidrs` 和 `server.access_token`。
+- 改了监听地址或端口时，`restart_required` 变为 `true`。
+
+配置项的含义见[配置文件](/docs/config)。
+
+## 渠道与账号
+
+`GET /providers` 的每一项：`id`、`display_name`、`accounts`（不含匿名账号）、`account_ids`、`models`（已缓存的模型数，从不为此请求上游）、`enabled`、`keyless`（无需账号即可使用）、`requires_authorization`（需要登录或 Key 才能使用）。已配置但关闭的渠道、可以登录或填 Key 但尚未配置的渠道也会列出。
+
+`GET /provider-forms` 列出每个渠道添加账号时可用的方式（`method`）及字段（`key`、`kind`、`required`、`choices`）和默认值。
+
+`POST /providers/{provider_id}/accounts` 追加一个账号，请求体中的 `account` 与写在 `config.json` 里的形式完全相同：
+
+```bash
+curl -X POST $API/providers/<provider-id>/accounts \
+  -H "Authorization: Bearer $ACCESS_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"account": {"api_key": "<上游的 API Key>"}}'
+```
+
+```json
+{"provider": "<provider-id>", "account": "<provider-id>-0", "accounts": 1}
+```
+
+- 只追加，不替换已有账号；渠道先检查账号是否可用，不可用时返回 `400`。
+- 没有写 `id` 时自动生成 `<渠道>-<序号>` 形式的 id；`id` 已存在时返回 `409`；渠道不存在时返回 `404`。
+- 渠道处于关闭状态时会被重新启用。账号同时写入配置文件和运行中的账号池。
+
+`DELETE /providers/{provider_id}/accounts/{account_id}` 从配置文件和运行中的账号池删除账号，返回 `{"provider", "account", "removed_from_config"}`；从旧版数据目录导入、不在 `config.json` 中的账号只从账号池删除，此时 `removed_from_config` 为 `false`。两处都找不到时返回 `404`。
+
+`GET /stations` 列出 `agg` 账号可以用 `preset` 指定的站点：`id`、`display_name`、`base_url`、`key_env`（只是告诉你该准备哪个 Key，Hoshimi 不读取这个环境变量）、`catalog_keyless`。见 [聚合入口 agg](/docs/providers-agg)。
+
+`GET /channels` 一次返回渠道页需要的全部本地状态，不向上游发请求（余额需要请求上游，所以不在其中，见 `/credits`）：
+
+- 每个渠道：`id`、`display_name`、`enabled`、`keyless`、`configured`、`loginable`、`addable`、`forms`、`models`、`options`、`network`、`diagnostics`、`quota`（被动额度）、`accounts`、`usage_today`、`recent_checkins`（最近 5 次签到结果）和 `status`。
+- `status`：`ok`；`attention`（仍可使用但有需要处理的问题：需要登录、令牌过期、账号被冷却、被限流或额度低于 10%）；`disabled`（被关闭）；`empty`（没有可用的账号）。
+- 每个账号：`needs_login`、`refreshable`、`expires_at`（毫秒时间戳）、`failures`、`last_error`、`last_ok`、`cooled_reason`、`cooled_seconds`、`usage_today`、`last_used_at`。
+- 顶层还有 `checkin`（每日签到的状态）、`auto_refresh`、`auto_checkin`。
+
+`GET /network/diagnostics` 返回每个渠道每类网络操作最近一次的观测：`provider`、`operation`、`kind`（如 `timeout`、`proxy_error`、`connection_error`、`rate_limited`）、`status`、`at`、`host`、`route`。网络设置见[网络与代理](/docs/config-network)。
+
+## 模型目录
+
+`GET /models` 返回 `levels`（三档输出预算 `light`、`balanced`、`deep`）和 `data`。`data` 的每一项：
+
+| 字段 | 说明 |
+| --- | --- |
+| `id`、`provider`、`name` | 模型 id、所属渠道、显示名称 |
+| `wire` | 上游协议：`chat`、`responses`、`messages` 等 |
+| `vision`、`reasoning`、`tools` | 能否看图、是否推理、能否调用工具（`tools` 为 `null` 表示未知） |
+| `context_window`、`max_output` | 上下文长度和最大输出（`0` 表示未知） |
+| `can_disable_thinking` | 能否关闭思考 |
+| `region_sensitive` | 可用性是否受地区影响 |
+| `free` | 站点是否声明免费，`null` 表示未说明 |
+| `efforts`、`effort_default` | 推理选项（`id`、`name`、`description`、`is_default`、`tokens`）和默认档位 |
+| `probe` | 最近一次可用性探测的结果，没有探测过时为 `null` |
+| `unavailable` | 是否被暂时停用（站点对所有账号回答了 404/410） |
+
+`GET /catalog/stream` 是 SSE：先发一个 `snapshot` 事件，列出每个渠道的缓存模型（状态 `loading`）；然后每个渠道刷新完成时发一个 `provider` 事件（状态 `ready`、`failed` 或 20 秒后的 `timeout`，附带 `error`、`last_success`、`retry_at`、`source`）；最后发 `done`。等待期间发送 `: keep-alive` 注释。
+
+`POST /models/unavailable/reset` 解除所有被暂时停用的模型，返回 `{"cleared": <数量>}`。
+
+## 可用性探测
+
+`GET /probe` 返回 `running`、`at`（上一轮结束时间）、`results`（模型 → `state`、`detail`、`latency_ms`、`ttft_ms`、`at`）。`state` 为 `available`、`region-blocked`、`unavailable`、`throttled` 或 `unknown`。
+
+`POST /probe` 在后台开始一轮探测，请求体可选：
+
+```json
+{"models": ["<model-id>", "opencode/<model-id>"]}
+```
+
+不写 `models` 或为空数组时，探测所有需要探测的渠道的全部模型。返回同样的快照，另有 `started`（是否真的开始了新一轮；已有一轮在运行时为 `false`，轮次不会叠加）和 `unresolved`（无法解析的模型名）。探测的含义见[模型与账号行为](/docs/advanced-models)。
+
+## 凭据续期
+
+`GET /refresh` 返回 `auto_refresh` 和每个账号的 `provider`、`account`、`refreshable`、`needs_login`、`expires_at`、`failures`、`last_error`、`last_ok`。
+
+`POST /refresh` 立即续期即将到期的凭据，请求体可选：`{"provider": "<渠道>", "force": true}`（`force` 表示不管是否到期，续期所有可续期的账号）。返回每个账号的结果：`ok`、`persisted`（新凭据已写入配置）、`terminal`（站点拒绝了刷新令牌，需要重新登录）、`error`。
+
+## 余额与签到
+
+| 接口 | 参数 | 返回 |
+| --- | --- | --- |
+| `GET /credits` | `provider`（可选） | `rows`（每个账号的 `available`、`unit`、`message`，会请求上游）、`passive`（从正常响应头读到的剩余额度，超过 5 分钟标为 `stale`）、`cooled`（被移出轮换的账号、原因 `rate_limited` 或 `policy_blocked`、剩余秒数）、`checkin` |
+| `GET /credits/checkins` | `provider`（可选）、`limit`（1–500，默认 50） | 签到历史，新的在前，包括每日自动签到和手动领取；保留 365 天 |
+| `POST /credits/claim` | 请求体 `{"provider": "<渠道>"}`，省略表示所有渠道 | 每个账号的 `status`、`credits`、`covers_today`、`message`；当天已签过的站点回答 `already` |
+
+## 登录
+
+浏览器授权和设备码登录分几步完成：
+
+<Steps>
+<Step>
+
+### 开始
+
+```bash
+curl -X POST $API/login/start \
+  -H "Authorization: Bearer $ACCESS_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider": "<渠道>"}'
+```
+
+返回一个会话：`id`、`provider`、`status`、`login_url`（站点给出后出现）、`user_code` 和 `instructions`（设备码登录时）、`expires_at`、`waiting_for`、`message`。`GET /login/providers` 列出可以登录的渠道。
+
+</Step>
+<Step>
+
+### 轮询
+
+```bash
+curl -H "Authorization: Bearer $ACCESS_KEY" "$API/login/poll?session_id=<会话 id>"
+```
+
+在浏览器中打开 `login_url` 完成授权，然后轮询直到 `status` 从 `pending` 变为 `succeeded`（`account_id` 为新账号）或 `failed`（`message` 说明原因）。会话不存在时返回 `404`。
+
+</Step>
+<Step>
+
+### 提交输入或取消
+
+站点需要额外输入时（`waiting_for` 不为空），用 `POST /login/input` 提交 `{"session_id": "…", "value": "…"}`。`POST /login/cancel?session_id=<会话 id>` 取消一个进行中的登录。
+
+</Step>
+</Steps>
+
+各站点的登录方式见[渠道](/docs/guide-channels)。
+
+## 用量统计
+
+`GET /stats` 的参数：
+
+| 参数 | 说明 |
+| --- | --- |
+| `range` | `24h`、`day`、`7d`（默认）、`30d`、`90d` |
+| `date` | `range=day` 时的日期 `YYYY-MM-DD`（服务器本地时间，默认今天）；未来或格式错误的日期返回 `400` |
+
+返回 `totals`、`previous`（紧挨着的前一个同长时段；`day` 为前一天，今天则只比到同一时刻）、`latency`（首 Token 时间和生成速度的平均值、中位数、P95）、补零的 `series`、按模型/渠道/账号/来源的明细、`lifetime`，以及 `since`、`until`（不含）、`date`、`granularity`、`hourly`、`server_time`。`24h` 和 `day` 按小时（夏令时切换的一天为 23 或 25 小时），其余按天；小时数据保留 120 天，按天数据永久保留，没有小时数据的日子 `hourly` 为 `false`。
+
+`GET /stats/days` 返回每个有用量的本地日期（`date`、`calls`、`tokens`、`failed`），从旧到新，以及 `first` 和 `today`，供日历使用。
+
+`GET /stats/calls` 返回逐次调用，新的在前，覆盖整个保留期（`server.stats_keep_days`，默认 90 天）：
+
+| 参数 | 说明 |
+| --- | --- |
+| `limit` | 1–200，默认 50 |
+| `before` | 分页游标：上一页返回的 `next` |
+| `model`、`provider`、`origin`、`ok` | 精确筛选；`origin` 如 `chat`、`responses`、`messages`、`classify`、`playground` |
+| `account` | 账号 id，或 `渠道/账号` |
+| `since`、`until` | ISO 8601 时间（带时区；不带时按服务器本地时间），`until` 不含 |
+| `q` | 在模型、渠道、账号、错误代码、错误消息、结束原因中不区分大小写地搜索 |
+
+每条记录包括 `seq`、`at`、`model`、`provider`、`account`、`origin`、`effort`、`stream`、`ok`、各类 Token 数、`ttft_ms`、`tps`、`elapsed_ms`、`attempts`、`finish_reason`、`error_code`、`error_message` 等。
+
+`DELETE /stats` 清空所有计数和调用记录，返回 `{"cleared_at": …}`；正在进行的调用结束时仍会被记录。
+
+`GET /stats/live` 是 SSE，每帧 `data: <json>`：先发一个 `snapshot`（进行中的调用、今日合计、最近的调用），之后是 `started`、`progress`、`finished` 事件；每 15 秒发一次 `ping`。读取太慢跟不上时流会结束，重新连接会得到新的快照。进行中调用的 Token 数是按字符数估算的。用量的记录方式见[用量统计](/docs/advanced-usage)。

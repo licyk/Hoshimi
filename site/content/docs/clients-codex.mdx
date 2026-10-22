@@ -1,0 +1,94 @@
+---
+title: "Codex"
+description: "在 Codex CLI 的 config.toml 中把 Hoshimi 添加为模型提供方，通过 Responses 接口使用网关里的任意模型；包括推理强度、工具调用和常见问题。"
+icon: Terminal
+---
+
+Codex CLI 通过 OpenAI Responses 协议调用模型，可以在配置里添加自定义的模型提供方。把 Hoshimi 添加进去后，Codex 就能使用网关目录中的任何模型：Hoshimi 把 Responses 请求转换成上游各自的协议。
+
+<Callout type="info" title="不要和 codex 渠道混淆">
+
+本页讲的是把 Codex CLI 作为客户端接到 Hoshimi。Hoshimi 自己也有一个名为 `codex` 的渠道，用 ChatGPT 账号登录后把 Codex 的模型提供给网关，那是另一回事，见[渠道概念](/docs/providers)。
+
+</Callout>
+
+## 配置
+
+<Steps>
+<Step>
+
+### 找到模型 id
+
+在 **模型** 页或用 `curl http://127.0.0.1:10600/v1/models` 选一个支持工具调用的模型。Codex 会大量使用工具，**模型** 页标有 **工具调用** 的模型更合适。
+
+</Step>
+<Step>
+
+### 编辑 config.toml
+
+Codex 的配置在 `~/.codex/config.toml`（设置了 `CODEX_HOME` 时在该目录下）。添加一个提供方并设为默认：
+
+```toml
+model = "<model-id>"
+model_provider = "hoshimi"
+
+[model_providers.hoshimi]
+name = "Hoshimi"
+base_url = "http://127.0.0.1:10600/v1"
+env_key = "HOSHIMI_API_KEY"
+wire_api = "responses"
+```
+
+- `base_url` 带 `/v1`。
+- `env_key` 是保存密钥的环境变量名，Codex 把它的值以 `Authorization: Bearer` 发送。
+- `wire_api = "responses"` 让 Codex 调用 `/v1/responses`。
+
+</Step>
+<Step>
+
+### 设置密钥并运行
+
+```bash
+export HOSHIMI_API_KEY="你的模型 API 密钥"   # 没有设置模型 API 密钥时随便填一个非空值
+codex
+```
+
+临时换模型：
+
+```bash
+codex -m "<另一个-model-id>"
+codex exec "总结这个仓库的结构"
+```
+
+</Step>
+</Steps>
+
+## 推理强度
+
+在 `config.toml` 中设置，或在命令行上用 `-c` 覆盖：
+
+```toml
+model_reasoning_effort = "low"
+```
+
+```bash
+codex -c model_reasoning_effort=high
+```
+
+Codex 以 `reasoning.effort` 发送，Hoshimi 换算成该模型自己的级别，规则见 [OpenAI 兼容接口](/docs/api-openai)。模型的推理内容会作为 `reasoning` 项返回，Codex 显示为思考过程。
+
+## 工具调用
+
+Codex 的命令执行等工具都是 `function` 类型，Hoshimi 会转换后交给上游，模型发出的调用再转换回 Codex。Codex 同时发送的 `web_search` 等内置工具和 `namespace` 类型的工具不是 `function`，Hoshimi 会忽略它们，模型看不到这些工具。
+
+Codex 每一轮都发送完整的 `input` 并设置 `store: false`，正好符合 Hoshimi 无状态的 Responses 接口。
+
+## 常见问题
+
+| 现象 | 说明 |
+| --- | --- |
+| `Model metadata for '<id>' not found. Defaulting to fallback metadata` | Codex 不认识这个模型名时打印的警告，请求照常发送 |
+| `stream disconnected before completion: stream closed before response.completed` | 流开始后上游返回了错误，Hoshimi 用错误事件结束了流，Codex 重连几次后放弃。打开 **用量** 页查看这次调用的错误信息。在本地测试中，同样的工具调用任务有的模型能完成，有的模型在第二轮被上游以 `HTTP 400` 拒绝，换一个模型通常可以解决 |
+| `401` | 设置了模型 API 密钥，但 `env_key` 指向的环境变量为空或值不对 |
+| `404`，`Model '…' not found` | `model` 不在目录中；可以写成 `渠道/模型` 指定渠道 |
+| `400`，`previous_response_id` | 不会出现在 Codex 的默认配置中；Hoshimi 不保存响应，见[接入客户端](/docs/clients) |

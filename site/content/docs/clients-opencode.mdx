@@ -1,0 +1,96 @@
+---
+title: "OpenCode"
+description: "在 opencode.json 中把 Hoshimi 添加为 OpenAI 兼容的提供方，让 OpenCode 使用网关里的模型；包括密钥、模型列表、推理强度，以及它和 Hoshimi 的 OpenCode Zen 渠道的区别。"
+icon: Terminal
+---
+
+OpenCode 可以通过 `@ai-sdk/openai-compatible` 接入任何 OpenAI 兼容的服务。把 Hoshimi 配置成一个提供方后，OpenCode 用 Chat Completions 调用网关，网关再把请求转给各个渠道。
+
+<Callout type="info" title="不要和 OpenCode Zen 渠道混淆">
+
+本页讲的是把 OpenCode 这个编程助手作为客户端接到 Hoshimi。Hoshimi 自带的 `opencode` 渠道是反过来的：它连接 OpenCode Zen 的免费模型，提供给网关的所有客户端使用，见[匿名入口](/docs/providers-anonymous)。两者可以同时使用。
+
+</Callout>
+
+## 配置
+
+<Steps>
+<Step>
+
+### 写 opencode.json
+
+在项目根目录的 `opencode.json`（只对这个项目生效）或全局配置 `~/.config/opencode/opencode.json` 中添加：
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "hoshimi": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Hoshimi",
+      "options": {
+        "baseURL": "http://127.0.0.1:10600/v1",
+        "apiKey": "{env:HOSHIMI_API_KEY}"
+      },
+      "models": {
+        "<model-id>": { "name": "显示名称" },
+        "<另一个-model-id>": { "name": "另一个显示名称" }
+      }
+    }
+  },
+  "model": "hoshimi/<model-id>"
+}
+```
+
+- `baseURL` 带 `/v1`。
+- `apiKey` 用 `{env:HOSHIMI_API_KEY}` 从环境变量读取模型 API 密钥。
+- `models` 中的键是 Hoshimi 的模型 id（`/v1/models` 中的 `id`，或 `渠道/模型`），值里的 `name` 是 OpenCode 中显示的名字。列在这里的模型会出现在 OpenCode 的模型列表中。
+- 顶层的 `model` 是默认模型，格式为 `提供方/模型`，这里的提供方是 `hoshimi`。
+
+</Step>
+<Step>
+
+### 设置密钥并运行
+
+```bash
+export HOSHIMI_API_KEY="你的模型 API 密钥"   # 没有设置模型 API 密钥时随便填一个非空值
+opencode
+```
+
+单次运行或换模型：
+
+```bash
+opencode run "读一下 README 并总结"
+opencode run -m "hoshimi/<另一个-model-id>" "读一下 README 并总结"
+```
+
+</Step>
+</Steps>
+
+## 推理强度
+
+在模型的 `options` 中设置 `reasoningEffort`，OpenCode 会以 `reasoning_effort` 发送：
+
+```json
+"models": {
+  "<model-id>": {
+    "name": "显示名称",
+    "options": { "reasoningEffort": "high" }
+  }
+}
+```
+
+可以写 `low`、`medium`、`high` 等，也可以写模型自己的级别名；Hoshimi 的换算规则见 [OpenAI 兼容接口](/docs/api-openai)，各模型的级别见 **模型** 页。
+
+## 工具调用
+
+OpenCode 的读文件、搜索、执行命令等工具以 Chat Completions 的 `function` 工具发送，模型的调用原样转换回 OpenCode 执行。选择 **模型** 页标有 **工具调用** 的模型。
+
+## 通过 OpenCode Zen 渠道使用免费模型
+
+用 Hoshimi 默认启用的 `opencode` 渠道上的模型（如 `/v1/models` 中 `owned_by` 为 `opencode` 的那些）时，有两点和客户端有关：
+
+- 匿名通道会按对话生成会话 ID，来源依次是请求体中的 `session_id`、`conversation_id`、`user`，都没有时取第一条用户消息。两个以相同开场白开始的独立对话会共用会话。
+- 匿名通道会额外声明上游要求的 `read`、`shell` 两个工具。客户端没有声明的工具，模型调用了也不会交给客户端：Hoshimi 会告诉模型这个工具不可用并让它继续回答。
+
+渠道本身的协议细节、匿名与 API Key 账号的区别见[匿名入口](/docs/providers-anonymous)。

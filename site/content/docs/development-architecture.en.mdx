@@ -1,0 +1,207 @@
+---
+title: "Architecture"
+description: "The core / api / cli / webui layers and the layering rule, how Services is assembled and updated while running, the app factory, error mapping, and one model request from start to end."
+icon: Layers
+---
+
+Hoshimi's code has four layers, and dependencies run one way: `api` and `cli` depend on `core`; `core` depends on neither and imports no framework. Both entry points, the server and the command line, get the same `Services` from `build_services()` and wrap it in HTTP routes or commands of their own. This page covers the layering rule first, then `Services`, the app factory and errors, and finally follows one request all the way through.
+
+## The layering rule
+
+| Layer | May import | Must not import |
+| --- | --- | --- |
+| `hoshimi/core` | The standard library, httpx, pydantic, cryptography and the optional cloud SDKs | `fastapi`, `starlette`, `typer`, `click`, `socketio`, `uvicorn`, `rich`; `hoshimi.api`, `hoshimi.cli` |
+| `hoshimi/api` | `core`, FastAPI, Starlette | `hoshimi.cli` |
+| `hoshimi/cli` | `core`, Typer, Rich; the `serve` command starts the `api` app | — |
+| `hoshimi/webui` | Talks to the server over HTTP only | Python code |
+
+Two tests keep the rule:
+
+- `tests/core/test_architecture.py` parses the imports of every file under `hoshimi/core` and fails on any framework the table forbids; it also checks that no file there mentions `hoshimi.api` or `hoshimi.cli`. httpx is allowed, because the provider adapters are HTTP clients of their own upstream stations.
+- `tests/test_package_api.py` imports `hoshimi` in a fresh process and requires that neither `fastapi` nor `httpx` was loaded, and that the lazily exported `Services`, `build_services` and `create_app` are the very objects in the implementation modules.
+
+What this buys: the domain logic can be tested and reused without a server, and the domain exceptions (`hoshimi/core/errors.py`) are mapped to HTTP responses by the API and to exit codes by the command line, while `core` stays out of it.
+
+## The modules of `core`
+
+| Area | Modules |
+| --- | --- |
+| Assembly | `context.py` (`Services`, `build_services`), `config.py` (`Settings`, reading and writing `config.json`), `paths.py` (the data folder) |
+| Routing and providers | `registry.py` (model name to provider), `providers/` (adapters), `provider_definitions.py` (services defined as data), `provider_forms.py` (account form descriptions), `presets.py` (agg presets), `credentials.py` |
+| Protocols | `chunks.py` (normalized chunks and the Chat Completions / Responses output), `message_chunks.py` (Anthropic Messages output), `native_messages.py` (native Messages pass-through), `translate/`, `sse.py` |
+| Model capabilities | `catalog.py` (`ModelSpec` and each station's capability table), `chat_catalog.py`, `modelsdev.py`, `free_marks.py`, `effort.py` (the reasoning-effort policy), `probe.py`, `discovery.py` |
+| Failures and quota | `failure.py` (failure classification, account cooldowns, dead models), `quota.py` |
+| Account upkeep | `refresh.py` (credential renewal), `expiry.py`, `credits.py` (check-in and balances), `login/` (interactive logins), `eac_*.py` |
+| Records | `db.py` (`hoshimi.db`), `stats.py`, `live.py`, `conversations.py`, `record.py` (the base class for records that cross the API boundary) |
+| Network | `net/` (clients, proxy policy, port binding, `server.json`) |
+| Other | `security.py` (access key, CIDR, Host and CORS checks), `updates.py` (asks PyPI for a newer release), `agent/` (the Playground's tools) |
+
+## Services
+
+`Services` in `hoshimi/core/context.py` is everything a command or a request handler needs:
+
+| Field | Contents |
+| --- | --- |
+| `settings` | The effective configuration (`config.json` plus command-line overrides) |
+| `registry` | The enabled providers and their HTTP clients; routes model names to providers |
+| `db` | The one `hoshimi.db` connection the stores below share |
+| `probe` | The last availability verdict per model |
+| `stats` | Usage accounting; `stats.live` is the calls in flight |
+| `refresher` | Renews credentials on a timer |
+| `credits` | Daily check-in and balances |
+| `login` | Interactive login sessions (`LoginManager`) |
+| `updates` | Asks PyPI in the background whether a newer release exists |
+| `conversations` | The Playground's conversations |
+| `agent` | Background commands and approvals of the Playground's tools |
+
+`build_services(settings=None)` reads `config.json` from the data folder when no settings are given, then: collects each provider's accounts and options from the configuration (`pool_inputs`) and builds the `Registry` from them; opens `hoshimi.db` in the data folder, one connection for every store; and creates the renewal, check-in, login and update services. When a browser login files a new account, the login manager rebuilds the provider pool from the new configuration at once.
+
+A `Services` built directly (tests, embedders) needs only `settings` and `registry`; the other stores keep their rows in memory by default, and the timer services are `None`.
+
+### Updating the configuration while running
+
+Saving settings in the Web UI calls `Services.apply_settings(new)`, without a restart:
+
+- The pool is rebuilt only when **its inputs** (each provider's accounts, options and disabled state) changed; a change such as the port rebuilds nothing. On a rebuild, providers whose configuration did not change are kept as they are, so what they hold in memory (which account's refresh token was refused, which account is cooling down) survives; a provider whose network options alone changed is kept as well, with only its route updated.
+- Every service that holds the settings object (renewal, check-in, login, update checks, the network client) is pointed at the new one, so none of them later writes the old configuration back over the file.
+- Switching `server.check_updates` starts or stops the update timer at once.
+
+`Services.close()` stops the timers, closes the Playground's background commands and the providers' HTTP clients, writes the last batch of usage records, then closes the database. Calling it twice is safe.
+
+## The app factory
+
+`create_app(services, ...)` in `hoshimi/api/app.py` builds the FastAPI app:
+
+| Parameter | What it does |
+| --- | --- |
+| `services` | All of the app's services, kept in `app.state.services`; routes get them through the `ServicesDep` dependency |
+| `bound_host`, `bound_port`, `requested_port` | The address actually bound and the port asked for; the Settings page uses them to say "the port was taken, so another was used" or "restart needed" |
+| `extra_hosts` | Additional allowed `Host` headers |
+| `serve_ui` | Whether to serve the Web UI (`hoshimi serve --no-ui` and the tests pass `False`) |
+| `api_prefix` | Moves the API and the Web UI together under one path, to mount Hoshimi inside another application |
+
+What it does:
+
+1. Validates the security settings; on a problem it raises `ValidationError` and the server does not start.
+2. Lifespan: on startup it starts the timers that `server.auto_refresh`, `server.auto_checkin` and `server.check_updates` turn on, and tidies the temporary conversations the previous process left; on shutdown it calls `services.close()`.
+3. Routes: `/health`; the management routers under an `/api` prefix (they carry `/v1` themselves, so `/api/v1/...`); the model routes under `/v1` (Chat Completions, Responses, the model list, TypeSafe classification, Anthropic Messages). The interactive docs are at `/docs`, the OpenAPI document at `/openapi.json`; ReDoc is off.
+4. Middleware: CORS when `security.allow_origins` is set; gzip for responses of 4096 bytes and more; `SecurityMiddleware`, which checks the `Host` header, a browser request's origin, whether the client address is inside the allowed CIDRs, and the access key (management API and docs) and the model API key (`/v1/`). The rules are in [Security](/docs/config-security).
+5. Last, the Web UI (`SPAStaticFiles`): it receives only paths no other route matched; hashed files under `assets/` are cached for a year, `index.html` never; an unknown path that accepts HTML falls back to `index.html`, any other unknown path is still a 404. With no build, it logs a warning and serves the API only.
+
+To embed Hoshimi in another ASGI application:
+
+```python
+from hoshimi import build_services, create_app
+
+app = create_app(build_services(), api_prefix="/gateway")
+```
+
+The Web UI derives its root from the URL of its own script, so it needs no change under a prefix.
+
+## Errors
+
+`hoshimi/core/errors.py` defines the domain exceptions, each with a code, an HTTP status and a command-line exit code:
+
+| Exception | `code` | HTTP | Exit code |
+| --- | --- | --- | --- |
+| `HoshimiError` | `internal_error` | 500 | 1 |
+| `NotFoundError` | `not_found` | 404 | 2 |
+| `ModelNotFoundError` | `model_not_found` | 404 | 2 |
+| `ConflictError` | `conflict` | 409 | 3 |
+| `ValidationError` | `invalid_input` | 400 | 4 |
+| `UpstreamError` | `upstream_error` | 502 | 5 |
+| `ModelUnavailableError` | `model_unavailable` | 503 | 5 |
+
+A provider's `ProviderError` (see [Provider adapters](/docs/development-providers)) is a subclass of `UpstreamError` that carries the upstream status: when the upstream answered with a 4xx or 5xx, that status goes to the client unchanged.
+
+`hoshimi/api/errors.py` picks the error's shape by path:
+
+- `/v1/messages` and `/v1/messages/count_tokens`: Anthropic's `{"type": "error", "error": {"type", "message"}}`; an upstream error on the native pass-through returns the upstream's own body and headers.
+- Any other `/v1/` path: OpenAI's `{"error": {"message", "type", "code"}}`.
+- The management API: `{"code", "message", "detail"}`.
+
+The command line's `main()` catches `HoshimiError`, logs its message and exits with its exit code; <kbd>Ctrl</kbd>+<kbd>C</kbd> exits with 130, and any other unexpected exception prints a traceback and exits with 1.
+
+## One request, end to end
+
+Taking `POST /v1/chat/completions`:
+
+<Mermaid
+  chart={`flowchart TD
+  A["Client POST /v1/chat/completions"] --> B["SecurityMiddleware"]
+  B --> C["routers/chat.py"]
+  C --> D["prepare_request"]
+  D --> E["tracked_chunks: stats.turn"]
+  E --> F["Registry.stream"]
+  F --> G["Provider.stream_using: account rotation"]
+  G --> H["stream_raw: upstream protocol"]
+  H --> I["normalized chunks"]
+  I --> J["emit_chat_chunks"]
+  J --> K["SSE frames and [DONE]"]`}
+/>
+
+<Steps>
+<Step>
+
+### Middleware and route
+
+`SecurityMiddleware` checks the `Host`, the origin, the client address and the model API key first. The route function is thin: it parses the body, calls into `core` and turns the result into a response.
+
+</Step>
+<Step>
+
+### Preparing the request
+
+`prepare_request` in `hoshimi/api/inference.py` fills in the default model when the request has no `model` (`server.default_model`, or the pool's default), and refuses with `ValidationError` when there is none; it also gives the request a `prompt_cache_key` (one the request brings is kept).
+
+</Step>
+<Step>
+
+### Counting it
+
+`tracked_chunks` opens the usage record (`stats.turn`) before any provider is asked, so even a request that fails to route is counted. The reasoning effort is recorded as the level the request actually carries; the account that answered is reported by the pool when the first chunk arrives (`on_route`).
+
+</Step>
+<Step>
+
+### Routing to a provider
+
+`Registry.resolve` turns the model name into a provider and an upstream model name:
+
+1. `provider/model` whose prefix is an enabled provider: that provider.
+2. A bare model name: the first provider, in provider order (`PROVIDER_ORDER`), whose catalogue has it.
+3. No catalogue has it but only one provider is enabled: passed through to that provider.
+4. Otherwise `model_not_found`.
+
+`Registry.stream` then applies the reasoning-effort policy (turning the level into the model's own wire spelling) and checks the dead-model record: once every account answered 404/410 for a model, it is noted for a while, and requests for it are refused at once with `model_unavailable` (503) instead of asking the upstream again.
+
+</Step>
+<Step>
+
+### Account rotation and the upstream protocol
+
+`Provider.stream_using` tries the provider's accounts in turn: a failed credential is renewed and then rotated, an account out of allowance cools down for a while, and a saturated model stops the round at once. The chosen account sends the request in the upstream's own protocol through `stream_raw`, which turns the upstream stream into **normalized chunks**. The details are in [Provider adapters](/docs/development-providers).
+
+</Step>
+<Step>
+
+### The public protocol
+
+`emit_chat_chunks` turns normalized chunks into `chat.completion.chunk` objects, the route writes them as SSE frames and ends with `data: [DONE]`. A failure after the headers went out becomes an error frame, not a 500. With `stream: false`, `aggregate_chat` folds the same chunks into one `chat.completion`.
+
+</Step>
+</Steps>
+
+The other protocols share this path; only its two ends differ:
+
+| Endpoint | On the way in | On the way out |
+| --- | --- | --- |
+| `/v1/chat/completions` | As is | `emit_chat_chunks` / `aggregate_chat` |
+| `/v1/responses` | `responses_to_chat` turns it into a Chat request | `emit_responses_events` / `aggregate_responses` |
+| `/v1/messages` | Passed through whole when the provider has a native Messages endpoint (`Registry.native_messages`); otherwise `messages_to_chat` | Passed through, or `emit_messages_events` / `aggregate_messages` |
+
+A streamed Messages response sends `event: ping` every 15 seconds while the upstream is thinking, and closes the upstream connection when the client goes away (`hoshimi/api/heartbeat.py`). The Playground's conversations use the same route and accounting path; only the origin the usage is filed under differs.
+
+## The command line
+
+`get_app()` in `hoshimi/cli/app.py` is the one place every command is registered; each command's implementation is in `hoshimi/cli/commands/`. Typer's private imports (`typer._click`) are confined to `hoshimi/cli/factory.py`, so a Typer release that moves them breaks there first, and the command-line tests catch it. Every command takes `--debug` to turn on debug logging. `python -m hoshimi` is the same as the `hoshimi` command.

@@ -1,0 +1,171 @@
+---
+title: "Settings"
+description: "The eight tabs of the Settings page: General, Tools, Access, Security, Network, Automation, Appearance and About, what each field does and the config key behind it."
+icon: Settings
+---
+
+**Settings** sits at the foot of the navigation and is split into eight tabs. The current tab is part of the address (such as `#/settings?tab=access`).
+
+Every field **saves on its own** as it changes; there is no overall save button. Switches and selections save at once, text and number fields when you leave them (or press Enter), and list fields each time a value is added or removed. A save shows **Saved**; a field that needs a restart shows **Saved · Takes effect after a restart.** An invalid value shows the reason and leaves the configuration unchanged.
+
+Apart from **Language** and **Appearance**, which are browser preferences, every setting is written to `config.json` in the data folder and applies to the running gateway at once. Each field below names its config key; the config file in full is described in [Configuration file](/docs/config). Changes made from the command line or by editing the file need a server restart; changes made here do not (except the listening address and port).
+
+A channel's own switch and network route are not here but in that channel's details on the [Channels](/docs/guide-channels) page.
+
+## General
+
+The **General** section:
+
+| Setting | Config key | What it does |
+| --- | --- | --- |
+| **Language** | None (browser) | **Auto detect (system language)**, English, 简体中文, 日本語 |
+| **Default model** | `server.default_model` | Used when a request does not name a model. Searchable; **None** means a request must name its model |
+
+The **Requests** section, limits applied to every request the gateway accepts:
+
+| Setting | Config key | Default | What it does |
+| --- | --- | --- | --- |
+| **Tries per request across accounts** | `server.max_account_retries` | 3 | How many accounts a request may rotate through before it fails; at least 1. The rotation rules are in [Models and reasoning effort](/docs/advanced-models) |
+| **Maximum request size (bytes)** | `server.max_body_bytes` | 16777216 (16 MiB) | Larger request bodies are refused. The arrows step by 1 MiB |
+
+The **Usage history** section:
+
+| Setting | Config key | Default | What it does |
+| --- | --- | --- | --- |
+| **Keep calls for (days)** | `server.stats_keep_days` | 90 | Older call records are removed; hourly totals are kept for 120 days and daily totals forever. The data is in `hoshimi.db` in the data folder. See [Usage](/docs/guide-usage) |
+
+The **Playground** section, how the Playground talks to models:
+
+| Setting | Config key | What it does |
+| --- | --- | --- |
+| **System prompt** | `playground.system_prompt` | Sent first in every Playground chat, from its next message on. Empty sends none |
+| **Title model** | `playground.title_model` | Names each new chat after its first reply. By default **The chat's own model** |
+| **Image model** | `playground.vision_model` | Describes images for models that cannot read them. **Automatic** (the default): the first available model that reads images; **Off**: images are left out for models that cannot read them; or a particular model that reads images |
+
+What these do in the Playground is in [Playground](/docs/guide-playground).
+
+## Tools
+
+The Playground's built-in tools let models that make tool calls read and edit files, run commands and search the web. This tab sets the defaults for **new chats**; each chat turns tools on or off and changes its approval mode from its composer. The full guide is [Playground tools](/docs/guide-agent).
+
+<Callout type="warn" title="There is no sandbox">
+
+Commands and file edits run on this computer with the permissions of the user running Hoshimi. There is no sandbox: turn on only what you need, and keep approvals on.
+
+</Callout>
+
+**Tools for new chats** (`playground.tools`, all off by default):
+
+| Switch | Config value | What it does |
+| --- | --- | --- |
+| **Read files** | `read` | Read text files and list folders |
+| **Edit files** | `apply_patch` | Create, change and delete files in the workspace |
+| **Run commands** | `shell` | Run a command and wait for its output |
+| **Background commands** | `terminal` | Start commands that keep running (servers, watchers), read their output, type into them and stop them |
+| **Search the web** | `web_search` | Search the web with DuckDuckGo, or with your own SearXNG |
+| **Read web pages** | `web_fetch` | Read public web pages as text; local and private network addresses are refused |
+
+**How tools run**:
+
+| Setting | Config key | Default | What it does |
+| --- | --- | --- | --- |
+| **When tools ask first** | `playground.approval` | **Ask first** (`ask`) | **Ask first**: before commands, file changes and anything outside the workspace; **Ask outside the workspace** (`auto`): commands and changes in the workspace run, reads and changes outside it ask; **Full access** (`full`): nothing asks. Calls that ask wait in the chat for your approval; the shield in a chat's composer changes the mode for that chat alone |
+| **Workspace** | `playground.workspace` | `workspace` in the data folder | Where tools start, and the only folder whose files they can edit. The help text shows the path in effect |
+| **Rounds of tool calls per reply** | `playground.max_steps` | 50 | 1 to 500. A reply that keeps calling tools answers with what it has after this many |
+| **SearXNG address** | `playground.search_url` | Empty | Search with your own SearXNG (its JSON format turned on); must be an `http://` or `https://` address. Empty uses DuckDuckGo |
+
+## Access
+
+The **Listening address** section (subtitle **Takes effect after a restart.**):
+
+| Setting | Config key | Default | What it does |
+| --- | --- | --- | --- |
+| **Host** | `server.host` | `127.0.0.1` | The address the server binds; by default only this machine can connect |
+| **Port** | `server.port` | 10600 | The port the server tries first |
+| **Use only this port** | `server.strict_port` | Off | Off: when the port is taken, the server tries the next free one, up to 65535 and then from 1024. On: a taken port makes the start fail |
+
+Under them, **Listening on** *address* shows where the server listens right now. When the port was taken and another was used, it adds **Port 10600 was taken, so the server is on 10601.**; that describes this run and needs no restart. After you save a new host or port, a banner at the top says **The server listens on a different address than the saved** *host*:*port*. **Restart it to apply.**; restart `hoshimi serve`.
+
+The **Keys** section. The two keys are independent; leaving one empty turns off key checks for its APIs:
+
+| Setting | Config key | Protects |
+| --- | --- | --- |
+| **Tool access key** | `server.access_token` | Signing in to this interface, and the management API `/api/v1/*`, `/docs` and `/openapi.json` |
+| **Model API key** | `server.model_api_key` | The model API `/v1/*`, for agents and other clients; they send it as `Authorization: Bearer` or `x-api-key` |
+
+Type a key and click **Save** (or press Enter); **Clear** removes it. Keys are stored in the config file and never shown again: the interface only says **A tool access key is set.** or **A model API key is set.** After you save or clear the tool access key, this browser switches to the new key by itself; other browsers have to sign in again.
+
+<Callout type="warn" title="Before letting other machines in">
+
+Setting **Host** to an address other than this machine's (such as `0.0.0.0`) requires both a **Tool access key** and **Security › Allowed CIDRs**, or the save is refused: the gateway forwards requests with your upstream accounts' credentials. Setting a **Model API key** as well is recommended. The full steps are in [Access and security](/docs/config-security).
+
+</Callout>
+
+## Security
+
+Who may connect. Press Enter after each value, or paste several at once (separated by spaces or commas); the × on a value removes it.
+
+| Setting | Config key | What it does |
+| --- | --- | --- |
+| **Allowed CIDRs** | `security.allow_cidrs` | Networks that may connect, such as `10.0.0.0/8`. Loopback is always allowed |
+| **Allowed hosts** | `security.allow_hosts` | `Host` names that may connect, such as `gateway.example.com`. Empty allows any host |
+| **Allowed origins** | `security.allow_origins` | Browser pages on other origins that may call this API (CORS), such as `https://app.example.com`. Needs a tool access key first |
+
+Host and origin checks apply to requests with a key too; a key does not get around them. The detailed rules are in [Access and security](/docs/config-security).
+
+## Network
+
+The default network route for every channel (config key `network`). Choose under **Route**:
+
+| Option | Effect |
+| --- | --- |
+| **Automatic (environment proxy)** | The default. Reads `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY` (lowercase variables take precedence). **Use Windows system proxy when no environment proxy exists** can then be turned on |
+| **Direct** | No proxy at all |
+| **Proxy** | Enter an HTTP(S) or SOCKS5 address in **Proxy URL** and click **Save**; **Clear** goes back to automatic |
+
+The route is used for every request the gateway makes: model catalogue, inference, login, token refresh, balance, check-in, and the PyPI version check. A proxy address may hold a user name and password, so once saved the interface only says **Proxy configured; save to replace it.** A proxy that cannot be reached never falls back to a direct connection. Changes apply to new requests; streams already running finish on their original connections.
+
+When one channel needs a different route, **Per-channel routes** takes you to the Channels page, where the channel's **Network** section overrides it. See [Network and proxies](/docs/config-network).
+
+## Automation
+
+Two timers that keep the channels' accounts working:
+
+| Switch | Config key | Default | What it does |
+| --- | --- | --- | --- |
+| **Daily check-in** | `server.auto_checkin` | On | Claims each station's free credits once a day. **Today's check-in** under it says whether today is done, and the last round's result |
+| **Credential renewal** | `server.auto_refresh` | On | Renews tokens before they expire: every 30 minutes, accounts expiring within the hour are renewed |
+
+A pure gateway that should make no background requests can turn them off. Manual check-in and renewal are on the Channels page, with the rules in [Channels](/docs/guide-channels). For one run, `hoshimi serve --no-checkin --no-refresh` turns them off at start; see [Command reference](/docs/cli-commands).
+
+## Appearance
+
+These options are kept in the current browser and affect only it:
+
+| Setting | Options |
+| --- | --- |
+| **Theme** | **Light**, **Dark**, **System** (the default). The theme button in the top bar switches it too |
+| **Colour** | Pick a colour; the interface's palette is generated from it |
+| **Contrast** | **Standard** (the default), **Medium**, **High** |
+| **Motion** | **Follow system** (the default) or **Reduced**: short fades instead of slides and growth |
+
+## About
+
+| Item | Contents |
+| --- | --- |
+| **Version** | The Hoshimi version running |
+| **Data directory** | The folder holding the configuration, the database and the workspace |
+| **Config file** | The full path of `config.json` |
+| **Database** | The full path of `hoshimi.db`: usage, check-in history, probe verdicts and Playground chats are all in it |
+
+**Copy config path** copies the config file's path to the clipboard. With no tool access key there is also **API reference**, which opens the server's own API documentation (`/docs`). Where the data folder is and what is in it: [Data folder and paths](/docs/config-paths); on the command line, `hoshimi config path` prints the config file's path.
+
+## Settings that are not in the interface
+
+A few settings are only in `config.json`, such as `server.check_updates` (whether to ask PyPI for new versions) and the options in `providers.<id>.options` other than the network route and the Cline login method. Change them with `hoshimi config set` and restart the server:
+
+```bash
+hoshimi config set server.check_updates false
+```
+
+Every config key is in [Configuration file](/docs/config).

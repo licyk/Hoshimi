@@ -1,0 +1,156 @@
+---
+title: "Data directory and migration"
+description: "Where Hoshimi keeps its configuration, database and other files, what each holds and for how long, where the logs go, and how to back up, reset and migrate from older versions."
+icon: FolderOpen
+---
+
+All of Hoshimi's state lives in one data directory: the configuration file, the database that records usage and conversations, and a few files meant for people or other programs to read. Moving, backing up or resetting Hoshimi means dealing with this one folder.
+
+## Where the data directory is
+
+| System | Default location |
+| --- | --- |
+| Linux | `~/.local/share/hoshimi`, or `$XDG_DATA_HOME/hoshimi` when `XDG_DATA_HOME` is set |
+| macOS | `~/Library/Application Support/hoshimi` |
+| Windows | `%APPDATA%\hoshimi` |
+
+The `HOSHIMI_DATA_DIR` environment variable moves it anywhere (`~` is expanded and the path is made absolute). The server and every command find the data directory through this variable, so for `hoshimi config`, `hoshimi login` and the rest to work on the same data, set the same value wherever you run them:
+
+```bash
+export HOSHIMI_DATA_DIR=/srv/hoshimi
+hoshimi config path          # /srv/hoshimi/config.json
+hoshimi serve
+```
+
+```powershell
+$env:HOSHIMI_DATA_DIR = "D:\hoshimi"
+hoshimi serve
+```
+
+To see the location in use:
+
+- `hoshimi config path` prints the config file's path; its folder is the data directory;
+- `hoshimi env` lists the environment variables Hoshimi reads and the ones currently set;
+- the Web UI's **Settings** › **About** shows the **Data directory**, **Config file** and **Database**;
+- `GET /api/v1/settings` returns `data_dir` and `config_path`.
+
+## What is in it
+
+```text
+<data directory>/
+├── config.json                 settings and channel accounts
+├── config.json.corrupt-<time>  copy of a file that could not be parsed
+├── hoshimi.db                  database: usage, check-ins, probe verdicts, Playground conversations
+├── hoshimi.db-wal / -shm       SQLite write-ahead log files
+├── server.json                 address, port and process id of the running server
+├── eac-user.json               GitHub authorization of the EAC channel
+├── oauth-installation-id       installation id used by some channels' browser logins
+├── catalog-cache/              each channel's last successful model catalogue
+└── workspace/                  default working folder of the Playground tools
+```
+
+Not every file is always there: each is created the first time it is needed. By design, records that grow with traffic go into the database, and things people edit or other programs read stay plain files.
+
+| File | Contents | Notes |
+| --- | --- | --- |
+| `config.json` | Every setting and the channel accounts' credentials | See [Configuration file](/docs/config). Holds plain-text tokens; restricted to its owner where possible |
+| `hoshimi.db` | Usage statistics, check-in state and history, probe verdicts, Playground conversations and attachments | See below |
+| `server.json` | `host`, `port` (the port actually bound), `url` and the process id `pid` | Written once the server has bound its port, removed on a normal exit. When the recorded process is gone the file counts as stale and is ignored |
+| `eac-user.json` | The EAC GitHub authorization token, login name, avatar and save time | See [EAC](/docs/advanced-eac). Owner read/write only |
+| `catalog-cache/*.json` | Model catalogue snapshots | Named by a hash of the channel, its options and account configuration. Model metadata and account ids only, no credentials. Only snapshots up to 7 days old are restored; safe to delete at any time |
+| `workspace/` | Files the Playground tools read and write | Used only when `playground.workspace` is empty |
+
+## The database, hoshimi.db
+
+One SQLite file holds every record the gateway accumulates:
+
+| Contents | Kept for |
+| --- | --- |
+| Each recorded call | `server.stats_keep_days` days (default 90) |
+| Hourly totals | 120 days |
+| Daily totals and lifetime counters | Forever |
+| Daily check-in state | The latest |
+| Check-in history | 365 days |
+| Model probe verdicts | The latest per model |
+| Playground conversations, messages and attachments | Until deleted; temporary chats are deleted when left and at the next start |
+
+Usage statistics are written in batches about once a second, and once more when the server stops; conversation messages are written as they are sent. At each start, replies that were cut off mid-stream are marked as stopped and attachments that were never sent are removed.
+
+The database runs in WAL mode with a 5-second busy timeout, so the command line can read and write the same file while the server is running.
+
+### Schema upgrades
+
+The database schema moves forward through numbered upgrades, with the version kept in SQLite's `user_version`. A newer Hoshimi upgrades an older database the first time it opens it; nothing needs to be done by hand.
+
+When the database was last used by a newer Hoshimi, an older one warns at start:
+
+```text
+… was last used by a newer Hoshimi (database schema N, this one knows M); what it recorded may not show correctly
+```
+
+The older version still runs, but some records may not show correctly. Back up the data directory before downgrading.
+
+## Logs
+
+Hoshimi writes no log file: every log line goes to standard error (stderr). Once the server listens, standard output gets one line, `SERVER_READY url=http://…`, so scripts can pick up the actual address.
+
+```bash
+HOSHIMI_LOG_LEVEL=DEBUG hoshimi serve      # levels: DEBUG, INFO (default), WARNING, ERROR
+hoshimi serve --debug                      # also turns on debug logs
+hoshimi serve --no-open 2>> hoshimi.log    # redirect yourself when you want a log file
+```
+
+When Hoshimi runs as a system service, the service manager collects the logs (for example `journalctl`); see [Installation](/docs/installation).
+
+## Migrating from older versions
+
+<Steps>
+<Step>
+
+### Move the configuration file
+
+The old `--config` option and `HOSHIMI_CONFIG` environment variable have been removed. A `config.json` in the working directory is neither read nor migrated automatically. After upgrading, run:
+
+```bash
+hoshimi config path
+```
+
+and move the old configuration file to the path it prints before starting the new version.
+
+</Step>
+<Step>
+
+### Let the old JSON records import themselves
+
+Earlier versions kept usage, check-ins and probe verdicts in `stats.json`, `checkin.json` and `probe.json`. At the first start after upgrading, these files are imported into `hoshimi.db` and renamed to `*.migrated`. An unreadable one is renamed to `*.corrupt` and that record starts empty. Nothing is imported again once the database holds that kind of record.
+
+</Step>
+<Step>
+
+### Check
+
+```bash
+hoshimi check
+```
+
+This confirms the configuration can be read and lists the channels and account counts that would run. Afterwards the `*.migrated` files can be deleted.
+
+</Step>
+</Steps>
+
+## Backing up and resetting
+
+| Task | How |
+| --- | --- |
+| Full backup | Stop the server and copy the whole data directory |
+| Move to another machine | Copy the data directory, then point `HOSHIMI_DATA_DIR` at it on the new machine (or put it in the default location) |
+| Clear usage statistics only | **Reset statistics** on the Web UI's **Usage** page, or `DELETE /api/v1/stats`. Cannot be undone |
+| Discard every record | Stop the server and delete `hoshimi.db` (with its `-wal` and `-shm` files). Settings and accounts are untouched |
+| Discard cached model catalogues | Delete `catalog-cache/`; catalogues are fetched again at the next start |
+| Return to default settings | Stop the server and rename `config.json`. Channel accounts live in this file too and go with it |
+
+<Callout type="warn" title="Stop the server first">
+
+A running server writes its in-memory configuration back to `config.json` and keeps writing to the database. Deleting or replacing these files while it runs can have the change overwritten or lost.
+
+</Callout>

@@ -1,0 +1,200 @@
+---
+title: "Anthropic SDK"
+description: "用 Anthropic 的 Python、TypeScript SDK 和 curl 调用 Hoshimi 的 Messages 接口：非流式与流式、工具调用、思考与推理强度、Token 计数，以及原生转发与协议转换的区别。"
+icon: MessagesSquare
+---
+
+Hoshimi 的 `/v1/messages` 兼容 Anthropic Messages，Anthropic 官方 SDK 只需改 Base URL。模型目录与 OpenAI 接口共用，任何模型都可以通过 Messages 调用。本页示例都在本机实测过；`<model-id>` 换成 `GET /v1/models` 返回的 `id`。
+
+## 连接参数
+
+| 参数 | 值 |
+| --- | --- |
+| Base URL | `http://127.0.0.1:10600`（不带 `/v1`，SDK 会自己拼上 `/v1/messages`） |
+| API Key | 网关的模型 API 密钥，作为 `x-api-key` 或 `Authorization: Bearer` 发送；没有设置时填任意非空字符串 |
+| 模型 | `/v1/models` 中的 `id`，或 `渠道/模型`；Messages 必须写明，不使用默认模型 |
+
+SDK 的 `api_key` 参数发送 `x-api-key`，`auth_token` 参数发送 `Authorization: Bearer`，两种 Hoshimi 都接受。两者同时出现时以 `Authorization` 为准。
+
+## Python
+
+```bash
+pip install anthropic
+```
+
+```python
+import os
+import anthropic
+
+client = anthropic.Anthropic(base_url="http://127.0.0.1:10600", api_key=os.environ["HOSHIMI_API_KEY"])
+
+reply = client.messages.create(
+    model="<model-id>",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "用一句话介绍你自己"}],
+)
+print(reply.content[-1].text)
+```
+
+`max_tokens` 是必填项。和 Anthropic 一样，不写 `stream` 时返回完整的 JSON。
+
+### 流式
+
+SDK 的流式辅助方法可以直接使用：
+
+```python
+with client.messages.stream(
+    model="<model-id>",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "数到五"}],
+) as stream:
+    for text in stream.text_stream:
+        print(text, end="", flush=True)
+    final = stream.get_final_message()
+print("\n", final.stop_reason)
+```
+
+等待上游时，Hoshimi 每 15 秒在完整事件之间插入一个 `ping` 事件，SDK 会自动忽略它。
+
+### 工具调用
+
+```python
+import json
+
+tools = [{
+    "name": "get_weather",
+    "description": "查询城市当前天气",
+    "input_schema": {
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": ["city"],
+    },
+}]
+
+def get_weather(city: str) -> str:
+    return json.dumps({"city": city, "sky": "sunny", "celsius": 21})
+
+messages = [{"role": "user", "content": "巴黎现在天气怎么样？"}]
+while True:
+    reply = client.messages.create(model="<model-id>", max_tokens=2048, tools=tools, messages=messages)
+    if reply.stop_reason != "tool_use":
+        print("".join(block.text for block in reply.content if block.type == "text"))
+        break
+    messages.append({"role": "assistant", "content": reply.content})
+    messages.append({"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": block.id, "content": get_weather(**block.input)}
+        for block in reply.content if block.type == "tool_use"
+    ]})
+```
+
+- `tool_choice` 可以是 `{"type": "auto"}`、`{"type": "any"}`、`{"type": "none"}`，或 `{"type": "tool", "name": "..."}`（名字必须是声明过的工具）。
+- 工具结果放在下一条用户消息里，`tool_use_id` 对应上一轮的调用；`tool_result` 块要放在这条消息中的文字和图片之前。
+- 把上一轮的 `reply.content` 原样放回 `assistant` 消息，其中的思考块和签名也要保留（见下文）。
+
+### 思考与推理强度
+
+两种写法都可以：
+
+```python
+# 指定思考预算
+reply = client.messages.create(
+    model="<model-id>",
+    max_tokens=4096,
+    thinking={"type": "enabled", "budget_tokens": 2048},
+    messages=[{"role": "user", "content": "91 是质数吗？一句话回答。"}],
+)
+
+# 指定推理强度
+reply = client.messages.create(
+    model="<model-id>",
+    max_tokens=4096,
+    output_config={"effort": "low"},
+    messages=[{"role": "user", "content": "91 是质数吗？一句话回答。"}],
+)
+for block in reply.content:
+    print(block.type)   # thinking, text
+```
+
+- `thinking.type` 可以是 `enabled`、`disabled`、`adaptive`。`enabled` 的 `budget_tokens` 至少 1024，且小于 `max_tokens`。
+- `output_config.effort` 可以是 `low`、`medium`、`high`、`xhigh`、`max`。
+- 上游不说 Anthropic 协议时，这些设置会换算成该模型支持的推理强度，换算规则见 [Anthropic 兼容接口](/docs/api-anthropic)。
+- 多轮对话中，要把助手消息里的 `thinking` / `redacted_thinking` 块连同原始 `signature` 一起发回。不要编辑或伪造签名，也不要把一个模型的签名拿给另一个模型。
+
+### Token 计数
+
+```python
+count = client.messages.count_tokens(
+    model="<model-id>",
+    messages=[{"role": "user", "content": "你好"}],
+)
+print(count.input_tokens)
+```
+
+上游提供原生计数接口时（Anthropic 账号默认如此）返回的是上游的计数；否则返回 Hoshimi 的本地估算，响应头带 `x-hoshimi-token-count: estimate`。估算按请求内容的 UTF-8 字节数近似，不调用分词器。计数不生成回复，也不记入用量统计。
+
+```python
+raw = client.messages.with_raw_response.count_tokens(model="<model-id>", messages=[{"role": "user", "content": "你好"}])
+print(raw.headers.get("x-hoshimi-token-count"))   # "estimate" 表示本地估算
+```
+
+## TypeScript
+
+```bash
+npm install @anthropic-ai/sdk
+```
+
+```ts
+import Anthropic from "@anthropic-ai/sdk";
+
+const client = new Anthropic({
+  baseURL: "http://127.0.0.1:10600",
+  apiKey: process.env.HOSHIMI_API_KEY,
+});
+
+const reply = await client.messages.create({
+  model: "<model-id>",
+  max_tokens: 1024,
+  messages: [{ role: "user", content: "用一句话介绍你自己" }],
+});
+console.log(reply.content.at(-1));
+
+const stream = client.messages.stream({
+  model: "<model-id>",
+  max_tokens: 1024,
+  messages: [{ role: "user", content: "数到五" }],
+});
+stream.on("text", (text) => process.stdout.write(text));
+const final = await stream.finalMessage();
+console.log("\n", final.stop_reason);
+```
+
+## curl
+
+```bash
+curl http://127.0.0.1:10600/v1/messages \
+  -H "x-api-key: $HOSHIMI_API_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<model-id>","max_tokens":1024,"messages":[{"role":"user","content":"你好"}]}'
+```
+
+加上 `"stream": true` 得到 SSE（配合 `curl -N`）。没有设置模型 API 密钥时可以省略 `x-api-key`。
+
+## 原生转发与协议转换
+
+Hoshimi 按请求实际落到的账号决定怎么处理：
+
+- **原生转发**：账号所在的渠道本身提供 Messages 接口（例如 `anthropic`），请求只替换模型名后原样转发，系统提示数组、内容顺序、签名、缓存标记、`context_management`、结构化输出以及将来的新字段都交给上游校验；`anthropic-*` 请求头和查询参数也会带上。上游的错误（状态码、响应体、`request-id`、`retry-after`、`anthropic-ratelimit-*` 等头）原样返回。
+- **协议转换**：其他渠道先把 Messages 转换成内部的 Chat 格式。文字、图片、系统提示、工具、思考都能转换，但只有原生上游才支持的功能（MCP 连接器、容器、`context_management`、服务器端工具、`task_budget`、非文本文档等）会返回 `400`，消息中写明是哪个字段。
+
+两种路径的完整差异见 [Anthropic 兼容接口](/docs/api-anthropic)。
+
+## 错误
+
+Messages 的错误使用 Anthropic 的格式，SDK 会抛出对应的异常（如 `anthropic.NotFoundError`）：
+
+```json
+{"type": "error", "error": {"type": "not_found_error", "message": "Model 'nope' not found. Use `provider/model` or see /v1/models."}}
+```
+
+流式请求在发出响应头之前会先打开上游，所以认证失败、限流这类错误仍然带着正确的 HTTP 状态码返回；流开始后的失败以 `error` 事件告知。

@@ -1,0 +1,156 @@
+---
+title: "用量统计"
+description: "网关如何记录每一次调用：记录哪些字段、token 和缓存从哪里来、速度怎么算、保存多久、如何查询，以及实时视图的事件流。"
+icon: ChartLine
+---
+
+网关为经过它的每一个请求留下一条记录，**用量** 页的图表、明细和调用列表，以及顶栏的 **实时活动**，都来自这些记录。本页说明记录的规则和对应的管理接口；页面本身的用法见[用量页](/docs/guide-usage)。
+
+## 记录什么
+
+每个请求恰好产生一条记录，按入口区分来源（`origin`）：
+
+| `origin` | 界面显示 | 来自 |
+| --- | --- | --- |
+| `chat` | Chat Completions | `POST /v1/chat/completions` |
+| `responses` | Responses | `POST /v1/responses` |
+| `messages` | Anthropic Messages | `POST /v1/messages` |
+| `classify` | 分类 | 分类接口 |
+| `playground` | 试用场 | Playground 中的回复 |
+| `playground-title` | Playground 标题 | 为新对话生成标题 |
+| `playground-vision` | Playground 图片描述 | 为不能读图的模型描述图片 |
+
+每条记录包含：
+
+| 字段 | 含义 |
+| --- | --- |
+| `at` | 开始时间 |
+| `model`、`provider`、`account` | 请求的模型，以及实际回答的渠道和账号 |
+| `attempts` | 到有账号回答为止一共问了几个账号（包括退避后的重试）；没有账号回答时为 0 |
+| `effort` | 实际生效的推理强度 |
+| `stream` | 是否流式 |
+| `ok` | 是否成功 |
+| `input`、`output`、`reasoning` | 输入、输出和其中思考部分的 token |
+| `cache_read`、`cache_write` | 提示词缓存命中和写入的 token |
+| `ttft_ms` | 首个 token 的等待时间 |
+| `decode_ms`、`tps` | 生成用时和生成速度（token/秒） |
+| `elapsed_ms` | 总用时 |
+| `finish_reason` | 结束原因 |
+| `error_code`、`error_message` | 失败时的错误代码和简短说明 |
+| `no_usage` | 上游没有返回 token 用量 |
+
+几条规则：
+
+- **路由失败也算失败**：模型找不到、所有账号都失败等，在请求到达上游前就结束的，同样记一条失败记录。
+- **客户端中途断开不算失败**：调用方在回复过程中断开，网关确实提供了服务，这条记录算作成功。
+- 上游在流中返回错误帧时，记录为失败。
+- 记录中只有用量和元数据，不保存提示词和回复内容（Playground 对话另存在对话记录中）。
+- 错误说明只保留一行、最多 160 个字符，形似密钥的内容（`Bearer …`、`sk-…`、32 位以上的随机串等）会被替换为 `***`。带状态码的上游错误只记为 `upstream returned HTTP <状态码>`，不保存上游的正文；流中错误帧的说明按上面的规则截短并遮盖后保存。
+
+### token 和缓存从哪里来
+
+所有渠道的用量先被统一成 OpenAI 的字段，再记入统计：
+
+| 记录字段 | 读取自 |
+| --- | --- |
+| `input` | `prompt_tokens` |
+| `output` | `completion_tokens` |
+| `reasoning` | `completion_tokens_details.reasoning_tokens` |
+| `cache_read` | `prompt_tokens_details.cached_tokens`；DeepSeek 的 `prompt_cache_hit_tokens` 和 Anthropic 的 `cache_read_input_tokens` 也换算到这里 |
+| `cache_write` | `prompt_tokens_details.cache_write_tokens` 或 `cache_creation_tokens`；Anthropic 的 `cache_creation_input_tokens` 也换算到这里 |
+
+### 首字时间和速度
+
+- `ttft_ms` 从请求开始算到第一段内容（文字、思考或工具调用）到达。
+- 生成速度用第一段内容到结束之间的时间计算。在第一帧之前就已完成、没有以流的形式出现的思考 token，会从计数中扣除，不计入回答的速度。
+- 生成窗口短于 250 毫秒，或算出的速度超过每秒 250 个 token 的，视为无法测量：这次调用的 `tps` 为 `null`，也不参与平均值。这样一个测不准的速度就不会显得很快。
+- 首字时间和速度的中位数（p50）与 p95 用固定区间的直方图计算，跨任意时间范围都能合并。
+
+## 保存多久
+
+记录保存在数据目录的 `hoshimi.db` 中，分为以下几种形式：
+
+| 形式 | 用途 | 保留 |
+| --- | --- | --- |
+| 每次调用的记录 | 调用列表、单次调用的详情 | `server.stats_keep_days` 天（默认 90） |
+| 每小时汇总 | **24 小时** 和单日视图 | 120 天 |
+| 每日汇总 | **7 天**、**30 天**、**90 天** 视图 | 永久 |
+| 累计计数（按模型、渠道、账号、来源） | 历史总量 | 永久 |
+
+- 汇总按服务器的本地时间划分小时和日期。
+- 新记录先进入内存，大约每秒批量写入一次，服务器退出时再写一次；每次查询前都会先写入未保存的记录，所以查询结果总是完整的。
+- 过期的调用记录在写入时清理，最多每分钟一次。修改 `server.stats_keep_days` 从下一次清理起生效。
+- 旧版本的 `stats.json` 会在升级后第一次启动时导入一次，见[数据目录与迁移](/docs/config-paths)。
+
+## 查询
+
+以下接口都需要工具访问密钥。
+
+### 一段时间的报表
+
+```bash
+curl "http://127.0.0.1:10600/api/v1/stats?range=7d" -H "Authorization: Bearer <工具访问密钥>"
+curl "http://127.0.0.1:10600/api/v1/stats?range=day&date=2026-10-20" -H "Authorization: Bearer <工具访问密钥>"
+```
+
+`range` 可以是 `24h`（按小时）、`7d`、`30d`、`90d`（按天），或 `day`（某一个本地日历日，按小时，用 `date=YYYY-MM-DD` 指定，默认今天）。返回：
+
+- 总量和前一个等长时段的总量（`day` 与前一天比较；当天只比较到同一时刻）；
+- 补齐空档的时间序列；
+- 首字时间的平均值、p50、p95，以及生成速度；
+- 按模型、渠道、账号、来源的明细；
+- 历史累计的请求数和失败数。
+
+日期在未来或格式不对时返回 400。`GET /api/v1/stats/days` 列出有用量的所有日期，供日历标记使用。
+
+### 调用列表
+
+```bash
+curl "http://127.0.0.1:10600/api/v1/stats/calls?limit=50&ok=false" -H "Authorization: Bearer <工具访问密钥>"
+```
+
+按时间倒序分页，覆盖整个保留期。参数：
+
+| 参数 | 含义 |
+| --- | --- |
+| `limit` | 每页条数，1–200，默认 50 |
+| `before` | 上一页返回的 `next`，取更早的记录 |
+| `model`、`provider`、`origin` | 按字段筛选 |
+| `account` | 账号 id，或 `渠道/账号` |
+| `ok` | `true` 只看成功，`false` 只看失败 |
+| `since`、`until` | ISO 8601 时间；不带时区时按服务器本地时间；`until` 不含 |
+| `q` | 在模型、渠道、账号、错误代码、错误说明和结束原因中搜索文字（不区分大小写） |
+
+每条记录有一个永不重复的序号 `seq`，清空统计后也继续递增，可以放心用作分页游标。
+
+### 清空
+
+网页 **用量** 页的 **重置统计**，或：
+
+```bash
+curl -X DELETE http://127.0.0.1:10600/api/v1/stats -H "Authorization: Bearer <工具访问密钥>"
+```
+
+所有计数、图表和调用记录都被清除，无法撤销。正在进行的调用结束后仍会被记录。
+
+## 实时视图
+
+顶栏的 **实时活动** 面板显示正在进行的调用（**等待中**、**思考中**、**回答中**、**调用工具**）、今天的总量和刚完成的调用。它读取的是一个服务器发送事件流：
+
+```bash
+curl -N http://127.0.0.1:10600/api/v1/stats/live -H "Authorization: Bearer <工具访问密钥>"
+```
+
+每一帧是 `data: <JSON>`，按 `type` 区分：
+
+| `type` | 内容 |
+| --- | --- |
+| `snapshot` | 连接后的第一帧：服务器时间、正在进行的调用、今天的总量、最近完成的调用 |
+| `started` | 一个调用开始 |
+| `progress` | 调用的进度：阶段、已输出的字符数、估算的 token 数（字符数 ÷ 4）、当前速度、问过的账号数 |
+| `finished` | 一个调用结束，带它的完整记录和更新后的今日总量 |
+| `ping` | 没有其他事件时每 15 秒一次的心跳 |
+
+- 进度事件每个调用每秒最多 4 次；阶段变化总是立即发出。没有人订阅时不产生任何开销。
+- 每个订阅者最多积压 1000 个事件。读得太慢的连接会被断开，重新连接后会收到新的 `snapshot`，它取代所有错过的事件。
+- 服务器关闭时，这个流会先结束，不会拖住关闭过程。

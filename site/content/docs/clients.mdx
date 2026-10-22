@@ -1,0 +1,126 @@
+---
+title: "接入客户端"
+description: "把 SDK、curl 或编程助手接到 Hoshimi 需要知道的事：Base URL、用哪把密钥、模型名怎么写、选哪种 API，以及流式、推理强度和工具调用的约定。"
+icon: Plug
+---
+
+Hoshimi 对外提供 OpenAI 和 Anthropic 两种协议。任何能自定义 Base URL 的客户端都可以接入：上游账号的凭据留在 Hoshimi 里，客户端只需要知道网关的地址、网关的密钥和一个模型名。本页说明这些共同的约定，各客户端的具体配置见文末的指南。
+
+## 需要准备的三样东西
+
+| 项目 | 取值 | 在哪里找 |
+| --- | --- | --- |
+| Base URL | OpenAI 兼容客户端用 `http://127.0.0.1:10600/v1`；Anthropic 兼容客户端用 `http://127.0.0.1:10600` | **概览** 页的 **接口** 区块列出各个接口地址，可以直接复制 |
+| 密钥 | 网关的 **模型 API 密钥**；没有设置时任意非空字符串都行 | **设置** › **访问** › **密钥** |
+| 模型名 | `GET /v1/models` 返回的 `id`，或 `渠道/模型` | **模型** 页，或下文的 curl 命令 |
+
+10600 端口被占用时，服务器会改用下一个空闲端口，以启动时终端打印的地址为准；**设置** › **访问** 中的 **监听地址** 显示实际使用的端口。
+
+## 密钥
+
+Hoshimi 有两把互相独立的密钥，客户端只用其中一把：
+
+| 密钥 | 配置键 | 用于 | 怎么发送 |
+| --- | --- | --- | --- |
+| 模型 API 密钥 | `server.model_api_key` | `/v1/*`：Chat Completions、Responses、Messages、模型列表 | `Authorization: Bearer <密钥>` 或 `x-api-key: <密钥>` |
+| 工具访问密钥 | `server.access_token` | `/api/*` 管理接口、网页界面、`/docs`、`/openapi.json` | `Authorization: Bearer <密钥>` |
+
+- 客户端接入一律用 **模型 API 密钥**。工具访问密钥打不开 `/v1/*`，反过来也一样。
+- 没有设置模型 API 密钥时，`/v1/*` 不检查密钥。多数 SDK 和工具要求填一个值，随便填一个非空字符串即可。
+- 同时带了 `Authorization` 和 `x-api-key` 时，以 `Authorization` 为准。
+- 渠道账号的凭据（站点的 API Key、登录令牌）只保存在 Hoshimi 中，永远不要填进客户端。
+
+密钥的设置方法、局域网访问和来源限制见[访问控制](/docs/config-security)。
+
+## 模型名
+
+先列出可用的模型：
+
+```bash
+curl http://127.0.0.1:10600/v1/models
+```
+
+```json
+{
+  "object": "list",
+  "data": [
+    {"id": "big-pickle", "object": "model", "created": 0, "owned_by": "opencode", "free": null, "display_name": "Big Pickle"},
+    {"id": "kilo-auto/free", "object": "model", "created": 0, "owned_by": "kilo", "free": null, "display_name": "Kilo Auto Free"}
+  ]
+}
+```
+
+`id` 是上游自己的模型名，`owned_by` 是提供它的渠道。请求里的 `model` 有两种写法：
+
+- **直接写 `id`**，如 `big-pickle`。Hoshimi 按渠道顺序找第一个提供这个模型的渠道。只启用了一个渠道时，目录里没有的模型名也会原样发给它。
+- **写成 `渠道/模型`**，如 `opencode/big-pickle`，指定由哪个渠道处理。第一个斜杠后面的全部内容作为上游模型名发送，可以再含斜杠，例如 `kilo/kilo-auto/free`。几个渠道提供同名模型时，用这种写法选择其中一个。
+
+请求不写 `model` 时，Chat Completions 和 Responses 使用 **设置** › **常规** 中的 **默认模型**（配置键 `server.default_model`，或 `hoshimi serve --default-model`）。Messages 接口始终要求写明 `model`。
+
+每个模型能否看图、是否推理、能否调用工具、有哪些推理强度，在 **模型** 页可以看到，见[模型](/docs/guide-models)。
+
+## 选择哪种 API
+
+| API | 路径 | 适合 |
+| --- | --- | --- |
+| Chat Completions | `POST /v1/chat/completions` | 绝大多数 OpenAI 兼容客户端、OpenAI SDK、OpenCode |
+| Responses | `POST /v1/responses` | 只说 Responses 的客户端，如 Codex |
+| Messages | `POST /v1/messages` | Anthropic SDK、Claude Code |
+
+三种 API 共用同一个模型目录，任何模型都可以从任何一种 API 调用：Hoshimi 在客户端协议和上游协议之间转换。能转换不等于上游支持一切功能，例如不支持工具调用的模型，从哪种 API 调用都不会调用工具。
+
+## 流式输出
+
+<Callout type="warn" title="不写 stream 时默认流式">
+
+Chat Completions 和 Responses 在请求中没有 `stream` 字段时按 **流式**（SSE）返回，这和 OpenAI 官方接口相反。要一次拿到完整 JSON，请显式发送 `"stream": false`。OpenAI 的 Python 和 JavaScript SDK 在不传 `stream` 时不会发送这个字段，结果拿到的是一段 SSE 文本而不是对象，所以非流式调用一定要写 `stream=False`。
+
+</Callout>
+
+Messages 与 Anthropic 一致：默认返回 JSON，`"stream": true` 时返回 SSE。
+
+## 无状态
+
+Hoshimi 不保存对话。每次请求都要带上完整的历史：
+
+- Chat Completions 和 Messages 发送全部 `messages`。
+- Responses 发送全部 `input`；`previous_response_id` 会被拒绝（`400`）。
+
+Playground 的对话保存在服务器上，但那是网页界面自己的接口，见 [Playground API](/docs/api-playground)。
+
+## 推理强度
+
+三种 API 各有自己的字段，Hoshimi 都能读懂：
+
+| API | 字段 | 示例 |
+| --- | --- | --- |
+| Chat Completions | `reasoning_effort` | `"reasoning_effort": "high"` |
+| Responses | `reasoning.effort` | `"reasoning": {"effort": "low"}` |
+| Messages | `output_config.effort` 或 `thinking` | `"output_config": {"effort": "medium"}` |
+
+不同模型的推理选项不同。自带推理菜单的模型（例如 `disabled` / `low` / `high` / `max`）直接使用对应的级别；其余推理模型使用 Hoshimi 的三档输出预算 `light` / `balanced` / `deep`，OpenAI 的 `minimal`、`low`、`medium`、`high` 等会被映射过去。请求里不写推理强度时，Hoshimi 不改动请求。映射规则见 [OpenAI 兼容接口](/docs/api-openai)，三档预算的含义见[模型与账号行为](/docs/advanced-models)。
+
+## 工具调用
+
+工具由客户端执行，Hoshimi 只负责在协议之间转换工具定义、调用和结果：
+
+- Chat Completions：`tools` 中的 `function` 工具，回复里的 `tool_calls`，结果用 `role: "tool"` 消息发回。
+- Responses：`type: "function"` 的工具，回复里的 `function_call` 项，结果用 `function_call_output` 项发回。其他类型的工具会被忽略。
+- Messages：带 `input_schema` 的工具，回复里的 `tool_use` 块，结果用 `tool_result` 块发回。
+
+具体示例见各客户端页面。模型是否真的会调用工具取决于上游，**模型** 页的能力标记可供参考。
+
+## 从其他机器或容器连接
+
+默认只监听 `127.0.0.1`，而且只接受 `Host` 为 `localhost`、`127.0.0.1` 或 `::1` 的请求，所以从另一台机器或容器里访问（例如通过 `host.docker.internal`）会被拒绝。网页里运行的客户端还会受到来源检查。需要时按[访问控制](/docs/config-security)设置监听地址、**允许的 CIDR**、**允许的主机名** 和 **允许的来源**。
+
+## 客户端指南
+
+<Cards>
+  <Card title="OpenAI SDK 与 curl" href="/docs/clients-openai" description="Python、JavaScript 和 curl：Chat Completions 与 Responses，流式、推理和工具调用。" />
+  <Card title="Anthropic SDK" href="/docs/clients-anthropic" description="用 Anthropic SDK 调用 Messages：流式、工具、思考和 Token 计数。" />
+  <Card title="Claude Code" href="/docs/clients-claude-code" description="ANTHROPIC_BASE_URL 等环境变量、模型别名和已知限制。" />
+  <Card title="Codex" href="/docs/clients-codex" description="在 config.toml 中添加 Hoshimi 作为模型提供方。" />
+  <Card title="OpenCode" href="/docs/clients-opencode" description="在 opencode.json 中添加 OpenAI 兼容的提供方。" />
+  <Card title="API 参考" href="/docs/api" description="认证、错误格式和每个接口的字段。" />
+</Cards>

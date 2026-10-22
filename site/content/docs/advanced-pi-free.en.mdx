@@ -1,0 +1,110 @@
+---
+title: "pi-free migration and differences"
+description: "How Hoshimi relates to pi-free: what to do when moving over from pi-free, which station rules were carried across, which were deliberately left out, and how runtime behaviour differs."
+icon: GitBranch
+---
+
+pi-free is one of Hoshimi's main references: many station integrations, catalogue filters and free markers were transcribed from it. It is not a runtime dependency, though, and Hoshimi does not read pi-free's configuration. pi and free-claude-code are likewise only migration references. This page covers moving over from pi-free and how the two behave differently.
+
+## Moving over from pi-free
+
+<Steps>
+<Step>
+
+### Put your credentials into Hoshimi
+
+pi-free reads station keys from environment variables (such as `ZENMUX_API_KEY`). Hoshimi does **not** read these variables; every credential lives in Hoshimi's own account configuration. The **Key env** column of `hoshimi stations` only documents the upstream convention, to help you find the key you used before.
+
+```bash
+hoshimi stations
+```
+
+</Step>
+<Step>
+
+### Aggregator stations: add agg accounts
+
+Stations pi-free reached with an API key are accounts of the `agg` channel in Hoshimi. Name the station with `preset` instead of writing its address:
+
+```json
+{
+  "providers": {
+    "agg": {
+      "accounts": [
+        {"id": "zenmux", "preset": "zenmux", "api_key": "<your ZenMux key>"},
+        {"id": "llm7", "preset": "llm7", "api_key": "<your LLM7 key>"}
+      ]
+    }
+  }
+}
+```
+
+Or open agg on the Web UI's **Channels** page, press **Add account** and pick from the **Station** list. All 22 presets are listed in [agg aggregator](/docs/providers-agg).
+
+</Step>
+<Step>
+
+### Stations that need a login: sign in again
+
+Stations that sign in through a browser, such as Cline, Qoder and ZCode, need one new login with `hoshimi login <channel>` or **Sign in** in the Web UI; see [Free stations](/docs/providers-stations).
+
+</Step>
+<Step>
+
+### Use native model ids
+
+Hoshimi keeps each station's native channel ids and model ids. In clients, name `channel/model`, or just the model id and let the gateway find it; see [Model and account behaviour](/docs/advanced-models).
+
+</Step>
+</Steps>
+
+Each channel's source id, endpoint, protocol, credential type and coverage are recorded in the [Provider inventory](/docs/providers-inventory). Its snapshot ids describe the source revision used as the baseline, not the latest upstream revision or a tested live integration.
+
+## Catalogue filtering
+
+Besides chat models, a station's `/models` list often carries image and video generators, embeddings, rerankers, transcription and other endpoints. `agg` decides, row by row and station by station, which rows are chat models:
+
+- **Stations are recognised by address**, not by preset name: an account with `preset: sambanova` whose `base_url` points elsewhere is not reading SambaNova's catalogue and does not get its rules. Addresses outside the preset table (your own relays included) are not filtered.
+- The filters of 10 stations are transcribed from pi-free: Agnes, B.AI, DeepInfra, FastRouter, Novita, OrcaRouter, Routeway, TokenRouter, XKiro and ZenMux.
+- **LLM7 uses Hoshimi's own rule**: keep rows whose `model_type` is `chat`. Checking for text output is not enough: `whisper-large-v3` (speech-to-text) and `gpt-image-2` (text and an image) would both slip in.
+- A row missing the field a rule needs is kept (Novita is the exception: its `status` and `model_type` are the station's own contract). That way an upstream format change never silently empties a whole catalogue.
+- The `default`, `fast` and `pro` routing selectors pi-free builds locally for LLM7 are not added: they are not the station's live model list, and the probe of the time did not show they could be used anonymously. This is a historical design reason, not a report on the endpoint's current health.
+
+## Free markers
+
+Hoshimi's `free` has three values: `true`, `false` and `null` (the station did not say); unknown is not the same as paid. Nine of the 22 presets can give an answer:
+
+| Station | Evidence |
+| --- | --- |
+| B.AI, TokenRouter | Ids with a `:free` suffix; B.AI also has a few ids its pricing page lists as free |
+| GMI | `is_free` in the row |
+| XKiro | `access_tier` in the row, then a free label in the name, then the price |
+| AnyAPI, OrcaRouter | `isFree` in the row, then a free label in the name, then the price |
+| OpenGateway | The price in the row (promotional price first) |
+| Agnes, CommandCode | Ids the station's pricing documents list as free (the listing carries no prices) |
+
+Deliberately not carried across:
+
+- Once pi-free finds any priced row at a station, it treats rows without a price as paid. Hoshimi does not: no price means `null`.
+- Venice lists some models at a price of 0, but requires a positive account balance and answers HTTP 402 to an unfunded key, so a zero price there is not taken as free.
+- LLM7 prices every row; that is a list price, not a statement about whether an account can use the model for free.
+
+A free marker promises neither available credits nor access for every key. When a station's limited-time offer ends, a marker can go stale, but only in the direction of a missing badge, never of a wrong promise.
+
+## Capabilities and model choice
+
+- CommandCode's own vision and reasoning lists were kept, with account declarations taking precedence. Its paid price table and default output ceilings were not imported.
+- models.dev only fills in vision and reasoning for models nothing else declared; context length, output limits and reasoning levels must describe the endpoint actually used, so they are never taken from it.
+- Artificial Analysis benchmark snapshots and fuzzy model-name rankings were not imported. Hoshimi routes the model the caller asked for; a failing model is recorded, never silently swapped for a better-ranked one.
+
+## Runtime differences
+
+| Aspect | pi-free | Hoshimi |
+| --- | --- | --- |
+| What changes after a failure | The model picker switches to another model | The same model on another account; the caller chooses the model |
+| Status classification | A table of recoverable and unrecoverable statuses | The same table, used to decide whether to try another account |
+| Remembered model failures | 10-minute window, banned after 3 strikes | The same 10 minutes and 3 strikes; in memory only, cleared by a restart or `POST /api/v1/models/unavailable/reset` |
+| Catalogue shrink guard | A new list under half the old one does not replace it | The same threshold; accepted when the next cycle says the same |
+| Passive quota | The same header order, lenient number parsing | The same order, strict parsing: `10 requests` is not read as 10 but counted as an unreadable header |
+
+The full current rules are in [Model and account behaviour](/docs/advanced-models).

@@ -1,0 +1,211 @@
+---
+title: "安装"
+description: "系统要求，用 pip、uv 或 pipx 安装，云平台的可选依赖，升级与卸载，从源码安装，后台运行，以及端口的选择方式。"
+icon: Download
+---
+
+Hoshimi 是一个纯 Python 包，服务器、Web UI 和命令行都在同一个发行包里。Web UI 已经预先构建好放在包内，普通安装不需要 Node 或 Bun，也不需要任何系统程序。
+
+## 系统要求
+
+| 项目 | 要求 |
+| --- | --- |
+| Python | 3.10 或更高版本（CI 在 3.10–3.14 上检查） |
+| 操作系统 | Linux、Windows、macOS |
+| 网络 | 安装时访问 PyPI；运行时访问你启用的各个上游服务。可以走代理，见[网络与代理](/docs/config-network) |
+| 浏览器 | 任意现代浏览器，用来打开 Web UI |
+
+## 安装
+
+建议安装在独立的环境里：虚拟环境，或者 uv / pipx 管理的工具环境。
+
+<Tabs items={["pip", "uv", "pipx"]}>
+<Tab value="pip">
+
+```bash
+python -m pip install -U hoshimi
+hoshimi serve
+```
+
+</Tab>
+<Tab value="uv">
+
+作为独立工具安装，`hoshimi` 命令会出现在 uv 的工具目录里：
+
+```bash
+uv tool install hoshimi
+hoshimi serve
+```
+
+也可以装进当前的虚拟环境：`uv pip install hoshimi`。
+
+</Tab>
+<Tab value="pipx">
+
+```bash
+pipx install hoshimi
+hoshimi serve
+```
+
+</Tab>
+</Tabs>
+
+`python -m hoshimi` 与 `hoshimi` 命令等价，在 `hoshimi` 不在 `PATH` 中时很有用。安装后可以先检查一下：
+
+```bash
+hoshimi version   # Hoshimi、Python 与主要组件的版本
+hoshimi check     # 检查配置，列出启用的渠道
+```
+
+## 可选依赖
+
+两个云平台需要额外的 SDK，按需安装对应的 extra：
+
+| Extra | 安装的包 | 什么时候需要 |
+| --- | --- | --- |
+| `google` | `google-auth[requests]` | Vertex 使用应用默认凭据（ADC）或服务账户文件时；Vertex 的 API Key 模式不需要 |
+| `bedrock` | `boto3` | 使用 Amazon Bedrock 时，包括 Bearer（API Key）模式：解析 Bedrock 的事件流也需要它 |
+
+<Tabs items={["pip", "uv", "pipx"]}>
+<Tab value="pip">
+
+```bash
+python -m pip install -U "hoshimi[google]"            # Vertex ADC / 服务账户
+python -m pip install -U "hoshimi[bedrock]"           # Bedrock
+python -m pip install -U "hoshimi[google,bedrock]"    # 两者都要
+```
+
+</Tab>
+<Tab value="uv">
+
+```bash
+uv tool install "hoshimi[google,bedrock]"
+```
+
+</Tab>
+<Tab value="pipx">
+
+```bash
+pipx install "hoshimi[google,bedrock]"
+```
+
+</Tab>
+</Tabs>
+
+其他普通 HTTP API 渠道都不需要这些 SDK。账户的配置方法见[云平台](/docs/providers-cloud)。
+
+## 升级
+
+<Tabs items={["pip", "uv", "pipx"]}>
+<Tab value="pip">
+
+```bash
+python -m pip install -U hoshimi
+```
+
+</Tab>
+<Tab value="uv">
+
+```bash
+uv tool upgrade hoshimi
+```
+
+</Tab>
+<Tab value="pipx">
+
+```bash
+pipx upgrade hoshimi
+```
+
+</Tab>
+</Tabs>
+
+升级后重启服务器。启用了更新检查（`server.check_updates`，默认开启）时，服务器在启动时和之后每天询问一次 PyPI 是否有新版本，结果显示在 **概览** 页 **服务器** 一栏的 **最新版本** 中。
+
+配置和数据都在数据目录里，升级不会动它们。从较早的版本升级时注意两点，详见[数据目录](/docs/config-paths)：
+
+- `--config` 选项和 `HOSHIMI_CONFIG` 环境变量已经移除，工作目录下的配置文件既不会被读取，也不会被自动迁移。启动新版本之前，把旧文件移到 `hoshimi config path` 打印的位置。
+- 首次启动时，旧的 `stats.json`、`checkin.json` 和 `probe.json` 会被导入数据库 `hoshimi.db`，原文件改名为 `*.migrated`。
+
+## 从源码安装
+
+源码仓库里没有构建好的 Web UI。需要 [Bun](https://bun.sh) 构建一次：
+
+```bash
+git clone https://github.com/licyk/Hoshimi.git
+cd Hoshimi
+python -m pip install -e .
+python scripts/dev.py web-install   # 安装 Web UI 的依赖
+python scripts/dev.py web           # 构建到 hoshimi/webui/dist
+hoshimi serve
+```
+
+没有构建 Web UI 时，服务器会在日志里警告一句，然后只提供 API。开发环境（带开发依赖、热重载的前端）见[开发环境](/docs/development-setup)。
+
+## 端口与地址
+
+`hoshimi serve` 默认监听 `127.0.0.1:10600`，只有本机可以访问。
+
+- **端口被占用时**：服务器自己绑定套接字，所以测试过的端口就是实际使用的端口。请求的端口被占用或被系统保留时，它依次尝试下一个端口，直到 65535，然后从 1024 开始绕回到请求的端口之前；其他绑定错误（例如本机没有的地址）会立即失败。换用了别的端口时，日志会提示 `Port 10600 is unavailable. Using port 10601.`。
+- **固定端口**：客户端需要固定地址时，用 `--strict-port`（或配置 `server.strict_port: true`），此时只尝试请求的端口，被占用就以退出码 3 结束。
+- **任意空闲端口**：`--port 0` 让系统挑选一个。
+- **实际地址在哪里**：终端打印的 `SERVER_READY url=…`；数据目录里的 `server.json`（主机、实际端口、URL 和进程 PID，服务器退出时删除）；以及 **设置 › 访问 › 监听地址** 中的 **正在监听 …**。
+
+```bash
+hoshimi serve --port 11000 --strict-port
+```
+
+在命令行里给出的 `--host`、`--port` 只作用于这一次启动；要长期修改，用 `hoshimi config set server.port 11000` 或在 **设置 › 访问** 中修改（重启后生效）。
+
+<Callout type="warn" title="监听非本机地址">
+
+把 `--host` 设为 `0.0.0.0` 或局域网地址，任何能连到这台机器的人都可能借用你的上游账户。Hoshimi 要求先同时配置工具访问密钥（`server.access_token`）和允许的网段（`security.allow_cidrs`），否则拒绝启动。完整步骤见[安全](/docs/config-security)。
+
+</Callout>
+
+## 在后台运行
+
+在服务器或无桌面的机器上，加 `--no-open` 不打开浏览器。用系统的服务管理器让它常驻，例如 Linux 上的 systemd 用户服务（`~/.config/systemd/user/hoshimi.service`）：
+
+```ini
+[Unit]
+Description=Hoshimi gateway
+After=network-online.target
+
+[Service]
+ExecStart=/path/to/hoshimi serve --no-open --strict-port
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+把 `/path/to/hoshimi` 换成 `which hoshimi` 的输出，然后：
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now hoshimi
+journalctl --user -u hoshimi -f     # 查看日志
+```
+
+服务以哪个用户运行，就使用哪个用户的数据目录；要指定位置，在 `[Service]` 中加 `Environment=HOSHIMI_DATA_DIR=/srv/hoshimi`（见[环境变量](/docs/cli-env)）。`GET /health` 不需要密钥，返回 `{"status":"ok"}`，可以用来做存活检查：
+
+```bash
+curl http://127.0.0.1:10600/health
+```
+
+## 卸载
+
+```bash
+python -m pip uninstall hoshimi     # 或 uv tool uninstall hoshimi / pipx uninstall hoshimi
+```
+
+卸载不会删除数据目录。其中有配置文件（包括各渠道的凭据）、用量数据库和 Playground 对话；不再需要时手动删除：
+
+| 平台 | 默认数据目录 |
+| --- | --- |
+| Linux | `~/.local/share/hoshimi`，设置了 `XDG_DATA_HOME` 时为 `$XDG_DATA_HOME/hoshimi` |
+| Windows | `%APPDATA%\hoshimi` |
+| macOS | `~/Library/Application Support/hoshimi` |
+
+设置了 `HOSHIMI_DATA_DIR` 时，数据目录就是它指向的位置。`hoshimi config path` 会打印配置文件的完整路径，它所在的文件夹就是数据目录。

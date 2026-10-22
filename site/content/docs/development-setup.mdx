@@ -1,0 +1,209 @@
+---
+title: "开发环境"
+description: "从一份新克隆到能同时运行 API 与 Web UI 的开发模式：仓库布局、Python 环境、bun，以及 scripts/dev.py 的全部任务。"
+icon: Wrench
+---
+
+Hoshimi 的开发环境由两部分组成：一个以可编辑方式安装了 Hoshimi 及其开发依赖的 Python 环境，以及用来安装、构建和测试 Web UI 与本文档站的 [bun](https://bun.sh)。日常任务都通过 `scripts/dev.py` 运行：它只用标准库，在 Linux、macOS 和 Windows 上行为一致，运行的也正是 CI 运行的那些工具。
+
+## 仓库布局
+
+```text
+hoshimi/
+  core/          全部逻辑，不导入任何 Web 或命令行框架
+    providers/   每个渠道一个适配器，以及共享的传输与协议代码
+    login/       每个站点一个交互式登录流程
+    translate/   公开协议与上游协议之间的转换
+    net/         上游网络：客户端、代理策略、端口绑定
+    agent/       Playground 的内置工具
+  api/           FastAPI 应用、中间件、routers/、Web UI 静态文件
+  cli/           Typer 命令（commands/）
+  webui/         Vue 3 + Vite；构建产物 dist/ 随包发布
+  version.py     版本号，唯一的来源
+tests/           core/、api/、cli/，以及共享夹具 conftest.py
+scripts/         dev.py 与构建、发布、生成用的脚本
+site/            本文档站
+.github/workflows/  CI、检查、构建、发布与文档站的工作流
+pyproject.toml   发行包元数据、依赖、Ruff、ty 与 pytest 的配置
+config.example.json  配置文件模板
+```
+
+`scripts/` 里的脚本：
+
+| 脚本 | 作用 |
+| --- | --- |
+| `dev.py` | 任务入口，见下文 |
+| `build_wheel.py` | 先构建 Web UI，再构建 wheel 和 sdist，见 [CI 与发布](/docs/development-release) |
+| `smoke_install.py` | 用已安装发行包的解释器检查它能否正常工作 |
+| `ci.py` | CI 的发布计划：这次推送是否发布 |
+| `generate_openapi.py` | 在标准输出打印 OpenAPI 文档，供 Web UI 生成类型 |
+| `generate_provider_inventory.py` | 生成[渠道来源清单](/docs/providers-inventory)页面 |
+| `check_layout.py` | 在真实浏览器里检查 Web UI 有没有横向溢出，见[测试](/docs/development-testing) |
+
+## Python 环境
+
+<Steps>
+<Step>
+
+### 克隆并建立虚拟环境
+
+Hoshimi 支持 Python 3.10 及以上；CI 的 lint 与构建使用 3.11。`.venv/` 已在 `.gitignore` 中。
+
+<Tabs items={["venv", "uv"]}>
+<Tab value="venv">
+
+```bash
+git clone https://github.com/licyk/Hoshimi.git
+cd Hoshimi
+python -m venv .venv
+source .venv/bin/activate        # Windows：.venv\Scripts\activate
+```
+
+</Tab>
+<Tab value="uv">
+
+```bash
+git clone https://github.com/licyk/Hoshimi.git
+cd Hoshimi
+uv venv .venv --python 3.11
+source .venv/bin/activate        # Windows：.venv\Scripts\activate
+```
+
+</Tab>
+</Tabs>
+
+</Step>
+<Step>
+
+### 以可编辑方式安装，带上开发依赖
+
+<Tabs items={["pip", "uv"]}>
+<Tab value="pip">
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+</Tab>
+<Tab value="uv">
+
+```bash
+uv pip install -e ".[dev]"
+```
+
+</Tab>
+</Tabs>
+
+`dev` 附加依赖包含 pytest、Ruff、ty、build 和官方 Anthropic SDK（Messages 的回归测试用到它）。要覆盖云渠道的代码，再加上 `google`（`google-auth[requests]`）和 `bedrock`（`boto3`）：CI 的类型检查和测试安装的就是 `.[dev,google,bedrock]`。
+
+</Step>
+<Step>
+
+### 确认环境
+
+```bash
+python -m hoshimi version
+python scripts/dev.py lint test-py
+```
+
+`dev.py` 用运行它的解释器（`sys.executable`）调用 Ruff、ty 和 pytest，而不是 `PATH` 上的那个，所以用虚拟环境里的 `python` 运行它即可。
+
+</Step>
+</Steps>
+
+## Web UI：bun
+
+Web UI（`hoshimi/webui/`）和文档站（`site/`）都用 bun 安装、构建和测试；CI 使用 bun 1.4.2。`dev.py` 在 `PATH` 上找不到 `bun` 时给出一行说明并以状态 127 退出，而不是抛出回溯。
+
+```bash
+python scripts/dev.py web-install   # 在 hoshimi/webui 中 bun install
+python scripts/dev.py web           # vue-tsc 类型检查后构建到 hoshimi/webui/dist
+```
+
+构建好的 `dist/` 作为包数据随 wheel 发布。在源码目录里运行 `hoshimi serve` 时，若没有 `dist/index.html`，服务器记录一条警告，只提供 API。
+
+## 开发模式：API 与 Vite 一起运行
+
+```bash
+python scripts/dev.py dev
+```
+
+它同时启动两个进程，并给每一行输出加上进程名（`api` 或 `web`）：
+
+- **API**：`python -m hoshimi serve --no-open --no-ui --port 10600 --strict-port`，仓库根目录放在 `PYTHONPATH` 最前面，所以运行的是工作区里的代码。
+- **Vite**：在 `hoshimi/webui` 中运行 `bun run dev --port 5173 --strictPort`，并设置 `HOSHIMI_BACKEND=http://127.0.0.1:10600`。
+
+浏览器只需打开 `http://localhost:5173`：Vite 把 `/api`、`/v1`、`/health`、`/openapi.json`、`/docs` 和 `/redoc` 代理给 API，所以界面和模型 API 都在这一个地址上。界面的改动就地热更新；Python 的改动需要重新运行这个任务。
+
+| 选项 | 默认值 | 作用 |
+| --- | --- | --- |
+| `--api-port` | `10600` | API 服务器的端口 |
+| `--web-port` | `5173` | Vite 的端口 |
+
+- <kbd>Ctrl</kbd>+<kbd>C</kbd> 同时停止两个进程；其中一个退出时，另一个也被停止，任务以它的退出状态结束。
+- 还没有安装 Web UI 依赖时，任务提示先运行 `python scripts/dev.py web-install`。
+- API 重启期间，Vite 的代理最多每 5 秒打印一行“API 没有响应”，并以 HTTP 502 和 `{"code": "api_unreachable", ...}` 回答请求，而不是刷出一屏连接错误。
+
+### 用单独的数据目录
+
+开发时的配置、账号和用量记录与平时的数据分开，只需设置 `HOSHIMI_DATA_DIR`：
+
+<Tabs items={["bash", "PowerShell"]}>
+<Tab value="bash">
+
+```bash
+HOSHIMI_DATA_DIR=/tmp/hoshimi-dev python scripts/dev.py dev
+```
+
+</Tab>
+<Tab value="PowerShell">
+
+```powershell
+$env:HOSHIMI_DATA_DIR = "$env:TEMP\hoshimi-dev"
+python scripts/dev.py dev
+```
+
+</Tab>
+</Tabs>
+
+数据目录的其他内容见[路径与数据目录](/docs/config-paths)。
+
+### 只运行界面
+
+API 已经在别处运行时，`python scripts/dev.py web-dev` 只启动 Vite。它默认代理到 `http://127.0.0.1:10600`；API 在其他地址时，先把环境变量 `HOSHIMI_BACKEND` 设为那个地址（例如 `http://127.0.0.1:10601`）。
+
+## `scripts/dev.py` 的任务
+
+不带参数运行 `python scripts/dev.py` 列出全部任务。可以一次写多个任务，按顺序运行，遇到第一个失败就停止。任务名之后从第一个以 `-` 开头的参数起，都交给该任务；带选项时只能运行一个任务，不接受选项的任务收到选项时以状态 2 失败。
+
+| 任务 | 作用 |
+| --- | --- |
+| `lint` | `ruff check hoshimi tests scripts`，不改动任何文件 |
+| `format` | `ruff check --fix` 和 `ruff format`，作用于同样的目录 |
+| `typecheck-py [ty 选项…]` | `ty check`，额外的选项原样传给 ty（CI 用它传入 Python 版本和平台） |
+| `test-py` | 运行 pytest（`tests/` 下的全部测试） |
+| `web-install` | 在 `hoshimi/webui` 中 `bun install` |
+| `web` | `bun run build`：vue-tsc 类型检查，然后构建到 `hoshimi/webui/dist` |
+| `web-dev` | 只运行 Vite（需要一个已经运行的 API） |
+| `dev [--api-port] [--web-port]` | API 与 Vite 一起运行，见上文 |
+| `test-web` | `bun run test`（Vitest），然后 `bun run typecheck`（vue-tsc） |
+| `openapi` | 在标准输出打印 OpenAPI 文档（`scripts/generate_openapi.py`） |
+| `typegen` | 由 OpenAPI 文档重新生成 `hoshimi/webui/src/api/schema.d.ts`（提交结果） |
+| `typegen-check` | 先 `typegen`，再 `git diff --exit-code`：生成的类型过期时失败 |
+| `wheel` | 构建 Web UI，然后把 wheel 和 sdist 写到 `dist/`（`scripts/build_wheel.py`） |
+| `test` | `test-py` 和 `test-web` |
+| `check` | CI 检查的全部：`lint`、`typecheck-py`、`test-py`、`test-web`、`typegen-check` |
+| `site-install` | 在 `site/` 中安装文档站的依赖 |
+| `site-dev` | 本地预览文档站，热更新 |
+| `site` | 构建文档站 |
+| `test-site` | 文档站的测试与类型检查 |
+
+文档站的任务见[文档站](/docs/development-site)。提交之前运行一次 `python scripts/dev.py check`，它覆盖 CI 的 Python 与 Web UI 检查。
+
+<Callout type="info" title="test-py 不接受选项">
+`test-py` 总是运行整个测试集。只想运行一部分时直接调用 pytest，例如 `python -m pytest tests/core/test_registry.py -k prefixed`。
+</Callout>
+
+## 参考项目的克隆
+
+对照上游协议时，可以把参考仓库克隆到仓库根目录（`dsh-our-free-model/`、`codex-api/`、`Hanaikada/`、`pi/`、`pi-free/`、`free-claude-code/` 等）。它们都在 `.gitignore` 里，不会被提交；开发、测试和构建都不需要它们。每个克隆的用途见[开发文档](/docs/development)。

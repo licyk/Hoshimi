@@ -145,6 +145,8 @@ def test_cline_device_code_then_register() -> None:
 
     credential, reported = run_flow(cline_flow.start_cline_login, mock_client(handler))
     assert reported == ["https://web.workos.com/?code=UC"]
+    # The flow goes on polling after it reports the URL: wait for it, or this reads a half-filled result.
+    finish(credential["_thread"])
     assert credential["access_token"] == "workos:jwt"
     assert credential["account_id"] == "usr-1"
     assert credential["nickname"] == "a@example.com"

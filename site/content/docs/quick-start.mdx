@@ -1,0 +1,108 @@
+---
+title: "快速开始"
+description: "从零到第一次对话：安装 Hoshimi、启动服务器、在 Playground 里和模型聊一句，再用 curl 发出第一个 API 请求。"
+icon: Rocket
+---
+
+本页走最短的路线，只用默认启用的匿名渠道，不需要任何账户。每一步的细节见[安装](/docs/installation)和[首次运行](/docs/first-run)。
+
+<Steps>
+<Step>
+
+### 安装
+
+需要 Python 3.10 或更高版本。从 PyPI 安装：
+
+```bash
+python -m pip install -U hoshimi
+```
+
+发行包已经包含构建好的 Web UI，不需要 Node 或 Bun。用 uv 或 pipx 安装、云平台的可选依赖见[安装](/docs/installation)。
+
+</Step>
+<Step>
+
+### 启动服务器
+
+```bash
+hoshimi serve
+```
+
+服务器就绪后终端会打印一行 `SERVER_READY url=http://127.0.0.1:10600`，浏览器随后自动打开这个地址。默认只监听本机（`127.0.0.1`），端口 **10600**；端口被占用时会自动换用下一个空闲端口，此时以终端打印的 URL 为准。按 <kbd>Ctrl</kbd>+<kbd>C</kbd> 停止。
+
+`python -m hoshimi serve` 与 `hoshimi serve` 等价。不想自动打开浏览器时加 `--no-open`。
+
+</Step>
+<Step>
+
+### 看一眼概览页
+
+界面打开后进入 **概览** 页。**渠道** 一栏里已经有两个渠道：**OpenCode Zen** 和 **Kilo AI**，都标着 **无需账户**。它们是默认启用的匿名入口，能用哪些模型取决于上游当时的目录、额度和服务状态。
+
+**接口** 一栏列出客户端要用的地址（`/v1/chat/completions`、`/v1/responses`、`/v1/messages` 等），每行都可以一键复制。
+
+</Step>
+<Step>
+
+### 在 Playground 里聊第一句
+
+1. 在左侧导航栏打开 **Playground**。
+2. 输入框下方的 **模型** 选择器已经选中了目录里的第一个模型；点它可以搜索并换成别的模型。
+3. 在输入框（**有问题，尽管问…**）里输入一句话，按 <kbd>Enter</kbd> 发送（<kbd>Shift</kbd>+<kbd>Enter</kbd> 换行）。
+
+回复以流式显示。对话会自动保存并命名，出现在侧边栏的 **对话** 列表中。某个模型失败时，换一个再试即可：匿名入口的模型随时可能限流或下线。
+
+</Step>
+<Step>
+
+### 发出第一个 API 请求
+
+先列出模型，从返回的 `data[].id` 里挑一个填进 `<model-id>`：
+
+```bash
+curl http://127.0.0.1:10600/v1/models
+
+curl http://127.0.0.1:10600/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<model-id>","messages":[{"role":"user","content":"你好"}],"stream":false}'
+```
+
+Chat Completions 默认以流式（SSE）返回；上面的 `"stream": false` 让它返回一个完整的 JSON。在 Playground 里，回复下方 **更多操作** 菜单中的 **复制为 API 请求** 会把当前对话复制成一条等价的请求。
+
+用 OpenAI 的 Python SDK 时，把 Base URL 指向 `/v1`：
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:10600/v1", api_key="unused")
+stream = client.chat.completions.create(
+    model="<model-id>",
+    messages=[{"role": "user", "content": "你好"}],
+    stream=True,
+)
+for chunk in stream:
+    if chunk.choices and chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="", flush=True)
+```
+
+没有设置模型 API 密钥时，`api_key` 可以填任意值；设置之后，请求要带上 `Authorization: Bearer <model-api-key>`。
+
+</Step>
+</Steps>
+
+## 命令行中的同样检查
+
+不打开浏览器，也可以用命令行确认渠道和模型（服务器不需要在运行）：
+
+```bash
+hoshimi check        # 检查配置，列出启用的渠道与账户数
+hoshimi providers    # 渠道、账户数和模型数
+hoshimi models       # 全部模型及其所属渠道
+```
+
+## 接下来
+
+- 添加更多渠道：在 **渠道** 页登录免费站点或填入 API Key，见[渠道](/docs/guide-channels)和[渠道概念](/docs/providers)。
+- 接入 Claude Code、Codex、OpenCode 或自己的程序：[接入客户端](/docs/clients)。
+- 让局域网里的其他机器访问，或给界面加上访问密钥：[安全](/docs/config-security)。
+- 第一次打开界面时各个页面的作用：[首次运行](/docs/first-run)。

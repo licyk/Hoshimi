@@ -1,0 +1,229 @@
+---
+title: "配置文件"
+description: "config.json 的位置、修改方式和每一个键：类型、默认值、含义、校验规则，以及每项修改何时生效。"
+icon: FileJson
+---
+
+Hoshimi 的全部设置和渠道账号都保存在数据目录中的一个 JSON 文件 `config.json` 里。网页界面的 **设置** 和 **渠道** 页、`hoshimi config` 命令和管理 API 改的都是这同一个文件。大多数情况下不需要手动编辑它；本页是给需要直接查看或修改它的人准备的完整参考。
+
+## 文件在哪里
+
+```bash
+hoshimi config path
+```
+
+即使文件还不存在，这条命令也会打印它将要写入的绝对路径。所有命令和网页界面都使用这个文件，与当前工作目录无关。
+
+| 系统 | 默认位置 |
+| --- | --- |
+| Linux | `~/.local/share/hoshimi/config.json`，设置了 `XDG_DATA_HOME` 时为 `$XDG_DATA_HOME/hoshimi/config.json` |
+| macOS | `~/Library/Application Support/hoshimi/config.json` |
+| Windows | `%APPDATA%\hoshimi\config.json` |
+
+设置环境变量 `HOSHIMI_DATA_DIR` 可以把整个数据目录搬到别处，配置文件始终是 `<数据目录>/config.json`。文件不存在时全部使用默认值。数据目录里的其他文件见[数据目录与迁移](/docs/config-paths)。
+
+## 三种修改方式
+
+| 方式 | 何时生效 | 适合 |
+| --- | --- | --- |
+| 网页界面 **设置**、**渠道** 页，或 `PATCH /api/v1/settings` | 保存后立即作用于正在运行的网关（监听地址和端口除外） | 日常使用 |
+| `hoshimi config set` | 下次启动服务器时 | 脚本、无界面的服务器 |
+| 直接编辑 `config.json` | 下次启动服务器时 | 批量修改、粘贴账号 |
+
+<Callout type="warn" title="编辑文件前先停止服务器">
+
+运行中的服务器不会重新读取 `config.json`，而是在每次保存设置、登录或续期凭据时，把**内存中的配置**整体写回文件。服务器运行期间用编辑器或 `hoshimi config set` 做的修改，会在下一次这类写入时被覆盖。手动修改前先停止 `hoshimi serve`，改完再启动。
+
+</Callout>
+
+## 最小示例
+
+```json
+{
+  "server": {
+    "access_token": "your-tool-access-key",
+    "model_api_key": "your-model-api-key"
+  },
+  "providers": {
+    "nvidia": {"accounts": [{"id": "nvidia-1", "api_key": "your-provider-api-key"}]}
+  }
+}
+```
+
+只需要写和默认值不同的键。上面的密钥都是占位符。仓库里的 [config.example.json](https://github.com/licyk/Hoshimi/blob/main/config.example.json) 列出了各渠道账号的字段形状，其中的凭据是演示值，不能直接使用。
+
+## 结构
+
+| 顶层键 | 内容 |
+| --- | --- |
+| `server` | 监听地址、密钥、限制、定时任务 |
+| `security` | 允许的网段、主机名、来源 |
+| `network` | 全局上游网络策略 |
+| `playground` | Playground 与内置工具 |
+| `providers` | 每个渠道的开关、账号和选项 |
+
+Hoshimi 不认识的顶层键和字段在读取时被忽略，并且**在下一次保存时被丢弃**，不要在文件里存放自己的备注字段。
+
+## server
+
+| 键 | 类型 | 默认值 | 含义 |
+| --- | --- | --- | --- |
+| `server.host` | 字符串 | `"127.0.0.1"` | 监听地址。绑定非回环地址（如 `0.0.0.0`）时必须同时设置 `server.access_token` 和 `security.allow_cidrs`，见[访问控制](/docs/config-security) |
+| `server.port` | 整数 0–65535 | `10600` | 第一个尝试的端口。被占用时依次尝试后面的端口（见 `strict_port`）；`0` 让系统任选一个空闲端口 |
+| `server.strict_port` | 布尔 | `false` | `true` 时端口被占用就启动失败，而不是换端口。`hoshimi serve --strict-port/--no-strict-port` 可临时覆盖 |
+| `server.access_token` | 字符串或 `null` | 未设置 | 工具访问密钥：保护管理接口 `/api/*`、`/docs` 和 `/openapi.json`，也是网页界面的登录密钥。空字符串等同未设置 |
+| `server.model_api_key` | 字符串或 `null` | 未设置 | 模型 API 密钥：独立保护外部模型接口 `/v1/*`。空字符串等同未设置 |
+| `server.default_model` | 字符串或 `null` | 未设置 | 请求没有带 `model` 时使用的模型（`provider/model` 或模型 id） |
+| `server.max_body_bytes` | 正整数 | `16777216`（16 MiB） | 请求体大小上限。会被校验并显示在设置中，但当前版本的请求处理并不读取它 |
+| `server.max_account_retries` | 整数 ≥ 1 | `3` | 一次请求最多尝试同一渠道中的几个账号，见[模型与账号行为](/docs/advanced-models)。小于 1 的值按 1 处理 |
+| `server.auto_refresh` | 布尔 | `true` | 定时续期即将过期的凭据（每 30 分钟一轮）。`false` 时只能手动续期 |
+| `server.auto_checkin` | 布尔 | `true` | 每天定时为各站点签到领取免费额度。`false` 时只能手动签到 |
+| `server.check_updates` | 布尔 | `true` | 启动时和之后每天向 PyPI 查询是否有新版本，结果显示在 **概览** 页。`false` 时不发出这个请求 |
+| `server.stats_keep_days` | 整数 ≥ 1 | `90` | 每一条调用记录在 `hoshimi.db` 中保留的天数。每小时和每日汇总不受影响，见[用量统计](/docs/advanced-usage) |
+
+<Callout type="info" title="定时任务与 hoshimi serve 的参数">
+
+续期和签到的定时器只在服务器启动时开启，运行中关掉开关不会停止已经在运行的定时器。另外，`hoshimi serve` 启动时会用 `--refresh/--no-refresh` 和 `--checkin/--no-checkin` 的值（默认都是开启）覆盖 `server.auto_refresh` 和 `server.auto_checkin`。要关闭它们，启动时加上 `--no-refresh` 或 `--no-checkin`。
+
+</Callout>
+
+## security
+
+| 键 | 类型 | 默认值 | 含义 |
+| --- | --- | --- | --- |
+| `security.allow_cidrs` | 字符串列表 | `[]` | 允许连接的客户端网段或 IP（如 `192.168.1.0/24`、`10.0.0.5`）。本机回环地址始终允许；列表为空时只允许本机 |
+| `security.allow_hosts` | 字符串列表 | `[]` | 允许的 `Host` 名称。会保存并显示在设置中，但当前版本的请求检查不读取它 |
+| `security.allow_origins` | 字符串列表 | `[]` | 允许发起写操作和跨域请求的浏览器来源，如 `https://app.example.com`；`*` 表示任意来源。需要先设置 `server.access_token` |
+
+这三个键也接受单数写法 `allow_cidr`、`allow_host`、`allow_origin`，值也可以是一个用逗号分隔的字符串。保存时统一写成复数形式的列表。各项检查的细节见[访问控制](/docs/config-security)。
+
+## network
+
+| 键 | 类型 | 默认值 | 含义 |
+| --- | --- | --- | --- |
+| `network.mode` | `"auto"`、`"direct"` 或 `"proxy"` | `"auto"` | `auto` 读取 `HTTP_PROXY` 等环境变量；`direct` 不走代理；`proxy` 使用 `network.proxy` |
+| `network.proxy` | 字符串或 `null` | `null` | HTTP(S) 或 SOCKS5 代理地址，`proxy` 模式下必填 |
+| `network.system_proxy` | 布尔 | `false` | 仅 Windows：`auto` 模式下没有环境变量代理时使用系统代理 |
+
+`network` 里不能出现其他键。每个渠道可以在 `providers.<id>.options.network` 中单独覆盖这条策略，见[网络与代理](/docs/config-network)。
+
+## playground
+
+| 键 | 类型 | 默认值 | 含义 |
+| --- | --- | --- | --- |
+| `playground.system_prompt` | 字符串 | `""` | 作为 Playground 每个对话的第一条消息发送；空则不发送 |
+| `playground.title_model` | 字符串 | `""` | 新对话收到第一条回复后，用来为它命名的模型；空则使用对话自己的模型 |
+| `playground.vision_model` | 字符串 | `"auto"` | 为不能读图的模型描述图片：`auto` 选第一个可用且能读图的模型，`off` 直接略去图片，其他值是一个模型 id。空字符串按 `auto` 处理 |
+| `playground.tools` | 字符串列表 | `[]` | 新对话默认开启的内置工具：`read`、`apply_patch`、`shell`、`terminal`、`web_search`、`web_fetch`。每个对话可以在输入框中单独开关 |
+| `playground.workspace` | 字符串 | `""` | 工具的工作目录，支持 `~`；空则为 `<数据目录>/workspace` |
+| `playground.approval` | `"ask"`、`"auto"` 或 `"full"` | `"ask"` | 工具何时先询问：`ask` 在运行命令、修改文件和访问工作区外的内容前询问；`auto` 只在读写工作区外的文件时询问；`full` 从不询问。空字符串按 `ask` 处理 |
+| `playground.max_steps` | 整数 1–500 | `50` | 一条回复最多进行几轮工具调用，最后一轮必须作答 |
+| `playground.search_url` | 字符串 | `""` | `web_search` 使用的 SearXNG 地址（需开启其 JSON 格式），必须以 `http://` 或 `https://` 开头；空则使用 DuckDuckGo |
+
+<Callout type="warn" title="工具在本机运行">
+
+`shell`、`terminal` 和 `apply_patch` 以运行 Hoshimi 的用户身份在本机执行命令、修改文件，没有沙箱。只开启需要的工具，并保持询问。详见 [Playground 工具](/docs/guide-agent)。
+
+</Callout>
+
+## providers
+
+`providers` 以渠道 id 为键，每个渠道有三个字段：
+
+| 键 | 类型 | 默认值 | 含义 |
+| --- | --- | --- | --- |
+| `providers.<id>.enabled` | 布尔 | `true` | `false` 完全关闭这个渠道。免账号渠道（`opencode`、`kilo`）不需要任何配置就会启用，要关掉它们就写 `"enabled": false` |
+| `providers.<id>.accounts` | 对象列表 | `[]` | 这个渠道的账号，字段因渠道而异，见[渠道](/docs/providers) |
+| `providers.<id>.options` | 对象 | `{}` | 渠道级选项，因渠道而异 |
+
+规则：
+
+- 不认识的渠道 id 被忽略。
+- 一个启用但没有账号的渠道不会运行，免账号渠道除外。
+- 网页上的 **登录**、**添加账号** 和 `hoshimi login` 会把账号写进这里，并自动把渠道设为启用；对同一身份重新登录会替换原账号而不是再加一个。
+
+账号中 Hoshimi 通用读取的字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `id` | 账号 id，显示在界面、用量统计和日志中。缺省时为 `<渠道>-<序号>` |
+| `refresh_token` | 有它的账号才会被定时续期 |
+| `expires_at` | 过期时间（毫秒或秒级 Unix 时间戳，数字或字符串均可）。也接受 `expire_time`，或 ISO 时间格式的 `expiry`。没有记录过期时间的可续期账号每轮都会续期 |
+| `models` | 部分渠道（如 `agg`）用它声明这个账号提供哪些模型 |
+
+渠道选项中通用的：
+
+| 选项 | 含义 |
+| --- | --- |
+| `options.network` | 这个渠道自己的网络策略，缺省为 `{"mode": "inherit"}`（继承全局），见[网络与代理](/docs/config-network) |
+| `options.client_profile`（仅 `cline`） | Cline 的登录方式：`sdk`（默认，设备码授权）或 `extension`（浏览器授权，本地回调端口 48801–48811）。新登录的账号会记下当时使用的方式，修改只影响之后的登录 |
+
+各渠道专有的账号字段和选项（如 `agg` 的 `base_url`、`preset`、`model_specs`）见[渠道](/docs/providers)下的各页。
+
+## 校验
+
+保存（网页、API、`hoshimi config set`）和启动（`hoshimi serve`、`hoshimi check`）前都会整体校验，不通过时文件保持原样。可能的错误：
+
+| 错误信息 | 原因 |
+| --- | --- |
+| `server.port must be between 0 and 65535` | 端口超出范围 |
+| `server.max_body_bytes must be positive.` | 请求体上限不是正数 |
+| `server.stats_keep_days must be at least 1.` / `must be a whole number of days` | 保留天数小于 1 或不是整数 |
+| `server.access_token must be a string or null` | 密钥不是字符串 |
+| `server.strict_port must be true or false`、`server.check_updates must be true or false` | 不是布尔值 |
+| `network.mode must be auto, direct or proxy (inherit for providers)` | 模式拼错；`inherit` 只能用于渠道 |
+| `network.proxy is required in proxy mode` | `proxy` 模式没有代理地址 |
+| `network.proxy must be a valid HTTP(S) or SOCKS5 proxy URL` | 代理地址格式不对 |
+| `unknown network option` | `network` 里有多余的键 |
+| `cline client_profile must be sdk or extension` | Cline 登录方式拼错 |
+| `playground.tools: unknown tool '…'` | 工具名拼错 |
+| `playground.approval must be ask, auto or full.` | 询问模式拼错 |
+| `playground.max_steps must be between 1 and 500.` | 轮数超出范围 |
+| `playground.search_url must be an http(s) address.` | SearXNG 地址不是 http(s) |
+| `security.allow_origins requires server.access_token …` | 设置了允许的来源却没有工具访问密钥 |
+| `Refusing to bind a non-loopback host without both security.allow_cidrs and server.access_token. …` | 监听非回环地址却缺少网段白名单或工具访问密钥 |
+
+`config.json` 本身不是合法的 JSON（或不是一个 JSON 对象）时，服务器拒绝启动，并先把原文件复制为 `config.json.corrupt-<UTC 时间>`，错误信息中会给出副本的路径。修好或删除 `config.json` 后再启动。
+
+## 何时生效
+
+通过网页或管理 API 保存时：
+
+| 设置 | 生效时间 |
+| --- | --- |
+| `server.host`、`server.port`、`server.strict_port` | 重启服务器后。**设置** 页顶部会提示需要重启 |
+| `server.access_token`、`server.model_api_key`、`security.allow_cidrs`、`server.default_model` | 立即 |
+| `security.allow_origins` | 来源检查立即生效；浏览器跨域所需的 CORS 响应头使用启动时的列表，修改后需重启 |
+| `network`、`providers.*` | 立即作用于新请求；只有输入发生变化的渠道会被重建，正在进行的流式回复在原连接上完成 |
+| `server.max_account_retries` | 下一次重建账号池时（任一渠道的账号或选项变化），或重启后 |
+| `server.stats_keep_days` | 下一次清理时（随新记录触发，最多每分钟一次） |
+| `server.check_updates` | 立即 |
+| `server.auto_refresh`、`server.auto_checkin` | 见上文的说明 |
+| `playground.*` | 下一条消息起 |
+
+通过 `hoshimi config set` 或编辑文件修改的，都要重启服务器才生效。
+
+## 用命令行查看和修改
+
+```bash
+hoshimi config path                                   # 配置文件路径
+hoshimi config show                                   # 完整配置，凭据显示为 ***
+hoshimi config show --json
+hoshimi config get server.port
+hoshimi config set server.port 10601
+hoshimi config set server.default_model "<provider>/<model>"
+hoshimi config set security.allow_cidrs '["192.168.1.0/24"]'
+hoshimi config set network '{"mode": "proxy", "proxy": "http://127.0.0.1:7890"}'
+hoshimi config set providers.kilo.enabled false
+hoshimi config set server.access_token null           # 清除
+hoshimi check                                         # 校验配置并列出将要启用的渠道
+```
+
+- 键用点分隔，值能按 JSON 解析的就按 JSON 解析（数字、`true`/`false`、列表、对象），否则作为字符串。`null`（或 `none`）清除一个值。
+- 写入前整体校验，所以互相依赖的键要一次写完。例如切换到代理模式时，把整个 `network` 对象一起设置，单独设置 `network.mode proxy` 会因缺少代理地址而被拒绝。
+- `show` 和 `get` 把访问密钥、账号凭据和代理地址显示为 `***`。`get` 读的是文件中实际写着的值，文件里没有的键会报 `Unknown setting`。
+- 改完要重启服务器。完整的命令参考见[命令一览](/docs/cli-commands)。
+
+## 文件的写入方式
+
+每次保存都先写入同目录下的临时文件再原子替换，避免写到一半的文件。文件中有明文刷新令牌，保存后会尽量把权限设为仅所有者可读写（`0600`），在不支持权限位的文件系统（Windows、部分网络挂载）上跳过。把它当作凭据文件对待，不要分享填好的配置。

@@ -1,0 +1,157 @@
+---
+title: "Anonymous lanes"
+description: "The two free lanes that are on by default and need no account, OpenCode Zen and Kilo: what they offer, how to turn them off, how a key widens the catalogue, and how their protocols are handled."
+icon: Globe
+---
+
+On the first start, before there is any configuration, the `opencode` (OpenCode Zen) and `kilo` (Kilo AI) channels already work: each runs on a placeholder account with no credential in it and sends requests to the upstream's free models. On the **Channels** page both show **No account needed**.
+
+Whether a model answers depends on the upstream's current models, quota and service state, and can differ by the region your network exits from. This page describes how the adapters work, not a promise about upstream availability.
+
+## At a glance
+
+| Channel | Upstream | Anonymous catalogue | With an account |
+| --- | --- | --- | --- |
+| `opencode` | `https://opencode.ai/inference` | The free slice of the live listing (IDs containing `free`, plus `big-pickle`, `space-bunny-free` and `union-alpha`) | An API-key account uses its authenticated catalogue |
+| `kilo` | `https://api.kilo.ai/api/gateway` | Chat models the live listing marks `isFree: true` | API key or device-code sign-in; the catalogue widens to every chat model the account can see |
+
+To see the IDs available now:
+
+```bash
+hoshimi models --provider opencode
+hoshimi models --provider kilo
+curl http://127.0.0.1:10600/v1/models
+```
+
+You can call them with the channel prefix, for example `opencode/big-pickle` or `kilo/kilo-auto/free`.
+
+## Turning the anonymous lanes off
+
+An anonymous lane is switched off only with `enabled: false` (with no accounts it is otherwise enabled automatically):
+
+```bash
+hoshimi config set providers.kilo.enabled false
+hoshimi config set providers.opencode.enabled false
+```
+
+Or in `config.json`:
+
+```json
+{
+  "providers": {
+    "opencode": {"enabled": false},
+    "kilo": {"enabled": false}
+  }
+}
+```
+
+Switching the channel off on the **Channels** page does the same. To turn it back on, set `enabled` to `true` or delete the entry.
+
+## OpenCode Zen (`opencode`)
+
+### Anonymous use
+
+Unless switched off, `opencode` runs on a placeholder account (`opencode-public`). The gateway reads the upstream `/v1/models` and keeps only the free slice: models whose ID has `free` as a separate segment (such as `mimo-v2.6-flash-free`), plus `big-pickle`, `space-bunny-free` and `union-alpha`, which are always treated as free. New free IDs keep the upstream's own spelling.
+
+The live listing is authoritative. A failed refresh keeps the last good catalogue; only a cold start with an unreachable listing uses the built-in historical fallback list.
+
+### Widening the catalogue with an API key
+
+On **Channels** › **OpenCode Zen**, click **Add account** and choose **API key**, or write it into `config.json`:
+
+```json
+{
+  "providers": {
+    "opencode": {
+      "accounts": [
+        {"id": "opencode-key", "api_key": "<OpenCode API key>", "project_id": "<optional project id>"}
+      ]
+    }
+  }
+}
+```
+
+- Once the channel has accounts, it uses only the ones you configured; the anonymous placeholder is no longer added. An account without `api_key` sends its requests anonymously.
+- When the first account has a key, the catalogue is no longer cut down to the free slice; the key's own permissions still apply.
+- `project_id` is sent as the `x-opencode-project` header; the default is `global`.
+- The OpenCode Go plan is a separate channel, `opencode-go`; see [Local and compatible endpoints](/docs/providers-local).
+
+### Protocol handling
+
+The anonymous lane implements the v2 protocol after the external dsh-our-free-model project's `src/upstream.js` (snapshot `f0b979f`). The snapshot identifies the porting baseline, not a recent test against the upstream.
+
+- Requests go to endpoints under `/inference/v1` with `User-Agent: opencode/latest/2.0.26/cli` and `x-opencode-client: cli`; the legacy `x-opencode-request` is not sent.
+- The `x-opencode-session`, `x-opencode-session-id`, `x-session-affinity` and `x-session-id` headers carry the same session ID. It is derived per account and conversation (descending encoding) from the body's `session_id`, `conversation_id` or `user`, in that order, or else from the first user message. Send a different `session_id` for separate conversations that open with the same message.
+- The endpoint follows the model: `muse-spark-*` uses `/v1/responses`, `union-alpha` uses `/v1/messages`, everything else `/v1/chat/completions`.
+- Anonymous requests declare the reference implementation's `read` and `shell` tool definitions (the upstream compares tool descriptions). A caller tool with the same name but a different definition is sent under an alias (such as `read_client`), consistently in declarations, history and forced choices, and restored in the response.
+- The caller cannot actually run those two injected tools. When the model calls only tools the caller did not offer, the gateway answers it with `unsupported call: <name>` and asks again in the same session, for at most two rounds; if the model keeps calling them, the request fails with a 502 error. The caller sees only the text and calls to its own tools.
+- When the caller sets `tool_choice: "none"`, the field is left out of the upstream request and the gateway makes sure no tool call reaches the caller.
+- Accounts with an API key skip all of this tool handling; the caller's tools are sent as declared.
+
+### Thinking levels
+
+These IDs use the thinking menus declared by the reference implementation; other IDs follow the shared capability table (see [Model behaviour](/docs/advanced-models)).
+
+| Model | Levels | Default | Thinking can be switched off |
+| --- | --- | --- | --- |
+| `deepseek-v4.1-flash-free` | `disabled`, `low`, `high`, `max` | `high` | Yes |
+| `glm-5.3-flash-free` | `low`, `high`, `max` | `high` | No |
+| `nemotron-3.5-super-vl-free` | `disabled`, `minimal`, `low`, `medium`, `high`, `xhigh` | `high` | Yes |
+| `space-bunny-free` | `low`, `medium`, `high`, `xhigh`, `max` | `high` | No |
+
+The level is sent in the `reasoning_effort` field.
+
+### Region and probes
+
+The listing names IDs only; it cannot say whether your network exit may use a given model, and the `muse-spark` family is marked as region-sensitive. `opencode` takes part in the default availability probe, so you can confirm with one real request from the **Models** page or `POST /api/v1/probe`; see [Model behaviour](/docs/advanced-models).
+
+## Kilo (`kilo`)
+
+### Anonymous use
+
+Unless switched off, `kilo` runs on a placeholder account (`kilo-public`) and calls the Kilo gateway with no credential. The catalogue keeps only the chat models the upstream marks `isFree: true` (embedding, image, audio and similar rows are excluded); paid IDs only answer 401 without a key. A cold start with an unreachable listing uses the built-in historical fallback list (such as `kilo-auto/free` and `openrouter/free`).
+
+<Callout type="warn" title="Free-pool prompts may be logged">
+
+The anonymous free pool is protected by no credential at all, and the upstreams behind the free models may log prompts. Do not send sensitive content through it.
+
+</Callout>
+
+### Signing in with a key or a device code
+
+There are two ways to add a Kilo account:
+
+```bash
+hoshimi login kilo
+```
+
+The terminal prints a verification link and a code (in the Web UI, click **Sign in**; the dialog shows the **Verification code**). Confirm in the browser and the account is written to `config.json`. Kilo returns a long-lived key, not a renewable OAuth token, so it is never renewed on a timer.
+
+You can also paste an API key in **Add account**, or write it into `config.json`:
+
+```json
+{
+  "providers": {
+    "kilo": {
+      "accounts": [{"id": "kilo-key", "api_key": "<Kilo API key>"}],
+      "options": {"free_only": true}
+    }
+  }
+}
+```
+
+- The account accepts any one of `api_key`, `access_token` or `token`.
+- With a credentialed account, the catalogue includes every chat model the account can see; `options.free_only: true` keeps it to free models.
+- As with `opencode`, once the channel has accounts the anonymous placeholder is no longer added; an account with no credential calls anonymously.
+
+### Request handling and thinking levels
+
+- Requests use OpenAI Chat Completions: `max_completion_tokens` becomes `max_tokens`, `developer` messages become `system`, `strict` is removed from tool definitions, and `store` and `reasoning_effort` are dropped.
+- Thinking levels come from the capabilities each listing row declares and are sent as `reasoning: {"effort": ...}`; switching thinking off sends `reasoning: {"enabled": false}`.
+- Models under `stepfun/`, `liquid/` and `thinkingmachines/` require thinking, and `kilo-auto/free` and `openrouter/free` accept the parameter but keep thinking, so their menus have no off level.
+
+Kilo is not part of the default availability probe: the anonymous listing is already the free pool's verdict.
+
+## Verification scope
+
+`tests/core/test_opencode_lane.py`, `tests/core/test_pi_free_parity.py` and the protocol tests cover local regressions; they do not replace a successful request from a particular network exit. Model availability, regional limits and quota are settled by the upstream's current answers or an explicit [probe](/docs/advanced-models).

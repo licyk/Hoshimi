@@ -1,0 +1,212 @@
+---
+title: "本地与兼容端点"
+description: "接入本机的 LM Studio、Ollama、llama.cpp，以及 OpenAI、Anthropic、OpenRouter、DeepSeek 等按密钥计费的常规 API 服务：账号字段、渠道选项、协议选择和各服务的兼容处理。"
+icon: Server
+---
+
+本页覆盖两类渠道：运行在你自己机器上的本地推理服务，以及 Hoshimi 内置的、用 API 密钥接入的常规 API 服务（OpenAI、Anthropic、OpenRouter、DeepSeek、Groq 等五十多个）。它们共用同一套账号字段和渠道选项。
+
+## 本地后端
+
+| 渠道 | 名称 | 默认地址 | 模型目录 |
+| --- | --- | --- | --- |
+| `lmstudio` | LM Studio | `http://localhost:1234/v1` | `/v1/models`，已加载模型的上下文长度取自 `/api/v0/models` |
+| `ollama` | Ollama | `http://localhost:11434/v1` | `/api/tags`，能力和上下文长度取自 `/api/show` |
+| `llamacpp` | LLaMA.cpp | `http://localhost:8080/v1` | `/v1/models` |
+
+Hoshimi 不扫描本地端口：只有添加了账号且渠道开启，才会连接这些地址。
+
+### 添加本地服务
+
+<Tabs items={["网页界面", "config.json"]}>
+<Tab value="网页界面">
+
+1. 打开 **渠道**，在 **未设置** 筛选下找到 **LM Studio**、**LLaMA.cpp** 或 **Ollama**，点 **添加账号**。
+2. 鉴权方式为 **本地服务（密钥可选）**。**API 地址（可选）** 已预填默认地址，服务不在默认端口时改成实际地址。
+3. 本地服务要求鉴权时填写 **API 密钥**，否则留空；需要时在 **模型 ID** 中限定模型。点 **保存账号**。
+
+</Tab>
+<Tab value="config.json">
+
+```json
+{
+  "providers": {
+    "ollama": {
+      "accounts": [{"id": "local", "base_url": "http://127.0.0.1:11434/v1"}]
+    },
+    "lmstudio": {
+      "accounts": [{"id": "lmstudio-1", "base_url": "http://localhost:1234/v1", "api_key": "<optional key>"}]
+    }
+  }
+}
+```
+
+省略 `base_url` 时使用默认地址；账号可以只有一个 `id`。
+
+</Tab>
+</Tabs>
+
+- `base_url` 必须是 HTTP(S) 地址，不能带用户名密码、查询参数或片段；不以 `/v1` 结尾时会自动补上。
+- `api_key`（或 `access_token`、`token`）有值时以 `Authorization: Bearer` 发送，没有就不带鉴权头。
+- 本地模型不会被标记为免费（`free` 为 `null`）。
+
+### 各后端的处理
+
+- **LM Studio**：读取已加载模型的实际上下文长度（缓存 30 秒）。请求前做粗略检查：消息 JSON 字节数的四分之一加上 `max_tokens` 超过已加载的上下文时，直接返回 400（`LM Studio request exceeds this model's loaded context window`）。接近上限的请求仍以服务端的分词结果为准。思考级别通过 `reasoning_effort` 发送（`minimal` 映射为 `low`，`xhigh`、`max` 映射为 `high`）。
+- **Ollama**：逐个读取模型的能力，只保留能做补全或工具调用的模型，并据此标记视觉、思考和工具能力；上下文长度取模型信息中的最大值。读取单个模型的详情失败时仍保留该模型。思考级别通过 `reasoning_effort` 发送（`minimal` 映射为 `low`，`xhigh` 映射为 `max`）。
+- **llama.cpp**：思考开关映射到聊天模板参数：`chat_template_kwargs` 中的 `enable_thinking` 和 `thinking`。请求中已有 `enable_thinking` 时不能同时指定思考级别。
+
+只有目录表明模型会思考时，才会出现思考菜单（含关闭选项 `none`）。
+
+## 常规 API 服务
+
+这些服务的地址、协议和目录接口已经内置，账号只需要密钥。
+
+### 添加账号
+
+在 **渠道** 中选择服务，点 **添加账号**，鉴权方式为 **API 密钥**，填写 **API 密钥**，可选填 **API 地址（可选）** 和 **模型 ID**；OpenAI、xAI、Vercel AI Gateway 还有 **通信协议** 选项。部分服务也支持浏览器或设备码登录：
+
+| 渠道 | 登录方式 | 得到的凭据 |
+| --- | --- | --- |
+| `anthropic` | claude.ai 授权，本地回调（远程时可粘贴 `code#state`） | 可续期的 OAuth 令牌 |
+| `openai` | OpenAI 授权，本地回调固定端口 1455 | 可续期的 OAuth 令牌（需要授予直接 API 访问） |
+| `openrouter` | OpenRouter 授权，本地回调 | API 密钥 |
+| `github-copilot` | GitHub 设备码 | GitHub 令牌换得的 Copilot 令牌，续期时重新换取；推理地址取自令牌 |
+| `kimi-coding` | 设备码 | 可续期的 OAuth 令牌 |
+| `meta` | 设备码 | 有效期一天的推理密钥，续期时重新换取 |
+| `xai` | 设备码 | 可续期的 OAuth 令牌 |
+
+```bash
+hoshimi login openrouter
+hoshimi login github-copilot
+```
+
+或写入 `config.json`：
+
+```json
+{
+  "providers": {
+    "openrouter": {"accounts": [{"id": "openrouter-1", "api_key": "<OpenRouter key>"}]},
+    "deepseek": {"accounts": [{"id": "deepseek-1", "api_key": "<DeepSeek key>"}]}
+  }
+}
+```
+
+### 账号字段
+
+| 字段 | 说明 |
+| --- | --- |
+| `api_key` | 密钥，以 `Authorization: Bearer` 发送（Anthropic 的 API 密钥以 `x-api-key` 发送）。也接受 `access_token` 或 `token`。缺少凭据的账号无法保存。 |
+| `base_url` | 可选，替换该账号的上游地址。 |
+| `models` | 可选，声明该账号的模型 ID，代替实时目录。 |
+| `protocol` | 可选，该账号使用的协议：`chat`、`responses` 或 `messages`。 |
+
+每个账号的目录单独读取；请求只交给目录中有该模型的账号。某个账号的目录刷新失败时，保留它上一次成功的结果。
+
+### 渠道选项
+
+| 选项 | 说明 |
+| --- | --- |
+| `options.base_url` | 替换整个渠道的默认地址。 |
+| `options.models` | 渠道级的模型声明，账号没有 `models` 时使用。 |
+| `options.model_protocols` | 按模型指定协议，例如 `{"claude-sonnet": "messages"}`。也接受 `openai-completions`、`openai-responses`、`anthropic-messages` 等别名。 |
+| `options.messages_passthrough` | 设为 `false` 时，即使上游讲 Anthropic Messages，也先转换为内部格式再发送。 |
+| `options.messages_count_tokens` | 声明上游有原生的 token 计数端点（`/messages/count_tokens`）。`anthropic` 默认开启。 |
+| `options.structured_outputs` | 声明上游的 Chat 或 Responses 支持 JSON Schema 结构化输出，使经过转换的 Messages 请求可以使用 `output_config.format`。只为确实支持的模型开启。 |
+| `options.network` | 该渠道的网络线路，见[网络与代理](/docs/config-network)。 |
+
+### 协议
+
+渠道按服务的默认协议发送：多数为 Chat Completions，`openai`、`meta`、`xai`、`codex` 为 Responses，`anthropic`、`minimax-api`、`minimax-cn`、`vercel-ai-gateway` 为 Anthropic Messages。“多协议”的渠道按模型选择：
+
+- `github-copilot` 按目录中模型支持的端点选择 Responses、Messages 或 Chat。
+- `fireworks`、`opencode-go` 中 `claude` 开头的模型走 Messages；`opencode-go` 中 `gemini-` 开头的模型走 Gemini 原生协议。
+- 其余默认 Chat。可以用账号的 `protocol` 或 `options.model_protocols` 覆盖。
+
+上游讲 Anthropic Messages 时，来自 Anthropic 客户端（如 Claude Code）的 `/v1/messages` 请求原样转发，不经过格式转换。能力边界和客户端配置见 [Anthropic 接口](/docs/clients-anthropic)。
+
+### 兼容处理
+
+Hoshimi 按各服务已知的差异调整请求，例如：
+
+- Chat 请求中的 `max_completion_tokens` 改为 `max_tokens`（`minimax-chat`、`wandb` 反过来使用 `max_completion_tokens`）；不接受 `developer` 角色的服务把它改为 `system`。
+- `deepseek` 的历史助手消息补上 `reasoning_content`；`mistral` 和 `mistral-codestral` 把工具调用 ID 统一转换为 9 位字母数字；`cohere` 去掉它不支持的字段和消息中的 `name`。
+- 不接受某些字段的服务会去掉 `store`、`reasoning_effort` 或工具定义中的 `strict`。
+- `openrouter` 的目录读取 `/models/user`，被拒绝时退回 `/models`。
+
+思考级别的发送方式因服务而异（目录表明模型会思考时才有菜单）：
+
+| 方式 | 渠道 |
+| --- | --- |
+| `reasoning_effort` 字段 | `nebius`、`cohere`、`wafer`、`nararoute`、`lightning`、`experiential`、`cheaperinference`、`atlascloud`（不能关闭），以及本地的 `lmstudio`、`ollama` |
+| `reasoning` 对象 | `vercel-ai-gateway` |
+| `thinking: {"type": ...}` | `zai-api` |
+| 聊天模板参数 `enable_thinking` | `featherless`、`wandb`、`poolside`、`llamacpp` |
+| `reasoning_split: true` | `minimax-chat` |
+| 不发送思考参数 | `cline-pass`、`bedrock-mantle`、`xai`、`alibaba-cloud`、`qwen-coding-plan-intl`、`siliconflow`、`chutes`、`mistral-codestral`、`scaleway` |
+
+其余渠道除了上面提到的去字段规则，原样转发调用方的思考字段。详细规则见[模型行为](/docs/advanced-models)。
+
+### 内置服务一览
+
+| 渠道 | 名称 | 默认地址 | 协议 | 套餐 | 登录 |
+| --- | --- | --- | --- | --- | --- |
+| `ant-ling` | Ant Ling | `https://api.ant-ling.com/v1` | chat | api | |
+| `anthropic` | Anthropic | `https://api.anthropic.com/v1` | messages | api | 支持 |
+| `baseten` | Baseten | `https://inference.baseten.co/v1` | chat | api | |
+| `cerebras` | Cerebras | `https://api.cerebras.ai/v1` | chat | api | |
+| `deepseek` | DeepSeek | `https://api.deepseek.com/v1` | chat | api | |
+| `fireworks` | Fireworks | `https://api.fireworks.ai/inference/v1` | 多协议 | api | |
+| `github-copilot` | GitHub Copilot | `https://api.individual.githubcopilot.com` | 多协议 | subscription | 支持 |
+| `groq` | Groq | `https://api.groq.com/openai/v1` | chat | api | |
+| `huggingface` | Hugging Face | `https://router.huggingface.co/v1` | chat | api | |
+| `kimi-coding` | Kimi Coding | `https://api.kimi.com/coding/v1` | chat | coding | 支持 |
+| `meta` | Meta | `https://api.meta.ai/v1` | responses | api | 支持 |
+| `minimax-api` | MiniMax API | `https://api.minimax.io/anthropic/v1` | messages | api | |
+| `minimax-cn` | MiniMax API CN | `https://api.minimaxi.com/anthropic/v1` | messages | api | |
+| `mistral` | Mistral | `https://api.mistral.ai/v1` | chat | api | |
+| `moonshotai` | Moonshot | `https://api.moonshot.ai/v1` | chat | api | |
+| `moonshotai-cn` | Moonshot CN | `https://api.moonshot.cn/v1` | chat | api | |
+| `openai` | OpenAI | `https://api.openai.com/v1` | responses | api | 支持 |
+| `opencode-go` | OpenCode Go | `https://opencode.ai/zen/go/v1` | 多协议 | go | |
+| `openrouter` | OpenRouter | `https://openrouter.ai/api/v1` | 多协议 | api | 支持 |
+| `qwen-token-plan` | Qwen Token Plan | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | chat | token-plan | |
+| `qwen-token-plan-cn` | Qwen Token Plan CN | `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` | chat | token-plan-cn | |
+| `qwen-token-plan-individual` | Qwen Token Plan Individual | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | chat | individual | |
+| `together` | Together | `https://api.together.ai/v1` | chat | api | |
+| `vercel-ai-gateway` | Vercel AI Gateway | `https://ai-gateway.vercel.sh/v1` | messages | api | |
+| `xai` | xAI | `https://api.x.ai/v1` | responses | api | 支持 |
+| `xiaomi` | Xiaomi MiMo | `https://api.xiaomimimo.com/v1` | chat | api | |
+| `xiaomi-token-plan-ams` | Xiaomi Token Plan AMS | `https://token-plan-ams.xiaomimimo.com/v1` | chat | ams | |
+| `xiaomi-token-plan-cn` | Xiaomi Token Plan CN | `https://token-plan-cn.xiaomimimo.com/v1` | chat | cn | |
+| `xiaomi-token-plan-sgp` | Xiaomi Token Plan SGP | `https://token-plan-sgp.xiaomimimo.com/v1` | chat | sgp | |
+| `zai` | Z.AI Coding | `https://api.z.ai/api/coding/paas/v4` | chat | coding | |
+| `zai-coding-cn` | Z.AI Coding CN | `https://open.bigmodel.cn/api/coding/paas/v4` | chat | coding-cn | |
+| `cline-pass` | ClinePass | `https://api.cline.bot/api/v1` | chat | subscription | |
+| `alibaba-cloud` | Alibaba Cloud | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | chat | api | |
+| `qwen-coding-plan-intl` | QwenCloud Coding Plan | `https://coding-intl.dashscope.aliyuncs.com/v1` | chat | coding | |
+| `siliconflow` | SiliconFlow | `https://api.siliconflow.com/v1` | chat | api | |
+| `nebius` | Nebius Token Factory | `https://api.tokenfactory.nebius.com/v1` | chat | api | |
+| `chutes` | Chutes | `https://llm.chutes.ai/v1` | chat | api | |
+| `featherless` | Featherless AI | `https://api.featherless.ai/v1` | chat | api | |
+| `wandb` | W&B Inference | `https://api.inference.wandb.ai/v1` | chat | api | |
+| `mistral-codestral` | Mistral Codestral | `https://codestral.mistral.ai/v1` | chat | coding | |
+| `bedrock-mantle` | Amazon Bedrock | `https://bedrock-mantle.us-east-1.api.aws/v1` | chat | api | |
+| `cohere` | Cohere | `https://api.cohere.ai/compatibility/v1` | chat | api | |
+| `wafer` | Wafer | `https://pass.wafer.ai/v1` | chat | api | |
+| `minimax-chat` | MiniMax | `https://api.minimax.io/v1` | chat | api | |
+| `zai-api` | Z.ai API | `https://api.z.ai/api/paas/v4` | chat | api | |
+| `nararoute` | NaraRoute | `https://router.bynara.id/v1` | chat | api | |
+| `poolside` | Poolside AI | `https://inference.poolside.ai/v1` | chat | api | |
+| `scaleway` | Scaleway | `https://api.scaleway.ai/v1` | chat | api | |
+| `lightning` | Lightning AI | `https://lightning.ai/api/v1` | chat | api | |
+| `experiential` | Experiential Labs | `https://api.experientiallabs.ai/v1` | chat | api | |
+| `cheaperinference` | Cheaper Inference | `https://api.cheaperinference.com/v1` | chat | api | |
+| `atlascloud` | Atlas Cloud | `https://api.atlascloud.ai/v1` | chat | api | |
+| `opper` | Opper | `https://api.opper.ai/v3/compat` | chat | api | |
+
+`codex`（ChatGPT 订阅登录）见[免费站点](/docs/providers-stations)；云平台和 NVIDIA 见[云平台](/docs/providers-cloud)和 [NVIDIA NIM](/docs/providers-nvidia)。这些服务的来源对照见[渠道清单](/docs/providers-inventory)。
+
+## 什么时候用 agg
+
+服务在上表中时，用对应的渠道：它带有该服务的协议、目录接口和兼容规则。服务不在表中但讲 OpenAI Chat Completions 时，用 [agg](/docs/providers-agg)：在账号里写上地址和密钥即可，同一个 agg 渠道可以放多个站点。

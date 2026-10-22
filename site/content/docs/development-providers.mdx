@@ -1,0 +1,311 @@
+---
+title: "渠道适配器"
+description: "怎样接入一个渠道：Provider 契约、归一化的流式分片协议、错误分类与账号轮换、模型目录与能力，以及交互式登录流程。"
+icon: Plug
+---
+
+每个渠道（provider，Web UI 里叫“渠道”）是 `hoshimi/core/providers/` 里的一个 `Provider` 子类：它持有该渠道的账号列表和选项，知道怎样用一个账号向上游发出一轮对话，并把上游的流转换成**归一化分片**。账号轮换、重试、冷却、模型目录缓存这些共同的部分都在基类里，适配器只写这个站点特有的东西。
+
+## 渠道的几种形式
+
+| 形式 | 位置 | 适用于 |
+| --- | --- | --- |
+| 专用适配器 | `providers/<id>.py`，在 `providers/factory.py` 注册 | 有自己协议、认证或怪癖的站点（Cline、TRAE、ZCode、Qoder、MiniMax、Gemini、CodeBuddy、Kilo、OpenCode……） |
+| 按数据定义的服务 | `core/provider_definitions.py` 的一行 `ProviderDefinition`，`adapter="configured"` | 只需 API 密钥、协议是常规 Chat / Messages / Responses 的服务；类由 `regular_provider_classes()` 自动生成 |
+| 本地服务 | 同上，`adapter="local"`（`lmstudio`、`llamacpp`、`ollama`） | 本机的 OpenAI 兼容端点；需要显式添加一个账号才启用 |
+| 聚合渠道 `agg` | `providers/agg.py` 与 `core/presets.py` | 任意 OpenAI 兼容站点，每个账号指向一个预设或自定义地址 |
+
+不需要任何账号就能用的渠道把类属性 `keyless` 设为 `True`：只要配置没有禁用它，`build_providers` 就用一个匿名占位账号把它建出来。
+
+## Provider 契约
+
+契约在 `hoshimi/core/providers/base.py`。
+
+### 类属性
+
+| 属性 | 默认值 | 含义 |
+| --- | --- | --- |
+| `id` | — | 渠道 ID，也是配置里 `providers` 下的键和 `provider/model` 的前缀 |
+| `display_name` | — | 显示名称 |
+| `keyless` | `False` | 无需账号即可使用 |
+| `probeable` | `False` | 默认的可用性探测是否询问这个渠道的模型 |
+| `requires_authorization` | `False` | 是否依赖本机持有的授权；API 据此标记渠道 |
+| `quota_hold_seconds` | `3600` | 额度用尽且上游没有给出时间时，账号冷却的秒数 |
+| `policy_block_seconds` | `1800` | 被站点按安全策略拦截时，账号冷却的秒数 |
+| `backoff_base_seconds`、`backoff_max_seconds`、`backoff_retries` | `0.25`、`8.0`、`2` | 所有账号都试过之后，对同一站点退避重试的参数 |
+
+`max_retries`（一轮最多试几个账号）由 `server.max_account_retries` 设置，默认 3。
+
+### 方法
+
+| 方法 | 必须实现 | 作用 |
+| --- | --- | --- |
+| `stream_raw(account, model, body)` | 是 | 用一个指定账号发出一轮对话，产出归一化分片 |
+| `fetch_models()` | 否 | 从上游取模型 ID 列表；默认没有 |
+| `fallback_models()` | 否 | 取不到目录时使用的固定列表 |
+| `specs()` | 否 | 每个模型的能力（`ModelSpec`）；默认是惰性的规格，再由 models.dev 补充 |
+| `check_account(data)` | 否 | 账号写入 `config.json` 之前拒绝这个渠道用不了的凭据（抛出 `ValidationError`） |
+| `refresh_account(account)` | 否 | 续期凭据；凭据变化时返回 `True`，刷新令牌本身被拒绝时抛出 `RefreshTokenRejected` |
+| `claim_daily(account)` | 否 | 每日签到；返回 `ClaimOutcome`，站点没有签到时返回 `None`（“今天已签到”也要返回结果，而不是 `None`） |
+| `balance_of(account)` | 否 | 查询余额或额度窗口；返回 `BalanceOutcome` 或 `None` |
+| `messages_endpoint(account, model, count_only=False)` 与 `messages_headers(account, model)` | 否 | 账号有原生 Anthropic Messages 端点时返回其 URL 和请求头，`/v1/messages` 会整体透传 |
+| `_stream_candidates(model)` | 否 | 一轮可用的账号及其顺序；默认是全部账号，`agg` 收窄到声明了该模型的账号 |
+
+`Account` 包装一个账号的字典：`account.get(key)`、`account.set(key, value)`，`account.id` 是配置里的 `id`（没有时为 `<provider>-<序号>`），`account.anonymous` 标记匿名占位账号，`account.needs_login` 为真时渠道池不再使用它，直到重新登录。
+
+## 归一化分片协议
+
+`stream_raw` 产出的每个分片都是带 `type` 键的字典。不管上游说的是 OpenAI Chat、Anthropic Messages、Gemini 还是 TRAE SOLO，适配器都要转成下面这些：
+
+| `type` | 字段 | 含义 |
+| --- | --- | --- |
+| `text_delta` | `text` | 一段正文 |
+| `reasoning_delta` | `text` | 一段思考内容 |
+| `reasoning_details` | `details` | 结构化的思考细节，原样转给客户端 |
+| `block_stop` | — | 原生的正文 / 思考块边界，保留带签名的块 |
+| `tool_call_start` | `id`、`name`、`arguments`、`index` | 一个工具调用开始 |
+| `tool_call_delta` | `index`、`arguments` | 同一调用的参数片段 |
+| `usage` | `usage` | 用量，使用 OpenAI 的字段名（`prompt_tokens`、`completion_tokens`、`total_tokens`，缓存命中放在 `prompt_tokens_details.cached_tokens`） |
+| `finish` | `reason` | `stop`、`tool_calls`、`length` 或 `error` |
+| `error` | `error` | 上游在流中报告的错误 |
+
+一轮对话的典型分片序列：
+
+```json
+{"type": "reasoning_delta", "text": "先看看文件……"}
+{"type": "text_delta", "text": "好的，"}
+{"type": "tool_call_start", "id": "call_1", "name": "read", "arguments": "", "index": 0}
+{"type": "tool_call_delta", "index": 0, "arguments": "{\"path\": \"README.md\"}"}
+{"type": "usage", "usage": {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150}}
+{"type": "finish", "reason": "tool_calls"}
+```
+
+输出端由三组函数把分片变成公开协议：`chunks.py` 的 `emit_chat_chunks` / `aggregate_chat`（Chat Completions）与 `emit_responses_events` / `aggregate_responses`（Responses），以及 `message_chunks.py` 的 `emit_messages_events` / `aggregate_messages`（Anthropic Messages）。几条规则：
+
+- `finish.reason` 不是 `stop`、`tool_calls`、`length` 时按 `stop` 处理；上游没有发出 `finish` 时，输出端补一个 `stop`。
+- `error` 分片在流式输出中变成一个错误帧；非流式时变成 `UpstreamStreamFailure`，再作为 `upstream_error`（502）返回。
+- 只要已经产出过分片，渠道池就不再换账号重试，否则客户端会收到重复的内容。
+
+OpenAI 兼容的站点不必自己解析流：`providers/openai_compat.py` 的 `consume_openai_sse(lines, provider=...)` 把 OpenAI 风格的 SSE 转成上面的分片；`read_body` 还能处理对流式请求返回整个 JSON 的上游。其他协议的转换在 `core/translate/`（`anthropic.py`、`gemini.py`、`solo.py`、`responses.py`）。
+
+## 错误与账号轮换
+
+适配器用 `ProviderError` 的子类报告上游的拒绝，渠道池按类型决定下一步：
+
+| 异常 | 代码 | 渠道池怎么做 |
+| --- | --- | --- |
+| `AuthFailed` | `auth_failed` | 先续期这个账号（每轮一次），成功就重试它，否则换下一个账号 |
+| `RefreshTokenRejected` | `refresh_token_rejected` | 刷新令牌已失效：账号标记为需要重新登录，不再参与轮换 |
+| `QuotaExceeded` | `quota_exceeded` | 账号冷却：时长取 `Retry-After` 头，其次是错误正文里的重置时间，都没有时用 `quota_hold_seconds`；换下一个账号 |
+| `PolicyBlocked` | `policy_blocked` | 账号冷却 `policy_block_seconds`，不续期；换下一个账号 |
+| `ModelSaturated` | `model_saturated` | 模型本身过载，对每个账号都一样：立即停止，把站点的原话交给调用方 |
+| `ModelGone` | `model_gone` | 继续问其他账号；所有账号都这么说时，注册表把这个模型记为失效 |
+| 其他 `ProviderError` | `upstream_error` | 状态码可恢复时换账号，否则（调用方自己请求的问题）立即停止 |
+
+所有账号都试过、而最后一个错误是“过一会儿可能就好”的那种时，渠道池最多再做 `backoff_retries` 轮：等待上游给出的时间（最多 `backoff_max_seconds`），没有给出时随机等待（full jitter）。一旦已经产出过内容，就不再重试。
+
+`openai_compat.py` 的 `raise_for_status(response, provider=...)` 按固定顺序把一个 HTTP 回答归类：先看是否是“模型不存在”（404/410 等），再依次判断模型过载、安全拦截、401/403 认证失败、403 权限不足、额度（402/429 或正文里的额度字样）。顺序很重要：过载的模型常以普通的 429 出现，安全拦截常以普通的 403 出现，只看状态码就会把它们误判为额度用尽或凭据错误。流中以 200 返回的错误帧，只有“模型不存在”“过载”“拦截”“额度”几类会变成异常，其余作为 `error` 分片交给调用方。
+
+失效模型记录（`failure.py` 的 `DeadModelStore`）只在内存中：一次记录在 10 分钟后被遗忘；同一窗口内被记三次，记录就不再随时间解除。这个模型再次成功产出第一个分片时，记录被清除。
+
+`stream_using` 的 `on_route(provider_id, account_id, attempt)` 回调在某个账号产出第一个分片时触发，用量统计据此记录真正回答的账号。
+
+## 模型目录与能力
+
+`Provider.models()` 管理目录缓存，适配器只实现 `fetch_models()`：
+
+- 成功的目录缓存 300 秒。
+- 取目录失败时保留上一次的结果，30 秒后再试；从来没有成功过时使用 `fallback_models()`。
+- 新目录不到上一次的一半时，视为不完整的回答，保留旧目录一个周期；下一个周期还是这样，才接受它。
+- `fetch_models()` 成功取到目录时设置 `catalog_authoritative = True`（`OpenAiCompatProvider` 已经这样做），这样站点返回的空目录被当作真实答案，而不是回退到固定列表。
+
+`specs()` 返回每个模型的 `ModelSpec`（`hoshimi/core/catalog.py`），它是推理强度策略和 `GET /api/v1/models` 读取的东西：
+
+| 字段 | 含义 |
+| --- | --- |
+| `wire` | 发给上游时用的协议：`chat`、`messages`、`responses` 等 |
+| `vision`、`reasoning`、`tools` | 是否接受图片、是否会思考、是否支持工具（`tools` 为 `None` 表示未知） |
+| `context_window`、`max_output` | 上下文与输出上限，未知时为 131072 与 32768 |
+| `free` | 调用是否免费；三态，`None` 表示站点没有说明 |
+| `efforts`、`effort_default`、`effort_off_id`、`effort_patch`、`effort_off_patch` | 模型自己的推理强度选项及其在线路上的写法 |
+| `can_disable_thinking`、`region_sensitive` | 能否关闭思考、是否与地区有关 |
+
+各站点的能力表放在 `catalog.py`（`zhipu_spec`、`kilo_spec`、`cline_spec` 等）。默认的 `specs()` 给每个模型一个惰性的规格（不推理，所以推理强度策略不改动请求体），再从 models.dev 补充“是否推理”和“是否接受图片”这两项；能力表已经写明的不会被覆盖。推理强度的行为见[模型行为](/docs/advanced-models)。
+
+## 写一个专用适配器
+
+以智谱 GLM 渠道（`providers/zhipu.py`）为例，它是一个 OpenAI 兼容站点：
+
+<Steps>
+<Step>
+
+### 写适配器类
+
+OpenAI 兼容的站点继承 `OpenAiCompatProvider`，只声明地址、目录路径和固定列表，并按需覆盖请求头、请求体或目录解析：
+
+```python
+class ZhipuProvider(OpenAiCompatProvider):
+    id = "zhipu"
+    display_name = "Zhipu GLM (BigModel)"
+    keyless = False
+    probeable = False
+    requires_authorization = True
+    base_url = ZHIPU_BASE_URL
+    chat_path = "/chat/completions"
+    models_path: str | None = "/models"
+    fallback_model_list: ClassVar[list[str]] = list(ZHIPU_FREE_MODELS)
+
+    def build_headers(self, account: Account, model: str) -> dict[str, str]:
+        headers = super().build_headers(account, model)
+        headers["Authorization"] = f"Bearer {self._token(account)}"
+        return headers
+
+    def specs(self) -> dict[str, ModelSpec]:
+        return {model_id: zhipu_spec(model_id, self.id) for model_id in self.models()}
+```
+
+`OpenAiCompatProvider.stream_raw` 已经完成了其余的事：构造请求体（`build_body`，强制 `stream: true`）、记录上游的额度响应头、对错误调用 `raise_for_status`、用 `consume_openai_sse` 转换流。协议不是 OpenAI 的站点直接继承 `Provider`，自己实现 `stream_raw`，借助 `core/translate/` 里的转换函数。
+
+</Step>
+<Step>
+
+### 注册
+
+在 `providers/factory.py` 中把类加入 `PROVIDER_CLASSES`，并把 ID 放进 `PROVIDER_ORDER` 的合适位置。这个顺序决定不带前缀的模型名先在哪个渠道里查找，也是匿名渠道的启动顺序。
+
+</Step>
+<Step>
+
+### 写能力表
+
+在 `catalog.py` 中为这个站点写一个 `<id>_spec(model_id, provider)`，填入上下文、图片、思考和推理强度选项。
+
+</Step>
+<Step>
+
+### 描述账号表单
+
+在 `core/provider_forms.py` 的 `credential_forms()` 中说明添加账号时要填哪些字段（例如 `zhipu` 只需 `api_key`）。Web UI 的 **添加账号** 对话框和管理 API 都读取它；只列出适配器真正接受的字段。
+
+</Step>
+<Step>
+
+### 写测试
+
+用 `httpx.MockTransport` 代替上游，检查请求发到了哪里、带了什么，以及产出的分片：
+
+```python
+def test_a_turn_goes_to_the_station_with_the_bearer() -> None:
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["authorization"] = request.headers.get("authorization", "")
+        return httpx.Response(200, text=SSE)
+
+    provider = ZhipuProvider(httpx.Client(transport=httpx.MockTransport(handler)), [_account()])
+    chunks = list(provider.stream_raw(provider.accounts[0], "glm-4.7-flash", {"messages": [{"role": "user", "content": "x"}]}))
+    assert seen["path"] == "/api/paas/v4/chat/completions"
+    assert seen["authorization"] == "Bearer sk-zhipu-1"
+    assert [chunk["type"] for chunk in chunks] == ["text_delta", "text_delta", "usage", "finish"]
+```
+
+测试的布局与共享夹具见[测试](/docs/development-testing)。
+
+</Step>
+<Step>
+
+### 更新文档
+
+在[免费站点](/docs/providers-stations)或对应的渠道页面写明怎样登录、提供什么、有哪些限制，中英文都要写；渠道来自某个参考项目时，在 `core/provider_sources.py` 记录它，再运行 `python scripts/generate_provider_inventory.py` 重新生成[渠道来源清单](/docs/providers-inventory)。
+
+</Step>
+</Steps>
+
+## 添加一个按数据定义的服务
+
+只需 API 密钥、协议常规的服务不必写类：在 `core/provider_definitions.py` 的 `CANONICAL_PROVIDERS` 中加一行即可，例如：
+
+```python
+ProviderDefinition('groq', 'Groq', 'https://api.groq.com/openai/v1', protocol='chat', auth=('api_key',), plan='api', catalog='/models', adapter='configured', key_env='GROQ_API_KEY'),
+```
+
+| 字段 | 含义 |
+| --- | --- |
+| `id`、`name`、`base_url` | 渠道 ID、显示名称、API 根地址 |
+| `protocol` | `chat`、`messages`、`responses`、`multi`（按模型选择）等 |
+| `auth` | 支持的认证方式，如 `("api_key",)`、`("api_key", "oauth")` |
+| `plan` | 套餐，用来区分同一地址上的不同服务 |
+| `catalog` | 目录路径（以 `/` 开头且不含空格时直接用作 `models_path`），或对目录来源的说明 |
+| `adapter` | `configured`（自动生成类）、`dedicated`（有专用适配器）、`local` |
+| `implemented` | 是否已经实现；未实现的不会注册 |
+| `key_env` | 参考项目读取密钥的环境变量名，仅作记录，Hoshimi 不读取它 |
+
+`configured` 的服务由 `regular_provider_classes()` 生成一个 `ConfiguredProvider` 子类；`provider_forms.py` 自动为支持 `api_key` 的服务提供“API 密钥 + 地址 + 模型”的表单。目录接口特殊的服务在 `providers/catalog_profiles.py` 描述，请求体需要调整的在 `providers/request_profiles.py` 描述。`tests/core/test_provider_definitions.py` 检查同一品牌的不同服务不会因为名字或地址相同而合并。
+
+## 交互式登录
+
+需要浏览器登录或设备码的站点，在 `core/login/` 里写一个登录流程。命令行的 `hoshimi login <id>` 和 Web UI 的登录对话框共用它。
+
+### 契约
+
+```python
+LoginFlow = Callable[[httpx.Client, ReportUrl], dict[str, Any]]
+```
+
+流程拿到一个 HTTP 客户端和一个报告函数 `report`。站点一给出浏览器地址，流程就必须调用 `report(url)`：命令行打印它并打开浏览器，API 把它交给 Web UI，两者都不必知道站点用的是设备码、外部登录链接还是本地回调端口。然后流程阻塞，直到凭据就绪，返回渠道认识的账号字典；失败时抛出 `LoginError`，消息会直接显示给用户。
+
+`report` 是一个 `LoginReporter`，还提供：
+
+| 方法 | 用途 |
+| --- | --- |
+| `report.device_code(url, code, expires_in)` | 设备码流程：报告地址、用户要输入的代码和有效期 |
+| `report.authorization(server, timeout)` | 等待本地回调，同时允许用户粘贴最终的回调 URL 或授权码 |
+| `report.wait(seconds)` | 轮询间隔；登录被取消时抛出 `LoginError` |
+| `report.check_cancelled()` | 检查是否已取消 |
+| `report.on_commit(action)` | 把流程自己的本地写入推迟到登录确认成功之后 |
+
+`LOGIN_TIMEOUT_SECONDS` 是 600 秒；管理器给整个流程多留 60 秒，让流程自己的超时先触发。
+
+### 例子：Kilo 的设备码登录
+
+```python
+def start_kilo_login(client: httpx.Client, report: Callable[[str], None]) -> dict[str, Any]:
+    response = client.post(DEVICE_URL, timeout=30)
+    if response.is_error:
+        raise LoginError(f"kilo: device authorization failed (HTTP {response.status_code})")
+    data = response.json()
+    code, url = data.get("code"), data.get("verificationUrl")
+    # ...拒绝不完整的响应
+    lifetime = min(float(data.get("expiresIn") or LOGIN_TIMEOUT_SECONDS), LOGIN_TIMEOUT_SECONDS)
+    if isinstance(report, LoginReporter):
+        report.device_code(url, code, lifetime)
+    else:
+        report(url)
+    deadline = time.monotonic() + lifetime
+    while time.monotonic() < deadline:
+        if isinstance(report, LoginReporter):
+            report.wait(3)
+        else:
+            poll_pause(3)
+        polled = client.get(f"{DEVICE_URL}/{code}", timeout=30)
+        if polled.status_code == 202:
+            continue
+        # ...拒绝、过期与其他错误抛出 LoginError
+        payload = polled.json()
+        if payload.get("status") == "approved" and isinstance(payload.get("token"), str) and payload["token"]:
+            return {"access_token": payload["token"]}
+    raise LoginError("kilo: authorization timed out")
+```
+
+（节选，见 `hoshimi/core/login/kilo.py`。）Kilo 返回的是长期有效的密钥，所以流程不编造 `refresh_token` 或 `expires_at`，免得为它安排根本不存在的续期。
+
+### 注册与写回
+
+在 `core/login/manager.py` 的 `_flows()` 中加入 `"<id>": start_<id>_login`（流程在这里惰性导入，一个站点的问题不会影响启动）。`LoginManager` 负责其余的事：
+
+- 每次登录是一个会话（`pending`、`succeeded`、`failed`），在后台线程中运行，开始一小时后被清理；会话可以取消，等待授权码的会话可以提交授权码。
+- 成功后，凭据写入 `config.json` 中该渠道的 `accounts`，并启用这个渠道。凭据里带有稳定身份（`user_id`、`account_id`、`userid`、`uid`、`sub`、`access_key_id`、`api_key`、`access_token` 中的第一个）时，同一身份再次登录会替换原账号，而不是新增一个。
+- 写入之后渠道池立即按新配置重建，新账号马上可用。
+
+需要续期的凭据，在适配器中实现 `refresh_account`。`refresh.py` 的定时器每 30 分钟检查一次所有账号，在记录的过期时间前一小时内（没有记录过期时间的账号每次都）续期，并只把变化的那个账号写回 `config.json`。

@@ -1,0 +1,171 @@
+---
+title: "FAQ"
+description: "Common questions by topic: where data and logs are, changing the configuration while the server runs, which key to use, model id clashes, free markers, reasoning effort, account rotation, check-in and renewal, proxies, and the requests Hoshimi makes on its own."
+icon: CircleHelp
+---
+
+For a specific error message, see [Troubleshooting](/docs/advanced-troubleshooting) first.
+
+## Data and files
+
+<Accordions>
+<Accordion title="Where are the configuration, database and logs?">
+
+In the data directory: `~/.local/share/hoshimi` on Linux, `~/Library/Application Support/hoshimi` on macOS, `%APPDATA%\hoshimi` on Windows; `HOSHIMI_DATA_DIR` moves it elsewhere. `config.json` holds the settings and accounts; `hoshimi.db` holds usage, check-ins, probe verdicts and Playground conversations.
+
+```bash
+hoshimi config path      # full path of the config file
+```
+
+The Web UI's **Settings** › **About** also shows the **Data directory**, **Config file** and **Database**.
+
+Hoshimi writes no log file; logs go to the terminal running `hoshimi serve` (stderr). Redirect them when you want a file, for example `hoshimi serve 2>> hoshimi.log`; as a system service, the service manager collects them. See [Data directory and migration](/docs/config-paths).
+
+</Accordion>
+<Accordion title="Can I edit config.json or use hoshimi config set while the server runs?">
+
+You can, but the change applies only after a restart, and **until that restart** any write by the server (a settings save in the Web UI, a login, a token renewal) puts its in-memory configuration back into the file, overwriting your change. The right order is: stop the server, make the change, start it again.
+
+Changes made in the Web UI apply at once with no restart (except the listening address and port).
+
+</Accordion>
+<Accordion title="Can the command line and the server be used at the same time?">
+
+Yes. They read and write the same data directory (as long as `HOSHIMI_DATA_DIR` is the same), and the database supports several processes at once. Only the configuration file needs the care described above: command-line changes to it apply after the server restarts.
+
+</Accordion>
+<Accordion title="How do I reset the settings, or move to another machine?">
+
+With the server stopped:
+
+- to move: copy the whole data directory and put it in the default location on the new machine, or point `HOSHIMI_DATA_DIR` at it;
+- to reset the settings: rename `config.json`. Remember the channel accounts are in this file too;
+- to clear every record: delete `hoshimi.db`; settings and accounts are untouched.
+
+</Accordion>
+<Accordion title="Do the usage statistics store my prompts and replies?">
+
+No. Usage records hold only the model, channel, account, token counts, timings and a short error message, with anything shaped like a key masked. Playground conversations, on the other hand, are kept in `hoshimi.db` until you delete them; temporary chats are deleted when left and at the next start. See [Usage statistics](/docs/advanced-usage).
+
+</Accordion>
+</Accordions>
+
+## Access and security
+
+<Accordions>
+<Accordion title="Do I need keys if only I use this computer?">
+
+By default the server listens on `127.0.0.1` only, so other machines cannot connect; the gateway also checks the `Host` header and browser origins, which stops malicious web pages from reaching it through your browser. On a single-user computer you can go without keys. If other users or programs you do not trust share the machine, set the tool access key and the model API key.
+
+</Accordion>
+<Accordion title="Which key should a client use?">
+
+Clients that call `/v1/*` (editor plugins, agents, SDKs) use the **Model API key** (`server.model_api_key`). The Web UI, the Playground and the management API `/api/*` use the **Tool access key** (`server.access_token`). Neither key works in place of the other, and a surface whose key is not set needs none. See [Access control](/docs/config-security).
+
+</Accordion>
+<Accordion title="I forgot the tool access key. What now?">
+
+Keys are never shown again after saving. Stop the server, set a new one and start again:
+
+```bash
+hoshimi config set server.access_token "<new key>"
+```
+
+or remove it with `hoshimi config set server.access_token null`.
+
+</Accordion>
+<Accordion title="How do other devices on my LAN use it?">
+
+Set the tool access key, the model API key and `security.allow_cidrs`, change `server.host` to `0.0.0.0`, then restart. Without any one of these prerequisites the server refuses to start on a non-loopback address. The full steps are in [Access control](/docs/config-security).
+
+</Accordion>
+</Accordions>
+
+## Models
+
+<Accordions>
+<Accordion title="The same model id is on several channels. Which one gets the request?">
+
+With a bare model id, the gateway takes the first channel in its built-in order that lists it, and `/v1/models` shows only that entry. To choose the channel, write `channel/model`, such as `kilo/<model id>`.
+
+</Accordion>
+<Accordion title="Why is free null for so many models?">
+
+`null` means the station did not say whether the model is free. Hoshimi marks `true` or `false` only with evidence (the station's prices, free labels or pricing documents) and never guesses. A free marker does not promise available credits either. See [pi-free migration and differences](/docs/advanced-pi-free).
+
+</Accordion>
+<Accordion title="I set reasoning_effort. Why did max_tokens change too?">
+
+For reasoning models without a level menu of their own, the upstream does not act on `reasoning_effort`; only the output ceiling works, so the gateway turns the level into `max_tokens`: `light` 2,048, `balanced` 8,192, `deep` the model's full output limit (doubled for models that cannot switch thinking off, never below 512). When you send no level, your own `max_tokens` is kept as is. See [Model and account behaviour](/docs/advanced-models).
+
+</Accordion>
+<Accordion title="When a model fails, does Hoshimi switch to another model?">
+
+No. The gateway only calls the model you asked for; on failure it retries with other accounts of the same channel, and the model stays the caller's choice. When an upstream says a model does not exist, the gateway remembers that for a while and answers `503 model_unavailable` directly instead of using another model.
+
+</Accordion>
+<Accordion title="A model is in the list, but requests get 503?">
+
+The model is remembered as temporarily unavailable: the upstream's accounts all said it does not exist. This lifts after 10 minutes (or lasts until a restart after 3 such answers within 10 minutes). Once the upstream is back, `POST /api/v1/models/unavailable/reset` lifts it at once.
+
+</Accordion>
+<Accordion title="Does Probe on the Models page use quota?">
+
+A little: one `ping` per model, at most 64 tokens, at most 2 at a time. By default only `opencode`, `nvidia` and `agg` are probed, the channels whose lists cannot tell availability; you can also probe specific models only.
+
+</Accordion>
+</Accordions>
+
+## Accounts
+
+<Accordions>
+<Accordion title="How many accounts does one request try? Can it be sent twice?">
+
+At most `server.max_account_retries` (default 3). Rejected credentials, rate limits and server errors move to another account; a problem with the request itself (such as 400 or 422) does not, because every account would answer the same. A request that has already sent you content is never resent automatically, so you never get a duplicated answer.
+
+</Accordion>
+<Accordion title="When does check-in run?">
+
+With **Daily check-in** on, it runs 30 seconds after the server starts and then every 24 hours, using calendar days in Beijing time (UTC+8) to decide whether today is done. Accounts are checked in one after another, never in parallel. The **Channels** page has **Claim now** and **Check in all**.
+
+</Accordion>
+<Accordion title="I turned Credential renewal off in Settings. Why is it still running?">
+
+The timer starts only when the server starts, and turning the switch off while it runs does not stop it. Also, `hoshimi serve` overrides the setting at start with `--refresh/--no-refresh` (on by default), and `--checkin/--no-checkin` likewise. To turn them off, start with `hoshimi serve --no-refresh` or `--no-checkin`.
+
+</Accordion>
+<Accordion title="An account is held out of rotation. Can I bring it back now?">
+
+Holds live in memory and a restart clears them. But a hold usually follows an upstream rate limit (lasting as long as the upstream said, one hour when it said nothing) or a policy block (30 minutes); a restart does not lift the upstream's limit, and the account will soon be held again.
+
+</Accordion>
+</Accordions>
+
+## Network and privacy
+
+<Accordions>
+<Accordion title="Does Hoshimi use my system proxy?">
+
+The default `auto` mode reads the `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` environment variables. On Windows you can turn on **Use Windows system proxy when no environment proxy exists** to fall back to the system proxy. You can also set a proxy directly, or give single channels a different route. See [Network and proxies](/docs/config-network).
+
+</Accordion>
+<Accordion title="Do browser logins go through the proxy?">
+
+Login pages opened in your browser use the browser's own network settings. The requests the gateway itself makes during a login (starting authorization, polling, exchanging tokens) use the channel's network policy.
+
+</Accordion>
+<Accordion title="Besides forwarding requests, what does Hoshimi request on its own?">
+
+| Request | When | How to turn it off |
+| --- | --- | --- |
+| Each channel's model catalogue | When models are listed or a bare model id is looked up (including opening the **Models** page or the Playground, and `hoshimi check`), then cached for 5 minutes | Turn off channels you do not use, including the two keyless ones, `opencode` and `kilo` |
+| Credential renewal | One round every 30 minutes, only for accounts about to expire | `hoshimi serve --no-refresh` |
+| Daily check-in | Once a day | `hoshimi serve --no-checkin` |
+| Balance queries | Only when the **Channels** page is opened or `GET /api/v1/credits` is called | Not made otherwise |
+| PyPI update check | At start and then daily | `server.check_updates: false` |
+| models.dev capability metadata | Fetched in the background when vision and reasoning need filling in for undeclared models | No switch; on failure the bundled snapshot is used and requests are unaffected |
+
+Hoshimi sends no telemetry.
+
+</Accordion>
+</Accordions>

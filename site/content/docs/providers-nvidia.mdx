@@ -1,0 +1,74 @@
+---
+title: "NVIDIA NIM"
+description: "用 API 密钥接入 NVIDIA 托管的 NIM 模型：添加账号、选择模型、目录筛选，以及适配器为兼容 NIM 所做的请求转换。"
+icon: Cpu
+---
+
+`nvidia` 渠道连接 NVIDIA 托管的 NIM 推理服务（`https://integrate.api.nvidia.com/v1`），使用 OpenAI Chat Completions 协议，账号只需要一个 NVIDIA API 密钥。
+
+## 添加账号
+
+<Tabs items={["网页界面", "config.json"]}>
+<Tab value="网页界面">
+
+打开 **渠道** › **NVIDIA NIM**，点 **添加账号**，填写 **API 密钥**，点 **保存账号**。账号立即生效。
+
+</Tab>
+<Tab value="config.json">
+
+用 `hoshimi config path` 找到配置文件，加入：
+
+```json
+{
+  "providers": {
+    "nvidia": {
+      "accounts": [{"id": "nvidia-1", "api_key": "<NVIDIA API key>"}]
+    }
+  }
+}
+```
+
+编辑文件后重启服务。
+
+</Tab>
+</Tabs>
+
+账号也接受 `access_token` 代替 `api_key`，账号上的 `models` 可以声明模型列表代替实时目录；渠道选项 `options.base_url` 可以替换默认地址。这个上游密钥与网关自己的模型 API 密钥、管理密钥是三样不同的东西，见[安全](/docs/config-security)。
+
+## 选择模型
+
+```bash
+hoshimi models --provider nvidia
+curl http://127.0.0.1:10600/v1/models
+```
+
+用 `nvidia/<model-id>` 显式指定这个渠道。模型 ID 本身带斜杠时，加上 `nvidia/` 前缀可以确保请求落到这里，而不是按渠道顺序先匹配到别的渠道：
+
+```bash
+curl http://127.0.0.1:10600/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "nvidia/<model-id>", "messages": [{"role": "user", "content": "hi"}]}'
+```
+
+## 目录
+
+适配器实时读取模型列表，并排除已识别的非聊天任务：嵌入（`embed`）、重排（`rerank`）、`nvclip`、奖励评分（`-reward`）、检测器（`-detector`）、文档解析（`nemotron-parse`）和 `gliner`。这是任务筛选，不是故障列表。
+
+模型出现在目录中，不代表当前额度可用或推理一定成功。`nvidia` 参与默认的可用性探测，可以在 **模型** 页面或通过 `POST /api/v1/probe` 实际请求一次来确认，见[模型行为](/docs/advanced-models)。能力信息和账号选项遵循同一套[模型规则](/docs/advanced-models)。
+
+## 请求转换
+
+NIM 不支持部分 OpenAI 字段，适配器在发送前做以下转换：
+
+| 转换 | 说明 |
+| --- | --- |
+| 移除字段 | `store`、`reasoning_effort`、`reasoning`、`prompt_cache_retention` |
+| `max_completion_tokens` | 没有 `max_tokens` 时改写为 `max_tokens` |
+| `developer` 消息 | 改为 `system` |
+| 工具定义 | 去掉 `strict`；参数 schema 中值为布尔的 `additionalProperties`、`items` 等子模式和布尔属性被清理 |
+| MiniMax 模型的工具调用 | 模型以原生文本块输出的工具调用被解析为标准的工具调用 |
+| 请求头 | 发送 `NVCF-POLL-SECONDS: 3600` |
+
+这些转换是为了让请求能被 NIM 接受，不等于完整的 OpenAI 功能兼容。请求是否成功，最终取决于密钥权限、额度和模型访问权。
+
+客户端设置见[接入客户端](/docs/clients)，通用的账号说明见[渠道概念](/docs/providers)。

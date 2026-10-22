@@ -1,0 +1,297 @@
+/*
+ * Playground preview: a question, two tool calls, the answer and the composer.
+ *
+ * All hover timing comes from the interaction channel (`.page-interactive` /
+ * `.page-interactive-part` in the component); this file only describes
+ * appearance and how the preview compacts on short viewports.
+ */
+
+.product-preview {
+  position: relative;
+  min-width: 0;
+  margin: 0;
+  filter: drop-shadow(0 36px 48px rgb(12 14 30 / 28%));
+  transform: perspective(1200px) rotateY(-2deg) rotateX(1deg);
+  transform-origin: center left;
+}
+
+.product-preview::before {
+  position: absolute;
+  z-index: -1;
+  inset: 10% -5% -8% 18%;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--page-accent) 34%, transparent);
+  content: "";
+  filter: blur(54px);
+}
+
+/* Stacked under the copy, the perspective tilt reads as a mistake. */
+@container page-section (max-width: 61.999rem) {
+  .product-preview {
+    width: min(44rem, 100%);
+    justify-self: center;
+    transform: none;
+  }
+}
+
+.product-preview-window {
+  animation: home-preview-enter var(--page-enter) var(--page-ease-enter) 160ms both;
+}
+
+@keyframes home-preview-enter {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.product-preview-window {
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 1.3rem;
+  background: var(--page-preview-bg);
+  /* The third shadow is present-but-transparent at rest so the hover state
+   * interpolates shadow-for-shadow rather than across differing list lengths. */
+  box-shadow:
+    inset 0 1px rgb(255 255 255 / 7%),
+    0 0 0 1px rgb(12 14 30 / 30%),
+    0 22px 60px rgb(10 12 26 / 0%);
+  color: #eceef8;
+}
+
+@media (any-hover: hover) {
+  .product-preview:hover .product-preview-window {
+    border-color: rgb(185 195 255 / 24%);
+    box-shadow:
+      inset 0 1px rgb(255 255 255 / 8%),
+      0 0 0 1px rgb(185 195 255 / 10%),
+      0 22px 60px rgb(10 12 26 / 22%);
+  }
+}
+
+.product-preview:focus-within .product-preview-window {
+  border-color: rgb(185 195 255 / 24%);
+}
+
+.product-preview-titlebar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  min-height: 3.25rem;
+  padding: 0 1rem;
+  border-bottom: 1px solid var(--page-preview-border);
+  background: rgb(255 255 255 / 2%);
+}
+
+.product-preview-window-controls {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.product-preview-window-controls span {
+  width: 0.52rem;
+  height: 0.52rem;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 16%);
+}
+
+.product-preview-window-controls span:first-child {
+  background: #5267d8;
+}
+
+.product-preview-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.product-preview-brand-mark {
+  display: inline-flex;
+  width: 1.45rem;
+  height: 1.45rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.42rem;
+  background: rgb(185 195 255 / 14%);
+  color: #b9c3ff;
+}
+
+.product-preview-brand-mark svg {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+.product-preview-titlebar-title {
+  justify-self: end;
+  color: rgb(255 255 255 / 52%);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.product-preview-body {
+  display: grid;
+  gap: 0.75rem;
+  padding: clamp(0.85rem, 2vw, 1.4rem);
+}
+
+/* The question, at the end of the line as the Web UI puts it. */
+.product-preview-bubble {
+  justify-self: end;
+  max-width: 82%;
+  padding: 0.55rem 0.85rem;
+  border-radius: 1rem;
+  background: rgb(255 255 255 / 8%);
+  color: rgb(255 255 255 / 88%);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.product-preview-tools {
+  display: grid;
+  gap: 0.45rem;
+}
+
+/* A tool call, folded: what it did, and that it is done. */
+.product-preview-tool {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--page-preview-border);
+  border-radius: 0.7rem;
+  background: var(--page-preview-surface);
+  font-size: 0.72rem;
+}
+
+.product-preview-tool > svg {
+  width: 0.9rem;
+  height: 0.9rem;
+  flex: none;
+  color: rgb(255 255 255 / 55%);
+}
+
+.product-preview-tool strong {
+  font-weight: 620;
+}
+
+.product-preview-tool code {
+  min-width: 0;
+  overflow: hidden;
+  color: rgb(255 255 255 / 70%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-preview-tool-state {
+  display: inline-flex;
+  margin-left: auto;
+  align-items: center;
+  gap: 0.3rem;
+  color: #b9c3ff;
+  font-size: 0.62rem;
+  white-space: nowrap;
+}
+
+.product-preview-tool-state svg {
+  width: 0.8rem;
+  height: 0.8rem;
+}
+
+.product-preview-answer {
+  color: rgb(255 255 255 / 84%);
+  font-size: 0.76rem;
+  line-height: 1.6;
+}
+
+/* The composer: the text, then the model, the tools and the approval mode, and the send button. */
+.product-preview-composer {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--page-preview-border);
+  border-radius: 1rem;
+  background: var(--page-preview-surface);
+}
+
+.product-preview-composer > span {
+  color: rgb(255 255 255 / 40%);
+  font-size: 0.74rem;
+}
+
+.product-preview-composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.product-preview-chip {
+  display: inline-flex;
+  min-height: 1.75rem;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 999px;
+  color: rgb(255 255 255 / 75%);
+  font-size: 0.66rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.product-preview-chip svg {
+  width: 0.8rem;
+  height: 0.8rem;
+}
+
+.product-preview-send {
+  display: inline-flex;
+  width: 1.9rem;
+  height: 1.9rem;
+  margin-left: auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #b9c3ff;
+  color: #13237c;
+}
+
+.product-preview-send svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+/*
+ * Short-viewport compaction: drop the rows that carry no argument so the hero
+ * still fits without shrinking the parts that do.
+ */
+@media (max-height: 760px) {
+  .product-preview-answer {
+    display: none;
+  }
+}
+
+/* --- narrow layout --- */
+
+@container page-section (max-width: 34rem) {
+  .product-preview-titlebar {
+    grid-template-columns: 1fr auto;
+  }
+
+  .product-preview-window-controls {
+    display: none;
+  }
+
+  .product-preview-chip.is-optional {
+    display: none;
+  }
+}

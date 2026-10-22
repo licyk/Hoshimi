@@ -1,0 +1,171 @@
+---
+title: "常见问题"
+description: "按主题整理的常见问题：数据和日志在哪里、运行中能否改配置、该用哪把密钥、模型 id 冲突、免费标记、推理强度、账号轮换、签到和续期、代理，以及 Hoshimi 自己会发出哪些请求。"
+icon: CircleHelp
+---
+
+遇到具体的错误信息时，先看[故障排查](/docs/advanced-troubleshooting)。
+
+## 数据与文件
+
+<Accordions>
+<Accordion title="配置、数据库和日志在哪里？">
+
+都在数据目录里：Linux 为 `~/.local/share/hoshimi`，macOS 为 `~/Library/Application Support/hoshimi`，Windows 为 `%APPDATA%\hoshimi`，可以用 `HOSHIMI_DATA_DIR` 换到别处。其中 `config.json` 是设置和账号，`hoshimi.db` 是用量、签到、探测结果和 Playground 对话。
+
+```bash
+hoshimi config path      # 配置文件的完整路径
+```
+
+网页界面的 **设置** › **关于** 也显示 **数据目录**、**配置文件** 和 **数据库**。
+
+Hoshimi 不写日志文件，日志输出到运行 `hoshimi serve` 的终端（stderr）。需要文件时自己重定向，例如 `hoshimi serve 2>> hoshimi.log`；作为系统服务运行时由服务管理器收集。详见[数据目录与迁移](/docs/config-paths)。
+
+</Accordion>
+<Accordion title="服务器运行时，可以直接改 config.json 或用 hoshimi config set 吗？">
+
+可以改，但要重启服务器才生效，而且**在重启之前**，服务器的任何一次写入（在网页上保存设置、登录、续期令牌）都会把它内存中的配置写回文件，覆盖你的修改。所以正确的顺序是：停止服务器，修改，再启动。
+
+在网页上改设置则立即生效，不需要重启（监听地址和端口除外）。
+
+</Accordion>
+<Accordion title="命令行和服务器可以同时使用吗？">
+
+可以。它们读写同一个数据目录（前提是 `HOSHIMI_DATA_DIR` 相同）；数据库支持多个进程同时访问。只有配置文件需要注意上一条：命令行对配置的修改要在服务器重启后才生效。
+
+</Accordion>
+<Accordion title="怎么恢复默认设置，或者搬到另一台机器？">
+
+停止服务器后：
+
+- 搬家：复制整个数据目录，在新机器上放到默认位置，或用 `HOSHIMI_DATA_DIR` 指向它；
+- 恢复默认设置：把 `config.json` 改名。注意渠道账号也在这个文件里；
+- 清空所有记录：删除 `hoshimi.db`，配置和账号不受影响。
+
+</Accordion>
+<Accordion title="用量统计会保存我的提示词和回复吗？">
+
+不会。用量记录只有模型、渠道、账号、token 数、耗时和简短的错误说明，错误说明中形似密钥的内容会被遮盖。Playground 的对话则保存在 `hoshimi.db` 中，直到你删除它们；临时对话在离开时和下次启动时删除。见[用量统计](/docs/advanced-usage)。
+
+</Accordion>
+</Accordions>
+
+## 访问与安全
+
+<Accordions>
+<Accordion title="只在自己的电脑上用，需要设置密钥吗？">
+
+默认只监听 `127.0.0.1`，其他机器连不上；网关还会检查 `Host` 和浏览器来源，阻止恶意网页通过你的浏览器访问它。所以单人使用的电脑可以不设密钥。如果这台电脑上还有其他用户或你不信任的程序，设置工具访问密钥和模型 API 密钥。
+
+</Accordion>
+<Accordion title="客户端应该用哪把密钥？">
+
+编辑器插件、Agent、SDK 等调用 `/v1/*` 的客户端用 **模型 API 密钥**（`server.model_api_key`）。网页界面、Playground 和管理接口 `/api/*` 用 **工具访问密钥**（`server.access_token`）。两把密钥互不通用；没有设置的那把，对应的接口就不需要密钥。见[访问控制](/docs/config-security)。
+
+</Accordion>
+<Accordion title="忘了工具访问密钥怎么办？">
+
+密钥保存后不会再显示。停止服务器，设置一个新的再启动：
+
+```bash
+hoshimi config set server.access_token "<新密钥>"
+```
+
+或用 `hoshimi config set server.access_token null` 取消它。
+
+</Accordion>
+<Accordion title="怎么让局域网里的其他设备使用？">
+
+设置工具访问密钥、模型 API 密钥和 `security.allow_cidrs`，把 `server.host` 改为 `0.0.0.0`，然后重启。缺少其中任何一项前提时，服务器会拒绝在非回环地址上启动。完整步骤见[访问控制](/docs/config-security)。
+
+</Accordion>
+</Accordions>
+
+## 模型
+
+<Accordions>
+<Accordion title="同一个模型 id 在好几个渠道都有，请求会发给哪个？">
+
+只写模型 id 时，网关按内置的渠道顺序找第一个列出它的渠道，`/v1/models` 也只列出那一条。要指定渠道，写成 `渠道/模型`，例如 `kilo/<模型 id>`。
+
+</Accordion>
+<Accordion title="为什么很多模型的 free 是 null？">
+
+`null` 表示站点没有说明这个模型是否免费。Hoshimi 只在有证据（站点的价格、免费标签或价格文档）时才标 `true` 或 `false`，不会猜测。免费标记也不保证有额度。见 [pi-free 迁移与差异](/docs/advanced-pi-free)。
+
+</Accordion>
+<Accordion title="设置了 reasoning_effort，为什么 max_tokens 也变了？">
+
+对没有自己档位菜单的推理模型，上游并不执行 `reasoning_effort`，真正起作用的只有输出上限，所以网关把档位换算成 `max_tokens`：`light` 2,048、`balanced` 8,192、`deep` 用满模型的输出上限（不能关闭思考的模型加倍，最低 512）。不发送档位时，你设置的 `max_tokens` 原样保留。见[模型与账号行为](/docs/advanced-models)。
+
+</Accordion>
+<Accordion title="一个模型失败时，Hoshimi 会自动换成别的模型吗？">
+
+不会。网关只调用你请求的那个模型，失败时在同一渠道内换账号重试；模型由调用方决定。上游说模型不存在时，网关会暂时记住，在一段时间内直接返回 `503 model_unavailable`，而不是改用另一个模型。
+
+</Accordion>
+<Accordion title="模型在列表里，请求却返回 503？">
+
+这个模型被记为暂时不可用：上游的账号都说它不存在。10 分钟后自动解除（10 分钟内 3 次则持续到重启）。上游恢复后可以用 `POST /api/v1/models/unavailable/reset` 立即解除。
+
+</Accordion>
+<Accordion title="模型页的“探测”会消耗额度吗？">
+
+会，但很少：每个模型发送一条 `ping`，最多 64 个 token，同时最多 2 个。默认只探测 `opencode`、`nvidia` 和 `agg` 这几个列表无法说明可用性的渠道；也可以只探测指定的模型。
+
+</Accordion>
+</Accordions>
+
+## 账号
+
+<Accordions>
+<Accordion title="一个请求最多尝试几个账号？会不会重复发送？">
+
+最多 `server.max_account_retries` 个（默认 3）。凭据被拒、限流、服务器错误时会换账号；请求本身有问题（如 400、422）时不会换，因为换哪个账号都一样。已经向你输出了内容的请求绝不会被自动重发，所以不会收到重复的回答。
+
+</Accordion>
+<Accordion title="签到什么时候运行？">
+
+开启 **每日签到** 时，服务器启动 30 秒后运行一次，之后每 24 小时一次，按北京时间（UTC+8）的日历日判断当天是否已经签过。所有账号逐个依次签到，不并发。在 **渠道** 页可以 **立即签到** 或 **全部签到**。
+
+</Accordion>
+<Accordion title="在设置里关掉了“凭据续期”，为什么它还在运行？">
+
+定时器只在服务器启动时开启，运行中关掉开关不会停止它。另外，`hoshimi serve` 启动时用 `--refresh/--no-refresh`（默认开启）覆盖这个设置，`--checkin/--no-checkin` 同理。要关闭，用 `hoshimi serve --no-refresh` 或 `--no-checkin` 启动。
+
+</Accordion>
+<Accordion title="账号被暂停轮换了，能立即恢复吗？">
+
+暂停记录只在内存中，重启服务器会清除。但暂停通常是因为上游限流（时长取自上游的说明，没有说明时为 1 小时）或策略拦截（30 分钟），重启并不会解除上游的限制，账号很快会被再次暂停。
+
+</Accordion>
+</Accordions>
+
+## 网络与隐私
+
+<Accordions>
+<Accordion title="Hoshimi 会使用我的系统代理吗？">
+
+默认的 `auto` 模式读取 `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY` 和 `NO_PROXY` 环境变量。Windows 上可以打开 **无环境代理时使用 Windows 系统代理**，在没有环境变量时使用系统代理。也可以直接指定一个代理，或为单个渠道设置不同的线路。见[网络与代理](/docs/config-network)。
+
+</Accordion>
+<Accordion title="浏览器中的登录走代理吗？">
+
+在浏览器中打开的登录页面使用浏览器自己的网络设置。网关自己在登录过程中发出的请求（发起授权、轮询、换取令牌）使用这个渠道的网络策略。
+
+</Accordion>
+<Accordion title="除了转发请求，Hoshimi 自己还会发出哪些网络请求？">
+
+| 请求 | 何时 | 如何关闭 |
+| --- | --- | --- |
+| 各渠道的模型目录 | 列出模型或按模型 id 查找渠道时（包括打开 **模型** 页、Playground 和运行 `hoshimi check`），之后缓存 5 分钟 | 关闭不用的渠道，包括两个免账号渠道 `opencode` 和 `kilo` |
+| 凭据续期 | 每 30 分钟一轮，只针对快过期的账号 | `hoshimi serve --no-refresh` |
+| 每日签到 | 每天一次 | `hoshimi serve --no-checkin` |
+| 余额查询 | 只在打开 **渠道** 页或调用 `GET /api/v1/credits` 时 | 不打开就不会查询 |
+| PyPI 新版本检查 | 启动时和之后每天一次 | `server.check_updates: false` |
+| models.dev 能力元数据 | 需要为没有声明的模型补充视觉和推理信息时，在后台拉取 | 无开关；失败时使用内置快照，不影响请求 |
+
+Hoshimi 不发送遥测数据。
+
+</Accordion>
+</Accordions>

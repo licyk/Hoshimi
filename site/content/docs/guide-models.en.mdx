@@ -1,0 +1,95 @@
+---
+title: "Models"
+description: "The Models page: browse every model you can call, read its abilities, context length and free mark, run availability probes, copy a model id or try it in the Playground."
+icon: Layers
+---
+
+The **Models** page lists every model id the gateway can answer for right now: the values a client may put in a request's `model` field. They come from every enabled channel: the model lists the stations publish, plus the models declared in channel and account configuration. To make a model appear here, sign in or add an account for its provider on the [Channels](/docs/guide-channels) page first.
+
+## The model list
+
+Under the title is the number of models; after a probe, also how many are **Available** (**N models · N available**).
+
+| Column | Contents |
+| --- | --- |
+| **Model id** | The id used in requests. The line below is the station's display name (when it differs from the id) and **Free** when the station says the model is free. Long ids are cut; hover for the full id |
+| **Provider** | The channel the model comes from |
+| **Context** | The context window in K (1024 tokens); — when unknown |
+| **Abilities** | Three small icons: **Reasoning** (hover for the number of reasoning effort levels, such as **Reasoning · 3 effort levels**), **Vision** (reads images) and **Tools**. **No tool support** when the station says the model cannot call tools |
+| **Availability** | The verdict of the last probe, below; **Not probed** for a model no round has reached |
+
+Click the **Model id**, **Provider**, **Context** or **Availability** heading to sort. On a narrower window **Context**, **Provider** and other columns are hidden in turn; on a phone the verdict moves under the model id and each row's two buttons fold into a ⋮ menu.
+
+About the marks:
+
+- **Free** appears only when the station itself says so. No mark does not mean paid, only that the station did not say; a mark does not promise unlimited quota. Local models are not marked free automatically.
+- Abilities come from the provider's capability table and explicit account declarations; metadata the station publishes fills in where available, and models.dev only adds vision and reasoning for otherwise undeclared ids. Reasoning effort levels differ by provider; see [Models and reasoning effort](/docs/advanced-models).
+
+## Search and filters
+
+- **Search models**: matches the model id, the provider or the display name.
+- **Provider**: one provider only (**All providers** to undo).
+- **Availability**: appears after a probe and offers only the verdicts that occur, plus **Not probed**; **Any verdict** to undo.
+
+When nothing matches, the page says **No models match**.
+
+## How the catalogue loads
+
+The model catalogue is shared with the Playground and the model pickers in Settings, and arrives as a stream:
+
+1. Cached models show first (a successful catalogue is saved in the data folder's `catalog-cache` and reused for up to seven days), so the page is usable at once.
+2. Each provider then asks for its own model list, and whichever answers first updates first. While it loads, a line above the list reads **Loading providers: done/total**.
+3. A provider that has not answered after 20 seconds is marked as timed out. Failed or timed-out providers are named in **Catalogue unavailable or timed out: …. Existing models are retained.** with the reason (such as **Connection timed out**, **Proxy connection failed**, **Credentials rejected**, **Region restriction**); a connection that broke off shows **Catalogue connection interrupted. Received models are retained.**
+
+A failure never empties the list: the last successful catalogue stays. A failure is not retried by itself; click **Retry** (or the refresh button at the right of the toolbar) to load the catalogue again. When a station's list suddenly shrinks to less than half, the gateway keeps the old list until the next listing confirms the shrink. More in [Models and reasoning effort](/docs/advanced-models).
+
+## Availability probes
+
+Some channels' model lists are only a list of ids, which cannot say which models your network egress may actually use. Click **Probe** in the toolbar and the gateway sends each of those models the smallest possible request in the background (a `ping` with at most 64 output tokens) and records a verdict from the answer.
+
+- A default round probes the channels whose lists cannot say: OpenCode Zen, `agg` aggregator accounts and NVIDIA NIM (the ones enabled). Kilo's free list is already filtered upstream and is not part of the default round.
+- At most 2 models are probed at a time, each given up to 45 seconds, so the round does not trip the stations' rate limits.
+- While a round runs the button reads **Probing…**, and clicking again does not start a second one. When it ends you see **Probe round finished** and the list updates.
+- Verdicts are kept in `hoshimi.db` in the data folder and survive a restart.
+
+| Verdict | Meaning |
+| --- | --- |
+| **Available** | The model answered with content or tokens |
+| **Region blocked** | The station refuses to serve this network egress |
+| **Unavailable** | The station refused this model specifically |
+| **Throttled** | Quota ran out before the model could be asked |
+| **Unknown** | A credential, network or station error that says nothing about the model |
+
+Only **Unavailable** is a verdict about the model itself; region blocks, throttling and unknown results do not mean the model is gone.
+
+To probe particular models, call the management API (with the tool access key, when one is set):
+
+```bash
+curl -X POST http://127.0.0.1:10600/api/v1/probe \
+  -H "Authorization: Bearer <tool access key>" \
+  -H "Content-Type: application/json" \
+  -d '{"models": ["kilo/<model-id>", "cline/<model-id>"]}'
+```
+
+`GET /api/v1/probe` reads the last round's results.
+
+### Failures the gateway remembers
+
+Besides probes, the gateway remembers model failures while serving: a station answering 404/410 for a model (or 400/422 with a body that says the model was removed) counts once, and three within 10 minutes ban the model for the rest of this run. A banned model shows as **Unavailable** (over any probe verdict), and requests for it get `503 model_unavailable` at once, without upstream traffic. A restart, or `POST /api/v1/models/unavailable/reset`, lifts every ban:
+
+```bash
+curl -X POST http://127.0.0.1:10600/api/v1/models/unavailable/reset \
+  -H "Authorization: Bearer <tool access key>"
+```
+
+## Copy an id, try a model
+
+Each row ends with two buttons:
+
+- **Copy the model id**: copies the id to the clipboard, for the `model` of a client.
+- **Open in the Playground**: opens a Playground chat with this model, reasoning effort **Auto**. A chat that already has messages is not overwritten; a new one starts. See [Playground](/docs/guide-playground).
+
+## When the list is empty
+
+- **No models yet**: no channel can serve yet. Sign into a free station or add an API key on the [Channels](/docs/guide-channels) page, then refresh. A fresh install can use OpenCode Zen and Kilo without an account; see [Anonymous channels](/docs/providers-anonymous).
+- A provider's models are missing: read the failure reason above the list, then open that channel and check its accounts and the diagnostics in its **Network** section. Common problems are in [Troubleshooting](/docs/advanced-troubleshooting).

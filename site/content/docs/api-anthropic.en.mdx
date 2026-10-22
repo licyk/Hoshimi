@@ -1,0 +1,188 @@
+---
+title: "Anthropic-compatible API"
+description: "Reference for /v1/messages and /v1/messages/count_tokens: request validation, how native forwarding or protocol conversion is chosen, the fields and content blocks conversion supports, thinking-signature replay, effort mapping, stream events, token counting and errors."
+icon: FileJson
+---
+
+These two endpoints are compatible with Anthropic Messages and serve clients such as the Anthropic SDKs and Claude Code. The base address is `http://127.0.0.1:10600` (clients add `/v1/messages` themselves), authenticated with the model API key sent as `x-api-key` or `Authorization: Bearer` (see [API overview](/docs/api)). Usage examples are in [Anthropic SDK](/docs/clients-anthropic).
+
+| Method and path | Purpose |
+| --- | --- |
+| `POST /v1/messages` | Generate a reply; JSON by default, SSE with `"stream": true` |
+| `POST /v1/messages/count_tokens` | Count input tokens without generating a reply |
+
+Messages is stateless: send the whole conversation every time. Hoshimi keeps no history (some native upstream features may keep state of their own). Calls are recorded on the **Usage** page with the origin `messages`.
+
+## Request validation
+
+Both endpoints check the outer shape of the request first and answer `400` (in Anthropic's shape) when it fails:
+
+- `model` is a non-empty string. Messages does not use the default model.
+- `messages` is a non-empty array; each message has a string `role`, and `content` is a string or an array.
+- `stream`, when present, is a boolean.
+- `max_tokens` is a non-negative integer (optional for `count_tokens`).
+- `tools`, when present, is an array.
+
+Extension fields are not checked here: native forwarding leaves them to the upstream, and protocol conversion checks them as described below.
+
+## Native forwarding or protocol conversion
+
+Hoshimi finds the provider through [model routing](/docs/api-openai), then looks at the accounts of that provider that can serve the model:
+
+- If the provider has a Messages endpoint of its own for them (models whose protocol is Messages on a regular API provider, such as `anthropic` or `minimax-api`), the request is **forwarded natively**, rotating across those accounts.
+- Otherwise it goes through **protocol conversion**. Dedicated providers with custom envelopes always use their own translators.
+
+The decision rests on each account's actual protocol and endpoint, not just a model's capability label. A native failure never quietly falls back to conversion.
+
+These provider options (in `providers.<id>.options`) adjust the behaviour:
+
+| Option | Effect |
+| --- | --- |
+| `messages_passthrough: false` | No native forwarding; force conversion, for a Messages provider with special requirements |
+| `messages_count_tokens: true` | Use the upstream's native counting endpoint for `count_tokens`; on by default for `anthropic`, off for other providers |
+| `structured_outputs: true` | Let the conversion path turn `output_config.format` into the upstream's structured output; enable only when the upstream and its models support it |
+
+## Native forwarding
+
+- The body goes out unchanged except that `model` becomes the upstream model name (`count_tokens` also drops `stream`). System arrays, content order, opaque signatures, tools, cache markers, `context_management`, structured output and future fields are all left for the upstream to validate.
+- The client's `anthropic-*` headers and query parameters go along. Upstream credentials come from the selected account; the key the client sent to the gateway is never forwarded. The `anthropic-beta` capabilities an OAuth account requires are merged with the client's.
+- The response keeps `content-type`, `request-id`, `x-request-id`, `retry-after` (rounded up to whole seconds), `x-should-retry` and every `anthropic-*` header.
+- A streaming response keeps the upstream's SSE frame by frame, unknown events, usage, signatures and pings included; Hoshimi inserts its own `ping` only between complete frames, never inside partial JSON. Non-streaming JSON is returned as it came.
+- If the upstream stream ends without `message_stop` or `error`, or breaks off mid-frame, Hoshimi reports an error rather than a clean finish.
+- When the client disconnects, Hoshimi closes the upstream connection; a stream that has begun is not replayed on another account.
+- Upstream errors keep their status, body, request id and protocol headers (`x-should-retry`, `retry-after`, `anthropic-ratelimit-*` among them). An explicit `x-should-retry: false` from the upstream stops Hoshimi from retrying on another account.
+- Being forwarded is not the same as being supported: an Anthropic-shaped endpoint can still reject features it does not implement, and its original error reaches the client.
+
+## Protocol conversion
+
+The conversion path turns a Messages request into an internal Chat request, hands it to the provider's adapter, and turns the result back into Messages.
+
+### Request fields
+
+| Field | Handling |
+| --- | --- |
+| `system` | A string or an array of text blocks, becoming a system message; text only |
+| `messages[].role` | `user` or `assistant` only; a `system`-role message is refused (`Messages roles must be user or assistant; use top-level system.`) |
+| `max_tokens` | Must be a positive integer |
+| `temperature`, `top_p` | Numbers, passed through |
+| `top_k` | Passed only to models whose upstream protocol is Messages |
+| `stop_sequences` | Becomes `stop` |
+| `tools` | Custom tools only (`type` absent or `custom`) with `name` and `input_schema`; `description` and `strict` are kept; server tool types are refused |
+| `tool_choice` | `auto` → `auto`, `any` → `required`, `none` → `none`, `tool` → a named function (which must be declared); `any` and `tool` need declared tools; `disable_parallel_tool_use` becomes `parallel_tool_calls` |
+| `thinking` | `type` is `enabled`, `disabled` or `adaptive`; an `enabled` `budget_tokens` is at least 1024 and less than `max_tokens` |
+| `output_config.effort` | `low`, `medium`, `high`, `xhigh`, `max` |
+| `output_config.format` | Needs `structured_outputs` on the provider; the JSON Schema becomes Chat `response_format` (or Responses `text.format`) |
+| `output_config.task_budget` | Refused; needs a native upstream |
+| `metadata` | Must be an object; `metadata.user_id` becomes `user` |
+| `mcp_servers`, `container`, `context_management` | Refused: `… requires a native Messages upstream.` |
+
+Conversion errors are prefixed with the provider id, for example `opencode: context_management requires a native Messages upstream.`.
+
+### Content blocks
+
+| Block | Where | Handling |
+| --- | --- | --- |
+| `text` | Anywhere | Text |
+| `image` | Anywhere | A `base64` source (`image/png`, `image/jpeg`, `image/gif`, `image/webp`) or a `url` source (HTTP(S) only); Hoshimi does not fetch URLs itself |
+| `document` | Anywhere | Plain-text sources only (`source.type: "text"`), turned into text; other documents need a native upstream |
+| `tool_use` | Assistant messages | Needs `id`, `name` and an object `input`; becomes a tool call |
+| `tool_result` | User messages | Needs `tool_use_id` and must come before text and images in the same message; `content` is a string or an array of blocks; with `is_error: true`, models whose upstream protocol is not Messages get `Tool execution failed.` in front of the result |
+| `thinking`, `redacted_thinking` | Assistant messages | Reasoning replay, see below |
+| `tool_reference` | Anywhere | Expanded from this request's own `tools` into the tool's definition as text; a reference to an undeclared tool is refused |
+
+Any other block type answers `400` (`Unsupported content block`).
+
+### Effort mapping
+
+When the upstream protocol is not Messages, thinking settings become an effort level, which is then applied to the model by the rules in [OpenAI-compatible API](/docs/api-openai):
+
+| Request | Becomes |
+| --- | --- |
+| `output_config.effort` | The same level; `max` becomes `xhigh` |
+| `thinking.type: "disabled"` | `none` |
+| `thinking.type: "adaptive"` | `xhigh` |
+| `thinking.type: "enabled"`, `budget_tokens < 4000` | `low` |
+| `thinking.type: "enabled"`, `budget_tokens < 16000` | `medium` |
+| `thinking.type: "enabled"`, `budget_tokens >= 16000` | `high` |
+
+When both are present, `output_config.effort` wins. For models whose upstream protocol is Messages, `thinking`, `output_config` and `metadata` are passed through.
+
+### Response
+
+- Content blocks may be, in order, `thinking` (with a `signature`), `redacted_thinking`, `text` and `tool_use`.
+- `stop_reason` is `end_turn`, `max_tokens`, `tool_use`, `stop_sequence` or `refusal`; it is `tool_use` when there are tool calls and the upstream reported a normal finish.
+- In `usage`, `input_tokens` excludes the cache; cache reads and writes are in `cache_read_input_tokens` and `cache_creation_input_tokens`.
+- The `request-id` response header equals the message `id` (`msg_…`).
+
+Cache markers survive only native forwarding; conversion does not promise equivalent caching. Semantics such as tool examples are likewise fully kept only by native forwarding.
+
+## Thinking signatures
+
+In a multi-turn conversation, the client sends the assistant's `thinking` / `redacted_thinking` blocks back with their original signatures and tool calls:
+
+- Native forwarding hands these blocks to the upstream untouched, without reconstruction.
+- On conversion, reasoning details from non-Anthropic upstreams (encrypted reasoning, for instance) are encoded into a Hoshimi signature: the prefix `hoshimi:v1:` followed by base64url-encoded JSON. When the next request brings the signature back, Hoshimi decodes it and hands the original data to the upstream.
+- A signature over 1 MiB, or one that does not decode, answers `400`.
+
+Do not synthesise or edit signatures, and do not reuse one model's or provider's signature for another. A signature preserves protocol data; it is not a promise that every upstream supports thinking.
+
+## Stream events
+
+With `"stream": true`, each event is sent as two lines, `event: <type>` and `data: <json>`:
+
+| Event | Content |
+| --- | --- |
+| `message_start` | The message object (`id`, `model`, empty `content`) |
+| `content_block_start` | A block begins: `text`, `thinking`, `redacted_thinking` or `tool_use` |
+| `content_block_delta` | `text_delta`, `thinking_delta`, `signature_delta` or `input_json_delta` |
+| `content_block_stop` | A block ends |
+| `message_delta` | `stop_reason`, `stop_sequence` and the final `usage` |
+| `message_stop` | The end |
+| `ping` | Every 15 seconds while waiting on the upstream, only between complete events |
+| `error` | A failure in the stream, in Anthropic's error shape |
+
+A streaming request gets the first piece of data from the upstream before sending response headers, so authentication and rate-limit failures still come back with their real HTTP status rather than `200` plus an error event.
+
+## Token counting
+
+`POST /v1/messages/count_tokens`
+
+```bash
+curl http://127.0.0.1:10600/v1/messages/count_tokens \
+  -H "x-api-key: $HOSHIMI_API_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<model-id>","messages":[{"role":"user","content":"hi"}]}'
+```
+
+```json
+{"input_tokens": 18}
+```
+
+- When the provider declares a native counting endpoint (`anthropic` by default; others with `messages_count_tokens: true`), the body and protocol headers are forwarded and the upstream's count returned.
+- When none is declared, or the native endpoint answers `404`, `405` or `501`, Hoshimi returns a local estimate with the header `x-hoshimi-token-count: estimate`. The estimate approximates from the UTF-8 size of `system`, `messages`, `tools` and `tool_choice` (about one token per 3 bytes, at least 1), accepts native document and tool blocks, and runs no tokenizer.
+- Authentication, quota and server errors are not hidden behind an estimate; they come back as errors.
+- `max_tokens` is optional. Counting generates no reply and adds no usage record.
+
+## Errors
+
+Every error uses Anthropic's shape:
+
+```json
+{"type": "error", "error": {"type": "invalid_request_error", "message": "max_tokens must be a non-negative integer."}}
+```
+
+- A body that does not parse against the endpoint's schema: `400`, `Invalid Messages request body.`.
+- Errors the gateway raises itself (validation, routing, conversion) use Anthropic's shape, with `error.type` following the status (see [API overview](/docs/api)).
+- Upstream errors on native forwarding keep the upstream's status, body and protocol headers.
+- Failures after the stream has begun arrive as an `error` event.
+
+## Protocol references
+
+- [Messages HTTP reference](https://platform.claude.com/docs/en/api/http/messages/create)
+- [Claude Code gateway compatibility](https://code.claude.com/docs/en/llm-gateway-protocol)
+- [Streaming events](https://platform.claude.com/docs/en/build-with-claude/streaming)
+- [Tool search and references](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool)
+- [Effort](https://platform.claude.com/docs/en/build-with-claude/effort)
+
+The development extra includes the official Anthropic SDK. Protocol tests run real SDK JSON and streaming helpers against local mock upstreams, covering account rotation, signature replay, counting, heartbeats, cancellation and truncation. Whether a given account works, or a model supports a given feature, needs checking separately.

@@ -1,0 +1,311 @@
+---
+title: "Provider adapters"
+description: "How to add a provider: the Provider contract, the normalized chunk protocol, error classification and account rotation, catalogues and capabilities, and interactive login flows."
+icon: Plug
+---
+
+Every provider (a "channel" in the Web UI) is a `Provider` subclass in `hoshimi/core/providers/`: it holds the provider's accounts and options, knows how to send one turn upstream with one account, and turns the upstream stream into **normalized chunks**. The shared parts, account rotation, retries, cooldowns and the catalogue cache, live in the base class; an adapter writes only what is particular to its station.
+
+## Kinds of provider
+
+| Kind | Where | For |
+| --- | --- | --- |
+| Dedicated adapter | `providers/<id>.py`, registered in `providers/factory.py` | Stations with their own protocol, authentication or quirks (Cline, TRAE, ZCode, Qoder, MiniMax, Gemini, CodeBuddy, Kilo, OpenCode…) |
+| Service defined as data | One `ProviderDefinition` line in `core/provider_definitions.py`, `adapter="configured"` | Services that need only an API key and speak plain Chat / Messages / Responses; `regular_provider_classes()` generates the class |
+| Local service | The same, `adapter="local"` (`lmstudio`, `llamacpp`, `ollama`) | OpenAI-compatible endpoints on this machine; enabled only once an account is added explicitly |
+| The `agg` aggregator | `providers/agg.py` and `core/presets.py` | Any OpenAI-compatible station, each account pointing at a preset or a custom address |
+
+A provider usable with no account sets the class attribute `keyless` to `True`: unless the configuration disables it, `build_providers` builds it with an anonymous placeholder account.
+
+## The Provider contract
+
+The contract is in `hoshimi/core/providers/base.py`.
+
+### Class attributes
+
+| Attribute | Default | Meaning |
+| --- | --- | --- |
+| `id` | — | The provider ID: the key under `providers` in the config and the prefix of `provider/model` |
+| `display_name` | — | The name shown |
+| `keyless` | `False` | Usable without an account |
+| `probeable` | `False` | Whether a default availability probe asks about this provider's models |
+| `requires_authorization` | `False` | Depends on an authorization this install holds; the API labels the provider with it |
+| `quota_hold_seconds` | `3600` | How long an account cools down when its allowance ran out and the upstream named no time |
+| `policy_block_seconds` | `1800` | How long an account cools down after a station's safety block |
+| `backoff_base_seconds`, `backoff_max_seconds`, `backoff_retries` | `0.25`, `8.0`, `2` | Backoff for asking the same station again once every account has been tried |
+
+`max_retries` (the most accounts one turn tries) comes from `server.max_account_retries`, 3 by default.
+
+### Methods
+
+| Method | Required | What it does |
+| --- | --- | --- |
+| `stream_raw(account, model, body)` | Yes | Sends one turn with one given account and yields normalized chunks |
+| `fetch_models()` | No | Fetches the model IDs from upstream; none by default |
+| `fallback_models()` | No | The fixed list used when no catalogue can be fetched |
+| `specs()` | No | Each model's capabilities (`ModelSpec`); by default an inert spec, completed from models.dev |
+| `check_account(data)` | No | Refuses, before it reaches `config.json`, a credential this provider could not use (raises `ValidationError`) |
+| `refresh_account(account)` | No | Renews the credential; returns `True` when it changed, raises `RefreshTokenRejected` when the refresh token itself was refused |
+| `claim_daily(account)` | No | The daily check-in; returns a `ClaimOutcome`, or `None` when the station has none ("already claimed today" still returns an outcome, not `None`) |
+| `balance_of(account)` | No | The balance or quota window; returns a `BalanceOutcome` or `None` |
+| `messages_endpoint(account, model, count_only=False)` and `messages_headers(account, model)` | No | When an account has a native Anthropic Messages endpoint, its URL and headers; `/v1/messages` then passes requests through whole |
+| `_stream_candidates(model)` | No | The accounts one turn may use, in order; all of them by default, narrowed by `agg` to the accounts that list the model |
+
+`Account` wraps one account's dictionary: `account.get(key)`, `account.set(key, value)`; `account.id` is the config's `id` (or `<provider>-<index>` without one), `account.anonymous` marks the anonymous placeholder, and while `account.needs_login` is true the pool stops using it until someone logs in again.
+
+## The normalized chunk protocol
+
+Every chunk `stream_raw` yields is a dictionary with a `type` key. Whether the upstream speaks OpenAI Chat, Anthropic Messages, Gemini or TRAE SOLO, the adapter turns it into these:
+
+| `type` | Fields | Meaning |
+| --- | --- | --- |
+| `text_delta` | `text` | A piece of the answer |
+| `reasoning_delta` | `text` | A piece of thinking |
+| `reasoning_details` | `details` | Structured reasoning details, passed on to the client as they are |
+| `block_stop` | — | A native text / thinking block boundary; keeps signed blocks intact |
+| `tool_call_start` | `id`, `name`, `arguments`, `index` | A tool call starts |
+| `tool_call_delta` | `index`, `arguments` | More arguments for the same call |
+| `usage` | `usage` | Usage, with OpenAI's field names (`prompt_tokens`, `completion_tokens`, `total_tokens`; cache hits in `prompt_tokens_details.cached_tokens`) |
+| `finish` | `reason` | `stop`, `tool_calls`, `length` or `error` |
+| `error` | `error` | An error the upstream reported inside the stream |
+
+A typical sequence for one turn:
+
+```json
+{"type": "reasoning_delta", "text": "Let me look at the file first..."}
+{"type": "text_delta", "text": "Sure, "}
+{"type": "tool_call_start", "id": "call_1", "name": "read", "arguments": "", "index": 0}
+{"type": "tool_call_delta", "index": 0, "arguments": "{\"path\": \"README.md\"}"}
+{"type": "usage", "usage": {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150}}
+{"type": "finish", "reason": "tool_calls"}
+```
+
+On the way out, three pairs of functions turn chunks into the public protocols: `emit_chat_chunks` / `aggregate_chat` (Chat Completions) and `emit_responses_events` / `aggregate_responses` (Responses) in `chunks.py`, and `emit_messages_events` / `aggregate_messages` (Anthropic Messages) in `message_chunks.py`. The rules:
+
+- A `finish.reason` other than `stop`, `tool_calls` or `length` is treated as `stop`; when the upstream sent no `finish`, the output adds a `stop`.
+- An `error` chunk becomes an error frame in a stream; without streaming it becomes `UpstreamStreamFailure` and is returned as `upstream_error` (502).
+- Once any chunk has gone out, the pool never retries on another account, or the client would receive the content twice.
+
+OpenAI-compatible stations need not parse their stream: `consume_openai_sse(lines, provider=...)` in `providers/openai_compat.py` turns OpenAI-style SSE into the chunks above, and `read_body` also copes with an upstream that answers a stream request with one whole JSON document. Translation for the other protocols is in `core/translate/` (`anthropic.py`, `gemini.py`, `solo.py`, `responses.py`).
+
+## Errors and account rotation
+
+An adapter reports an upstream refusal with a `ProviderError` subclass, and the pool decides what comes next by its type:
+
+| Exception | Code | What the pool does |
+| --- | --- | --- |
+| `AuthFailed` | `auth_failed` | Renews this account first (once per turn) and retries it on success; otherwise moves to the next account |
+| `RefreshTokenRejected` | `refresh_token_rejected` | The refresh token is spent: the account is marked as needing a new login and leaves the rotation |
+| `QuotaExceeded` | `quota_exceeded` | The account cools down: for the `Retry-After` header's time, else the reset time in the error body, else `quota_hold_seconds`; next account |
+| `PolicyBlocked` | `policy_blocked` | The account cools down for `policy_block_seconds`, without renewal; next account |
+| `ModelSaturated` | `model_saturated` | The model itself is overloaded, for every account alike: stop at once and hand the station's words to the caller |
+| `ModelGone` | `model_gone` | Keep asking the other accounts; when all of them say so, the registry marks the model dead |
+| Any other `ProviderError` | `upstream_error` | Next account when the status is recoverable; otherwise (a problem with the caller's own request) stop at once |
+
+When every account has been tried and the last error is the kind that time may change, the pool makes up to `backoff_retries` more passes: it waits for the time the upstream named (at most `backoff_max_seconds`), or a random wait (full jitter) when none was named. Once content has gone out, it never retries.
+
+`raise_for_status(response, provider=...)` in `openai_compat.py` classifies an HTTP answer in a fixed order: first whether the model does not exist (404/410 and the like), then model saturation, safety block, 401/403 authentication failure, 403 permission denied, and quota (402/429, or quota wording in the body). The order matters: a saturated model often arrives as a plain 429 and a safety block as a plain 403, and read by status alone they would pass for a spent allowance or a bad credential. An error frame inside a 200 stream becomes an exception only for "model gone", saturation, a block or quota; anything else is yielded to the caller as an `error` chunk.
+
+The dead-model record (`DeadModelStore` in `failure.py`) lives in memory only: one strike is forgotten after 10 minutes; three strikes within that window make an entry that time no longer lifts. The model's next answer that yields a first chunk clears it.
+
+The `on_route(provider_id, account_id, attempt)` callback of `stream_using` fires when an account yields its first chunk, so usage records the account that actually answered.
+
+## Catalogues and capabilities
+
+`Provider.models()` manages the catalogue cache; an adapter implements only `fetch_models()`:
+
+- A successful catalogue is cached for 300 seconds.
+- When fetching fails, the previous result is kept and fetching is retried after 30 seconds; with no earlier success, `fallback_models()` is used.
+- A new catalogue less than half the size of the previous one is treated as a partial answer and the old one is kept for one cycle; if the next cycle says the same, it is accepted.
+- `fetch_models()` sets `catalog_authoritative = True` when it got a catalogue (`OpenAiCompatProvider` already does), so an empty catalogue from the station counts as its real answer rather than falling back to the fixed list.
+
+`specs()` returns each model's `ModelSpec` (`hoshimi/core/catalog.py`), which the reasoning-effort policy and `GET /api/v1/models` read:
+
+| Field | Meaning |
+| --- | --- |
+| `wire` | The protocol sent upstream: `chat`, `messages`, `responses` and so on |
+| `vision`, `reasoning`, `tools` | Takes images, thinks, supports tools (`tools` is `None` when unknown) |
+| `context_window`, `max_output` | Context and output limits; 131072 and 32768 when unknown |
+| `free` | Whether calling it costs nothing; three-way, with `None` for "the station did not say" |
+| `efforts`, `effort_default`, `effort_off_id`, `effort_patch`, `effort_off_patch` | The model's own reasoning-effort choices and how they are written on the wire |
+| `can_disable_thinking`, `region_sensitive` | Whether thinking can be switched off, whether the region matters |
+
+Each station's capability table is in `catalog.py` (`zhipu_spec`, `kilo_spec`, `cline_spec` and so on). The default `specs()` gives every model an inert spec (no reasoning, so the effort policy leaves request bodies alone), then fills in "reasons" and "takes images" from models.dev, never overriding what a table already says. How reasoning effort behaves is in [Model behaviour](/docs/advanced-models).
+
+## Writing a dedicated adapter
+
+Taking the Zhipu GLM provider (`providers/zhipu.py`), an OpenAI-compatible station, as the example:
+
+<Steps>
+<Step>
+
+### Write the adapter class
+
+An OpenAI-compatible station subclasses `OpenAiCompatProvider`, declares only its address, catalogue path and fixed list, and overrides the headers, body or catalogue parsing where needed:
+
+```python
+class ZhipuProvider(OpenAiCompatProvider):
+    id = "zhipu"
+    display_name = "Zhipu GLM (BigModel)"
+    keyless = False
+    probeable = False
+    requires_authorization = True
+    base_url = ZHIPU_BASE_URL
+    chat_path = "/chat/completions"
+    models_path: str | None = "/models"
+    fallback_model_list: ClassVar[list[str]] = list(ZHIPU_FREE_MODELS)
+
+    def build_headers(self, account: Account, model: str) -> dict[str, str]:
+        headers = super().build_headers(account, model)
+        headers["Authorization"] = f"Bearer {self._token(account)}"
+        return headers
+
+    def specs(self) -> dict[str, ModelSpec]:
+        return {model_id: zhipu_spec(model_id, self.id) for model_id in self.models()}
+```
+
+`OpenAiCompatProvider.stream_raw` does the rest: it builds the body (`build_body`, forcing `stream: true`), records the upstream's quota headers, calls `raise_for_status` on an error and converts the stream with `consume_openai_sse`. A station whose protocol is not OpenAI's subclasses `Provider` directly and implements `stream_raw` itself, with the translation helpers in `core/translate/`.
+
+</Step>
+<Step>
+
+### Register it
+
+In `providers/factory.py`, add the class to `PROVIDER_CLASSES` and put the ID at the right place in `PROVIDER_ORDER`. That order decides which provider a bare model name is looked up in first, and the order keyless providers start in.
+
+</Step>
+<Step>
+
+### Write the capability table
+
+In `catalog.py`, write a `<id>_spec(model_id, provider)` for the station, with context, images, thinking and reasoning-effort choices.
+
+</Step>
+<Step>
+
+### Describe the account form
+
+In `credential_forms()` of `core/provider_forms.py`, say which fields adding an account asks for (`zhipu` needs only `api_key`). The Web UI's **Add account** dialog and the management API both read it; list only fields the adapter actually accepts.
+
+</Step>
+<Step>
+
+### Write tests
+
+Replace the upstream with `httpx.MockTransport` and check where the request went, what it carried, and the chunks that came out:
+
+```python
+def test_a_turn_goes_to_the_station_with_the_bearer() -> None:
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["authorization"] = request.headers.get("authorization", "")
+        return httpx.Response(200, text=SSE)
+
+    provider = ZhipuProvider(httpx.Client(transport=httpx.MockTransport(handler)), [_account()])
+    chunks = list(provider.stream_raw(provider.accounts[0], "glm-4.7-flash", {"messages": [{"role": "user", "content": "x"}]}))
+    assert seen["path"] == "/api/paas/v4/chat/completions"
+    assert seen["authorization"] == "Bearer sk-zhipu-1"
+    assert [chunk["type"] for chunk in chunks] == ["text_delta", "text_delta", "usage", "finish"]
+```
+
+The test layout and shared fixtures are in [Testing](/docs/development-testing).
+
+</Step>
+<Step>
+
+### Update the documentation
+
+Describe how to sign in, what the provider offers and its limits on [Free stations](/docs/providers-stations) or the matching provider page, in both languages. When the provider comes from a reference project, record it in `core/provider_sources.py` and run `python scripts/generate_provider_inventory.py` to regenerate the [Provider inventory](/docs/providers-inventory).
+
+</Step>
+</Steps>
+
+## Adding a service defined as data
+
+A service that needs only an API key and speaks a plain protocol needs no class: one line in `CANONICAL_PROVIDERS` of `core/provider_definitions.py` is enough, for example:
+
+```python
+ProviderDefinition('groq', 'Groq', 'https://api.groq.com/openai/v1', protocol='chat', auth=('api_key',), plan='api', catalog='/models', adapter='configured', key_env='GROQ_API_KEY'),
+```
+
+| Field | Meaning |
+| --- | --- |
+| `id`, `name`, `base_url` | The provider ID, the name shown, the API root |
+| `protocol` | `chat`, `messages`, `responses`, `multi` (chosen per model) and others |
+| `auth` | Supported authentication, such as `("api_key",)` or `("api_key", "oauth")` |
+| `plan` | The plan, which tells apart different services at the same address |
+| `catalog` | The catalogue path (used as `models_path` when it starts with `/` and has no space), or a note on where the catalogue comes from |
+| `adapter` | `configured` (class generated), `dedicated` (has its own adapter) or `local` |
+| `implemented` | Whether it is implemented; unimplemented ones are not registered |
+| `key_env` | The environment variable the reference project reads the key from; a record only, Hoshimi does not read it |
+
+A `configured` service gets a `ConfiguredProvider` subclass from `regular_provider_classes()`, and `provider_forms.py` gives every service that supports `api_key` an "API key + address + models" form automatically. A service with an unusual catalogue endpoint is described in `providers/catalog_profiles.py`; one whose request body needs adjusting, in `providers/request_profiles.py`. `tests/core/test_provider_definitions.py` checks that different services of one brand are not merged because they share a name or an address.
+
+## Interactive logins
+
+A station that needs a browser login or a device code gets a login flow in `core/login/`. The command line's `hoshimi login <id>` and the Web UI's login dialog share it.
+
+### The contract
+
+```python
+LoginFlow = Callable[[httpx.Client, ReportUrl], dict[str, Any]]
+```
+
+A flow receives an HTTP client and a `report` callback. The moment the station gives a browser address, the flow must call `report(url)`: the command line prints it and opens a browser, the API hands it to the Web UI, and neither needs to know whether the station used a device code, an external login link or a local callback port. The flow then blocks until the credential is ready and returns the account dictionary the provider understands; on failure it raises `LoginError`, whose message is shown to the user as is.
+
+`report` is a `LoginReporter`, which also offers:
+
+| Method | Used for |
+| --- | --- |
+| `report.device_code(url, code, expires_in)` | Device-code flows: reports the address, the code the user enters and how long it lasts |
+| `report.authorization(server, timeout)` | Waits for the local callback, while letting the user paste the final redirect URL or the authorization code |
+| `report.wait(seconds)` | The polling pause; raises `LoginError` when the login was cancelled |
+| `report.check_cancelled()` | Checks whether the login was cancelled |
+| `report.on_commit(action)` | Defers the flow's own local writes until the login is confirmed |
+
+`LOGIN_TIMEOUT_SECONDS` is 600 seconds; the manager gives the whole flow 60 seconds more, so the flow's own timeout fires first.
+
+### Example: Kilo's device-code login
+
+```python
+def start_kilo_login(client: httpx.Client, report: Callable[[str], None]) -> dict[str, Any]:
+    response = client.post(DEVICE_URL, timeout=30)
+    if response.is_error:
+        raise LoginError(f"kilo: device authorization failed (HTTP {response.status_code})")
+    data = response.json()
+    code, url = data.get("code"), data.get("verificationUrl")
+    # ...refuses an incomplete response
+    lifetime = min(float(data.get("expiresIn") or LOGIN_TIMEOUT_SECONDS), LOGIN_TIMEOUT_SECONDS)
+    if isinstance(report, LoginReporter):
+        report.device_code(url, code, lifetime)
+    else:
+        report(url)
+    deadline = time.monotonic() + lifetime
+    while time.monotonic() < deadline:
+        if isinstance(report, LoginReporter):
+            report.wait(3)
+        else:
+            poll_pause(3)
+        polled = client.get(f"{DEVICE_URL}/{code}", timeout=30)
+        if polled.status_code == 202:
+            continue
+        # ...denial, expiry and other errors raise LoginError
+        payload = polled.json()
+        if payload.get("status") == "approved" and isinstance(payload.get("token"), str) and payload["token"]:
+            return {"access_token": payload["token"]}
+    raise LoginError("kilo: authorization timed out")
+```
+
+(Abridged; see `hoshimi/core/login/kilo.py`.) Kilo returns a long-lived key, so the flow invents no `refresh_token` or `expires_at`, which would schedule renewals that do not exist.
+
+### Registering and writing back
+
+Add `"<id>": start_<id>_login` to `_flows()` in `core/login/manager.py` (flows are imported lazily there, so one station's problem cannot break startup). `LoginManager` does the rest:
+
+- Each login is a session (`pending`, `succeeded`, `failed`) that runs on a background thread and is dropped an hour after it started; a session can be cancelled, and one waiting for an authorization code accepts one.
+- On success, the credential is written to the provider's `accounts` in `config.json` and the provider is enabled. When the credential carries a stable identity (the first of `user_id`, `account_id`, `userid`, `uid`, `sub`, `access_key_id`, `api_key`, `access_token`), logging in again as the same identity replaces the account instead of adding another.
+- Right after the write, the provider pool is rebuilt from the new configuration, so the new account is usable at once.
+
+For a credential that needs renewing, implement `refresh_account` in the adapter. The timer in `refresh.py` sweeps every account every 30 minutes, renews those within an hour of their recorded expiry (and, every time, those with no recorded expiry), and writes back to `config.json` only the account that changed.

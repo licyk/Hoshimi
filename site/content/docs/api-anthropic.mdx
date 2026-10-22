@@ -1,0 +1,188 @@
+---
+title: "Anthropic 兼容接口"
+description: "/v1/messages 与 /v1/messages/count_tokens 的参考：请求校验、原生转发与协议转换如何选择、转换路径支持哪些字段和内容块、思考签名的回放、推理强度换算、流式事件、Token 计数和错误。"
+icon: FileJson
+---
+
+这两个接口兼容 Anthropic Messages，供 Anthropic SDK、Claude Code 等客户端使用。基础地址是 `http://127.0.0.1:10600`（客户端自己拼上 `/v1/messages`），使用模型 API 密钥，以 `x-api-key` 或 `Authorization: Bearer` 发送（见 [API 概览](/docs/api)）。用法示例见 [Anthropic SDK](/docs/clients-anthropic)。
+
+| 方法与路径 | 用途 |
+| --- | --- |
+| `POST /v1/messages` | 生成回复；默认返回 JSON，`"stream": true` 时返回 SSE |
+| `POST /v1/messages/count_tokens` | 计算输入的 Token 数，不生成回复 |
+
+Messages 是无状态的，每次都要发送完整对话；Hoshimi 不保存历史（原生上游的某些功能可能自己维护状态）。调用记在 **用量** 页，来源为 `messages`。
+
+## 请求校验
+
+两个接口都先检查请求的外层结构，不通过时返回 `400`（Anthropic 错误格式）：
+
+- `model` 是非空字符串。Messages 不使用默认模型。
+- `messages` 是非空数组，每条消息有字符串 `role`，`content` 是字符串或数组。
+- `stream` 如果出现，必须是布尔值。
+- `max_tokens` 是非负整数（`count_tokens` 中可以省略）。
+- `tools` 如果出现，必须是数组。
+
+扩展字段的结构不在这里检查，原生转发时交给上游，协议转换时按下文的规则检查。
+
+## 原生转发还是协议转换
+
+Hoshimi 先按[模型路由](/docs/api-openai)找到渠道，再看这个渠道里能处理这个模型的账号：
+
+- 有账号的渠道本身提供 Messages 接口（普通 API 类渠道中协议为 Messages 的模型，例如 `anthropic`、`minimax-api`），就走 **原生转发**，在这些账号之间轮换。
+- 否则走 **协议转换**。使用自定义封装的专用渠道始终走自己的转换器。
+
+判断依据是每个账号实际的协议和端点，而不只是模型的能力标签。原生转发失败时不会悄悄换成协议转换。
+
+渠道的这几个选项（写在 `providers.<id>.options` 中）可以调整这个行为：
+
+| 选项 | 作用 |
+| --- | --- |
+| `messages_passthrough: false` | 不走原生转发，强制协议转换，用于有特殊要求的 Messages 渠道 |
+| `messages_count_tokens: true` | 为 `count_tokens` 使用上游的原生计数接口；`anthropic` 渠道默认开启，其他渠道默认关闭 |
+| `structured_outputs: true` | 允许协议转换路径把 `output_config.format` 转成上游的结构化输出；只在上游和模型确实支持时开启 |
+
+## 原生转发
+
+- 请求体原样发送，只把 `model` 换成上游的模型名（`count_tokens` 还会去掉 `stream`）。系统提示数组、内容顺序、不透明的签名、工具、缓存标记、`context_management`、结构化输出以及将来新增的字段都由上游校验。
+- 客户端的 `anthropic-*` 请求头和查询参数会带上；上游凭据来自所选账号，客户端发给网关的密钥永远不会转发。OAuth 账号必需的 `anthropic-beta` 能力会与客户端的合并。
+- 响应保留 `content-type`、`request-id`、`x-request-id`、`retry-after`（取整为秒）、`x-should-retry` 和全部 `anthropic-*` 响应头。
+- 流式响应逐帧保留上游的 SSE，包括未知事件、用量、签名和 ping；Hoshimi 只在完整的帧之间插入自己的 `ping`，不会插进半截 JSON。非流式的 JSON 也原样返回。
+- 上游的流没有以 `message_stop` 或 `error` 结束，或在一帧中途断开时，Hoshimi 报告错误，而不是当作正常结束。
+- 客户端断开时，Hoshimi 关闭上游连接；已经开始的流不会换账号重放。
+- 上游错误保留状态码、响应体、请求 ID 和协议头（包括 `x-should-retry`、`retry-after`、`anthropic-ratelimit-*`）。上游明确返回 `x-should-retry: false` 时，Hoshimi 不再换账号重试。
+- 能原样转发不等于上游都支持：Anthropic 形式的端点仍可能拒绝它没有实现的功能，原始错误会返回给客户端。
+
+## 协议转换
+
+转换路径把 Messages 请求变成内部的 Chat 请求，交给渠道的适配器，再把结果变回 Messages。
+
+### 请求字段
+
+| 字段 | 处理 |
+| --- | --- |
+| `system` | 字符串或文字块数组，成为系统消息；只支持文字 |
+| `messages[].role` | 只能是 `user` 或 `assistant`；`system` 角色的消息被拒绝（`Messages roles must be user or assistant; use top-level system.`） |
+| `max_tokens` | 必须是正整数 |
+| `temperature`、`top_p` | 数值，原样传递 |
+| `top_k` | 只对上游协议为 Messages 的模型传递 |
+| `stop_sequences` | 转为 `stop` |
+| `tools` | 只接受自定义工具（`type` 省略或为 `custom`），需要 `name` 和 `input_schema`，保留 `description` 和 `strict`；服务器端工具类型被拒绝 |
+| `tool_choice` | `auto` → `auto`，`any` → `required`，`none` → `none`，`tool` → 指定函数（名字必须已声明）；`any` 和 `tool` 需要声明了工具；`disable_parallel_tool_use` 转为 `parallel_tool_calls` |
+| `thinking` | `type` 为 `enabled`、`disabled`、`adaptive`；`enabled` 的 `budget_tokens` 至少 1024 且小于 `max_tokens` |
+| `output_config.effort` | `low`、`medium`、`high`、`xhigh`、`max` |
+| `output_config.format` | 需要渠道开启 `structured_outputs`；JSON Schema 转为 Chat 的 `response_format`（或 Responses 的 `text.format`） |
+| `output_config.task_budget` | 拒绝，需要原生上游 |
+| `metadata` | 必须是对象；`metadata.user_id` 转为 `user` |
+| `mcp_servers`、`container`、`context_management` | 拒绝，`… requires a native Messages upstream.` |
+
+转换路径的错误消息前面带有渠道 id，例如 `opencode: context_management requires a native Messages upstream.`。
+
+### 内容块
+
+| 块 | 位置 | 处理 |
+| --- | --- | --- |
+| `text` | 任意 | 文字 |
+| `image` | 任意 | `base64` 来源（`image/png`、`image/jpeg`、`image/gif`、`image/webp`）或 `url` 来源（必须是 HTTP(S)）；Hoshimi 不会自己去下载 URL |
+| `document` | 任意 | 只支持纯文字来源（`source.type: "text"`），转为文字；其他文档需要原生上游 |
+| `tool_use` | 助手消息 | 需要 `id`、`name` 和对象 `input`，转为工具调用 |
+| `tool_result` | 用户消息 | 需要 `tool_use_id`，必须放在同一条消息的文字和图片之前；`content` 为字符串或块数组；`is_error: true` 时，上游协议不是 Messages 的模型会在结果前加上 `Tool execution failed.` |
+| `thinking`、`redacted_thinking` | 助手消息 | 用于回放推理，见下文 |
+| `tool_reference` | 任意 | 从本次请求的 `tools` 中展开为工具定义的文字；引用未声明的工具会被拒绝 |
+
+其他类型的块返回 `400`（`Unsupported content block`）。
+
+### 推理强度换算
+
+上游协议不是 Messages 时，思考设置被换算成推理强度，然后按 [OpenAI 兼容接口](/docs/api-openai)中的规则应用到具体模型：
+
+| 请求 | 换算为 |
+| --- | --- |
+| `output_config.effort` | 同名级别，`max` 换算为 `xhigh` |
+| `thinking.type: "disabled"` | `none` |
+| `thinking.type: "adaptive"` | `xhigh` |
+| `thinking.type: "enabled"`，`budget_tokens < 4000` | `low` |
+| `thinking.type: "enabled"`，`budget_tokens < 16000` | `medium` |
+| `thinking.type: "enabled"`，`budget_tokens >= 16000` | `high` |
+
+两者都有时以 `output_config.effort` 为准。上游协议是 Messages 的模型，`thinking`、`output_config` 和 `metadata` 原样传递。
+
+### 响应
+
+- 内容块依次可能是 `thinking`（带 `signature`）、`redacted_thinking`、`text` 和 `tool_use`。
+- `stop_reason`：`end_turn`、`max_tokens`、`tool_use`、`stop_sequence` 或 `refusal`；有工具调用而上游报告正常结束时为 `tool_use`。
+- `usage` 中 `input_tokens` 不含缓存部分，缓存读取和写入分别在 `cache_read_input_tokens`、`cache_creation_input_tokens` 中。
+- 响应头 `request-id` 与消息的 `id`（`msg_…`）相同。
+
+缓存标记只在原生转发时保留；转换路径不保证同等的缓存效果。工具示例等语义也只有原生转发能完整保留。
+
+## 思考签名
+
+多轮对话中，客户端要把助手消息里的 `thinking` / `redacted_thinking` 块连同原始签名、工具调用一起发回：
+
+- 原生转发时，这些块原样交给上游，不做任何重建。
+- 协议转换时，非 Anthropic 上游的推理细节（如加密推理内容）被编码进一个 Hoshimi 签名：前缀 `hoshimi:v1:`，后接 base64url 编码的 JSON。下一轮请求带回这个签名时，Hoshimi 解码出原始数据交还上游。
+- 签名超过 1 MiB 或无法解码时返回 `400`。
+
+不要合成、编辑签名，也不要把一个模型或渠道的签名用于另一个。签名只负责保存协议数据，并不意味着每个上游都支持思考。
+
+## 流式事件
+
+`"stream": true` 时，每个事件以 `event: <类型>` 和 `data: <json>` 两行发送：
+
+| 事件 | 内容 |
+| --- | --- |
+| `message_start` | 消息对象（`id`、`model`、空的 `content`） |
+| `content_block_start` | 一个块开始：`text`、`thinking`、`redacted_thinking` 或 `tool_use` |
+| `content_block_delta` | `text_delta`、`thinking_delta`、`signature_delta` 或 `input_json_delta` |
+| `content_block_stop` | 一个块结束 |
+| `message_delta` | `stop_reason`、`stop_sequence` 和最终 `usage` |
+| `message_stop` | 结束 |
+| `ping` | 等待上游时每 15 秒一次，只在完整事件之间 |
+| `error` | 流中出错，Anthropic 错误格式 |
+
+流式请求在发出响应头之前先从上游取得第一段数据，所以认证失败、限流等错误仍以正确的 HTTP 状态码返回，而不是 `200` 加错误事件。
+
+## Token 计数
+
+`POST /v1/messages/count_tokens`
+
+```bash
+curl http://127.0.0.1:10600/v1/messages/count_tokens \
+  -H "x-api-key: $HOSHIMI_API_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<model-id>","messages":[{"role":"user","content":"你好"}]}'
+```
+
+```json
+{"input_tokens": 18}
+```
+
+- 渠道声明了原生计数接口（`anthropic` 默认，其他渠道用 `messages_count_tokens: true` 开启）时，原样转发请求体和协议头，返回上游的计数。
+- 没有声明，或原生接口返回 `404`、`405`、`501` 时，返回本地估算，并带响应头 `x-hoshimi-token-count: estimate`。估算按 `system`、`messages`、`tools`、`tool_choice` 的 UTF-8 字节数近似（约每 3 字节 1 个 Token，至少为 1），接受原生的文档和工具块，不调用分词器。
+- 认证失败、额度和服务器错误不会被当作估算掩盖，照常返回错误。
+- `max_tokens` 可以省略。计数不生成回复，也不增加用量记录。
+
+## 错误
+
+所有错误都使用 Anthropic 格式：
+
+```json
+{"type": "error", "error": {"type": "invalid_request_error", "message": "max_tokens must be a non-negative integer."}}
+```
+
+- 请求体无法按接口结构解析时：`400`，`Invalid Messages request body.`。
+- 网关自己产生的错误（校验、路由、转换）使用 Anthropic 格式，`error.type` 由状态码决定（见 [API 概览](/docs/api)）。
+- 原生转发的上游错误保留上游的状态码、响应体和协议头。
+- 流开始之后的失败以 `error` 事件告知。
+
+## 协议参考
+
+- [Messages HTTP 参考](https://platform.claude.com/docs/en/api/http/messages/create)
+- [Claude Code 网关兼容性](https://code.claude.com/docs/en/llm-gateway-protocol)
+- [流式事件](https://platform.claude.com/docs/en/build-with-claude/streaming)
+- [工具搜索与引用](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool)
+- [推理强度](https://platform.claude.com/docs/en/build-with-claude/effort)
+
+开发依赖中包含官方 Anthropic SDK，协议测试用真实的 SDK JSON 和流式辅助方法对接本地模拟上游，覆盖账号轮换、签名回放、计数、心跳、取消和截断。具体账号是否可用、模型是否支持某个功能，需要另外实测。

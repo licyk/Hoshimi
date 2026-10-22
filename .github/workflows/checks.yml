@@ -90,9 +90,29 @@ jobs:
       - run: python scripts/dev.py test-web
       - run: python scripts/dev.py typegen-check
 
+  site:
+    name: Documentation site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: '1.4.2'
+      - run: bun install --frozen-lockfile
+        working-directory: site
+      - run: |
+          bun run check
+          bun run test
+          bun run build
+        working-directory: site
+
   passed:
     name: CI passed
-    needs: [lint, types, tests, web]
+    needs: [lint, types, tests, web, site]
     if: always()
     runs-on: ubuntu-latest
     steps:

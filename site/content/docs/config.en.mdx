@@ -1,0 +1,229 @@
+---
+title: "Configuration file"
+description: "Where config.json lives, how to change it, and every key: type, default, meaning, validation rules, and when each change takes effect."
+icon: FileJson
+---
+
+Hoshimi keeps all of its settings and channel accounts in one JSON file, `config.json`, in the data directory. The Web UI's **Settings** and **Channels** pages, the `hoshimi config` command and the management API all change this same file. Most of the time you never need to edit it; this page is the complete reference for when you want to read or change it directly.
+
+## Where the file is
+
+```bash
+hoshimi config path
+```
+
+The command prints the absolute path even before the file exists. Every command and the Web UI use this file, whatever the working directory.
+
+| System | Default location |
+| --- | --- |
+| Linux | `~/.local/share/hoshimi/config.json`, or `$XDG_DATA_HOME/hoshimi/config.json` when `XDG_DATA_HOME` is set |
+| macOS | `~/Library/Application Support/hoshimi/config.json` |
+| Windows | `%APPDATA%\hoshimi\config.json` |
+
+The `HOSHIMI_DATA_DIR` environment variable moves the whole data directory; the configuration is always `<data directory>/config.json`. When the file does not exist, every default applies. The other files in the data directory are described in [Data directory and migration](/docs/config-paths).
+
+## Three ways to change it
+
+| Way | When it takes effect | Good for |
+| --- | --- | --- |
+| The Web UI's **Settings** and **Channels** pages, or `PATCH /api/v1/settings` | At once, on the running gateway (except the listening address and port) | Everyday use |
+| `hoshimi config set` | At the next server start | Scripts, headless servers |
+| Editing `config.json` | At the next server start | Bulk edits, pasting accounts |
+
+<Callout type="warn" title="Stop the server before editing the file">
+
+A running server never re-reads `config.json`. Each time it saves settings, files a login or renews a credential, it writes its **in-memory configuration** back over the whole file. Changes made with an editor or `hoshimi config set` while the server runs are overwritten by the next such write. Stop `hoshimi serve` before editing by hand, then start it again.
+
+</Callout>
+
+## Minimal example
+
+```json
+{
+  "server": {
+    "access_token": "your-tool-access-key",
+    "model_api_key": "your-model-api-key"
+  },
+  "providers": {
+    "nvidia": {"accounts": [{"id": "nvidia-1", "api_key": "your-provider-api-key"}]}
+  }
+}
+```
+
+Write only the keys that differ from the defaults. The keys above are placeholders. The repository's [config.example.json](https://github.com/licyk/Hoshimi/blob/main/config.example.json) shows the account shape of each channel; its credentials are demonstration values and will not work.
+
+## Structure
+
+| Top-level key | Contents |
+| --- | --- |
+| `server` | Listening address, keys, limits, timers |
+| `security` | Allowed networks, host names, origins |
+| `network` | The global upstream network policy |
+| `playground` | The Playground and its built-in tools |
+| `providers` | Each channel's switch, accounts and options |
+
+Top-level keys and fields Hoshimi does not know are ignored when the file is read, and **dropped at the next save**. Do not keep notes of your own in the file.
+
+## server
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `server.host` | string | `"127.0.0.1"` | Address to listen on. A non-loopback address (such as `0.0.0.0`) requires both `server.access_token` and `security.allow_cidrs`; see [Access control](/docs/config-security) |
+| `server.port` | integer 0–65535 | `10600` | First port to try. When it is taken the next ports are tried (see `strict_port`); `0` lets the system pick any free port |
+| `server.strict_port` | boolean | `false` | `true` fails at start when the port is taken instead of moving on. `hoshimi serve --strict-port/--no-strict-port` overrides it for one run |
+| `server.access_token` | string or `null` | not set | Tool access key: protects the management API `/api/*`, `/docs` and `/openapi.json`, and is the Web UI's sign-in key. An empty string means not set |
+| `server.model_api_key` | string or `null` | not set | Model API key: separately protects the external model API `/v1/*`. An empty string means not set |
+| `server.default_model` | string or `null` | not set | Model used when a request has no `model` (`provider/model` or a model id) |
+| `server.max_body_bytes` | positive integer | `16777216` (16 MiB) | Request body size limit. It is validated and shown in Settings, but this version's request handling does not read it |
+| `server.max_account_retries` | integer ≥ 1 | `3` | The most accounts of one channel a request tries; see [Model and account behaviour](/docs/advanced-models). Values below 1 count as 1 |
+| `server.auto_refresh` | boolean | `true` | Renew credentials that are about to expire on a timer (one round every 30 minutes). `false` leaves renewal to you |
+| `server.auto_checkin` | boolean | `true` | Check in to each station once a day for free credits. `false` leaves check-in to you |
+| `server.check_updates` | boolean | `true` | Ask PyPI at startup and then daily whether a newer release exists; shown on the **Overview** page. `false` makes no such request |
+| `server.stats_keep_days` | integer ≥ 1 | `90` | Days each recorded call is kept in `hoshimi.db`. Hourly and daily totals are not affected; see [Usage statistics](/docs/advanced-usage) |
+
+<Callout type="info" title="Timers and the hoshimi serve options">
+
+The renewal and check-in timers start only when the server starts; turning a switch off while it runs does not stop a timer that is already running. Also, `hoshimi serve` overrides `server.auto_refresh` and `server.auto_checkin` at start with its `--refresh/--no-refresh` and `--checkin/--no-checkin` options, which are both on by default. To turn the timers off, start with `--no-refresh` or `--no-checkin`.
+
+</Callout>
+
+## security
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `security.allow_cidrs` | list of strings | `[]` | Client networks or IPs that may connect (such as `192.168.1.0/24` or `10.0.0.5`). Loopback is always allowed; an empty list allows only this machine |
+| `security.allow_hosts` | list of strings | `[]` | Allowed `Host` names. Saved and shown in Settings, but this version's request checks do not read it |
+| `security.allow_origins` | list of strings | `[]` | Browser origins allowed to make writes and cross-origin requests, such as `https://app.example.com`; `*` allows any origin. Requires `server.access_token` |
+
+The three keys also accept the singular spellings `allow_cidr`, `allow_host` and `allow_origin`, and a single comma-separated string instead of a list. A save writes them back as plural lists. The checks are described in [Access control](/docs/config-security).
+
+## network
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `network.mode` | `"auto"`, `"direct"` or `"proxy"` | `"auto"` | `auto` reads `HTTP_PROXY` and the other proxy variables; `direct` uses no proxy; `proxy` uses `network.proxy` |
+| `network.proxy` | string or `null` | `null` | HTTP(S) or SOCKS5 proxy URL, required in `proxy` mode |
+| `network.system_proxy` | boolean | `false` | Windows only: in `auto` mode, use the system proxy when no environment proxy is set |
+
+No other keys are allowed in `network`. Each channel can override this policy in `providers.<id>.options.network`; see [Network and proxies](/docs/config-network).
+
+## playground
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `playground.system_prompt` | string | `""` | Sent first in every Playground conversation; empty sends none |
+| `playground.title_model` | string | `""` | The model that names a new conversation after its first reply; empty uses the conversation's own model |
+| `playground.vision_model` | string | `"auto"` | Describes images for models that cannot read them: `auto` picks the first available model that reads images, `off` leaves images out, anything else is a model id. An empty string counts as `auto` |
+| `playground.tools` | list of strings | `[]` | The built-in tools a new conversation starts with: `read`, `apply_patch`, `shell`, `terminal`, `web_search`, `web_fetch`. Each conversation turns tools on or off from its composer |
+| `playground.workspace` | string | `""` | Where the tools work; `~` is expanded. Empty means `<data directory>/workspace` |
+| `playground.approval` | `"ask"`, `"auto"` or `"full"` | `"ask"` | When tools ask first: `ask` before commands, file changes and anything outside the workspace; `auto` only before reading or changing files outside the workspace; `full` never. An empty string counts as `ask` |
+| `playground.max_steps` | integer 1–500 | `50` | The most rounds of tool calls one reply makes; the last round must answer |
+| `playground.search_url` | string | `""` | A SearXNG instance for `web_search` (with its JSON format on); must start with `http://` or `https://`. Empty searches DuckDuckGo |
+
+<Callout type="warn" title="Tools run on this machine">
+
+`shell`, `terminal` and `apply_patch` run commands and change files on this machine as the user running Hoshimi, with no sandbox. Turn on only what you need and keep approvals on. See [Playground tools](/docs/guide-agent).
+
+</Callout>
+
+## providers
+
+`providers` is keyed by channel id, and each channel has three fields:
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `providers.<id>.enabled` | boolean | `true` | `false` turns the channel off completely. The keyless channels (`opencode`, `kilo`) run with no configuration at all; write `"enabled": false` to turn them off |
+| `providers.<id>.accounts` | list of objects | `[]` | The channel's accounts; the fields differ per channel, see [Providers](/docs/providers) |
+| `providers.<id>.options` | object | `{}` | Channel-level options, different per channel |
+
+Rules:
+
+- Unknown channel ids are ignored.
+- An enabled channel with no accounts does not run, except the keyless ones.
+- **Sign in** and **Add account** in the Web UI, and `hoshimi login`, write accounts here and enable the channel; signing in again as the same identity replaces the account instead of adding a second one.
+
+Account fields Hoshimi reads on every channel:
+
+| Field | Meaning |
+| --- | --- |
+| `id` | The account id shown in the UI, usage statistics and logs. Defaults to `<channel>-<index>` |
+| `refresh_token` | Only accounts with one are renewed on the timer |
+| `expires_at` | Expiry time (Unix time in milliseconds or seconds, as a number or string). `expire_time`, or an ISO date in `expiry`, are also read. A renewable account with no recorded expiry is renewed every round |
+| `models` | Some channels (such as `agg`) use it to declare which models the account serves |
+
+Channel options shared by several channels:
+
+| Option | Meaning |
+| --- | --- |
+| `options.network` | The channel's own network policy; defaults to `{"mode": "inherit"}` (follow the global one). See [Network and proxies](/docs/config-network) |
+| `options.client_profile` (`cline` only) | How Cline signs in: `sdk` (default, device-code authorization) or `extension` (browser authorization with a local callback on ports 48801–48811). New accounts record the method used; a change affects later logins only |
+
+The account fields and options specific to each channel (such as `base_url`, `preset` and `model_specs` for `agg`) are on the pages under [Providers](/docs/providers).
+
+## Validation
+
+Every save (Web UI, API, `hoshimi config set`) and every start (`hoshimi serve`, `hoshimi check`) validates the whole configuration first; when it fails, the file is left as it was. The possible errors:
+
+| Error message | Cause |
+| --- | --- |
+| `server.port must be between 0 and 65535` | Port out of range |
+| `server.max_body_bytes must be positive.` | Body limit is not positive |
+| `server.stats_keep_days must be at least 1.` / `must be a whole number of days` | Retention below 1 or not a whole number |
+| `server.access_token must be a string or null` | Key is not a string |
+| `server.strict_port must be true or false`, `server.check_updates must be true or false` | Not a boolean |
+| `network.mode must be auto, direct or proxy (inherit for providers)` | Misspelt mode; `inherit` is for channels only |
+| `network.proxy is required in proxy mode` | `proxy` mode without a proxy URL |
+| `network.proxy must be a valid HTTP(S) or SOCKS5 proxy URL` | Malformed proxy URL |
+| `unknown network option` | An extra key inside `network` |
+| `cline client_profile must be sdk or extension` | Misspelt Cline login method |
+| `playground.tools: unknown tool '…'` | Misspelt tool name |
+| `playground.approval must be ask, auto or full.` | Misspelt approval mode |
+| `playground.max_steps must be between 1 and 500.` | Rounds out of range |
+| `playground.search_url must be an http(s) address.` | SearXNG address is not http(s) |
+| `security.allow_origins requires server.access_token …` | Allowed origins without a tool access key |
+| `Refusing to bind a non-loopback host without both security.allow_cidrs and server.access_token. …` | Non-loopback address without a network allowlist or a tool access key |
+
+When `config.json` is not valid JSON (or not a JSON object), the server refuses to start. It first copies the file to `config.json.corrupt-<UTC time>` and names that copy in the error message. Fix or remove `config.json`, then start again.
+
+## When changes take effect
+
+When saved from the Web UI or the management API:
+
+| Setting | Takes effect |
+| --- | --- |
+| `server.host`, `server.port`, `server.strict_port` | After a restart. The **Settings** page shows a banner until then |
+| `server.access_token`, `server.model_api_key`, `security.allow_cidrs`, `server.default_model` | At once |
+| `security.allow_origins` | The origin check at once; the CORS response headers browsers need use the list from startup, so restart after a change |
+| `network`, `providers.*` | At once, for new requests; only channels whose inputs changed are rebuilt, and streaming replies finish on their original connections |
+| `server.max_account_retries` | The next time the account pool is rebuilt (any channel's accounts or options change), or after a restart |
+| `server.stats_keep_days` | At the next pruning (triggered by new records, at most once a minute) |
+| `server.check_updates` | At once |
+| `server.auto_refresh`, `server.auto_checkin` | See the note above |
+| `playground.*` | From the next message |
+
+Changes made with `hoshimi config set` or by editing the file take effect after a server restart.
+
+## Reading and changing it from the command line
+
+```bash
+hoshimi config path                                   # path of the config file
+hoshimi config show                                   # the whole configuration, credentials as ***
+hoshimi config show --json
+hoshimi config get server.port
+hoshimi config set server.port 10601
+hoshimi config set server.default_model "<provider>/<model>"
+hoshimi config set security.allow_cidrs '["192.168.1.0/24"]'
+hoshimi config set network '{"mode": "proxy", "proxy": "http://127.0.0.1:7890"}'
+hoshimi config set providers.kilo.enabled false
+hoshimi config set server.access_token null           # clear
+hoshimi check                                         # validate and list the channels that would run
+```
+
+- Keys are dotted. Values are parsed as JSON when they can be (numbers, `true`/`false`, lists, objects), otherwise kept as strings. `null` (or `none`) clears a value.
+- The whole configuration is validated before writing, so set keys that depend on each other in one go. To switch to proxy mode, for example, set the whole `network` object; `network.mode proxy` on its own is refused for lack of a proxy URL.
+- `show` and `get` print access keys, account credentials and proxy URLs as `***`. `get` reads what the file actually contains, and a key missing from the file gives `Unknown setting`.
+- Restart the server afterwards. The full command reference is in [Commands](/docs/cli-commands).
+
+## How the file is written
+
+Each save writes a temporary file in the same folder and then replaces `config.json` atomically, so a half-written file never appears. The file holds refresh tokens in plain text, so after each save its permissions are restricted to the owner (`0600`) where the file system supports that; Windows and some network mounts do not. Treat it as a credential store and do not share a filled-in copy.

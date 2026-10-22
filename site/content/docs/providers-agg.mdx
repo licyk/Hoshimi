@@ -1,0 +1,159 @@
+---
+title: "聚合入口 agg"
+description: "用 agg 渠道接入任意 OpenAI 兼容站点：填写地址或选用 22 个站点预设、账号字段、多站点共存、模型能力声明和免费标记。"
+icon: Layers
+---
+
+`agg` 是通用的兼容入口：一个渠道下可以放很多站点，每个账号自带站点地址（`base_url`）和密钥。OpenRouter 的免费池、SiliconFlow、SambaNova 这类服务，只要讲 OpenAI Chat Completions，就是一条配置而不需要新代码。常用的 22 个站点已内置为预设，只填名字和密钥即可。
+
+如果服务在原生渠道列表中（例如 `openrouter`、`groq`、`deepseek`、`siliconflow`），优先用原生渠道，见[本地与兼容端点](/docs/providers-local)。Cline、Kilo、Qoder、OpenCode 这类有原生登录和续期的站点不在预设中：用 agg 接它们会把可续期的凭据换成会过期的令牌。
+
+## 添加账号
+
+<Tabs items={["网页界面", "config.json"]}>
+<Tab value="网页界面">
+
+1. 打开 **渠道** › **Aggregator**，点 **添加账号**。
+2. 在 **站点** 中搜索并选择一个预设；不在列表中的站点选 **自定义地址…**，在 **Base URL** 中填写它的 OpenAI 根地址（`/chat/completions` 和 `/models` 所在的那一级，通常以 `/v1` 结尾）。
+3. 填写 **API key**，**账号 ID（可选）** 留空则由网关命名，点 **保存账号**。
+
+保存前会校验：缺地址、未知预设或缺密钥的账号不会被保存。
+
+</Tab>
+<Tab value="config.json">
+
+```json
+{
+  "providers": {
+    "agg": {
+      "accounts": [
+        {"id": "sambanova", "preset": "sambanova", "api_key": "<SambaNova key>"},
+        {"id": "my-service", "base_url": "https://example.com/v1", "api_key": "<key>", "models": ["your-model-id"]}
+      ]
+    }
+  }
+}
+```
+
+编辑文件后重启服务。缺地址、未知预设或缺密钥的账号会在启动时告警（`agg: dropping accounts without base_url or key`）并被丢弃，其余账号照常工作。
+
+</Tab>
+</Tabs>
+
+## 账号字段
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` | 账号名。 |
+| `base_url` | 站点的 OpenAI 根地址。与 `preset` 同时存在时以 `base_url` 为准。 |
+| `preset` | 预设站点 ID（见下表），代替 `base_url`。 |
+| `api_key` | 密钥，以 `Authorization: Bearer` 发送。也接受 `access_token` 或 `token`。 |
+| `models` | 可选。声明该账号提供的模型 ID；声明后不再读取该站点的 `/models`。 |
+| `headers` | 可选。附加的上游请求头，不能替换 `Authorization`。 |
+| `options` | 可选。该账号的能力声明，见下文。 |
+
+## 站点预设
+
+`hoshimi stations` 列出全部预设（`--json` 输出 JSON），接口为 `GET /api/v1/stations`。
+
+| 预设 | 名称 | Base URL | 上游密钥变量 | 无密钥可读目录 |
+| --- | --- | --- | --- | --- |
+| `zenmux` | ZenMux | `https://zenmux.ai/api/v1` | `ZENMUX_API_KEY` | 是 |
+| `llm7` | LLM7 | `https://api.llm7.io/v1` | `LLM7_API_KEY` | |
+| `deepinfra` | DeepInfra | `https://api.deepinfra.com/v1/openai` | `DEEPINFRA_TOKEN` | 是 |
+| `sambanova` | SambaNova | `https://api.sambanova.ai/v1` | `SAMBANOVA_API_KEY` | 是 |
+| `novita` | Novita | `https://api.novita.ai/openai/v1` | `NOVITA_API_KEY` | 是 |
+| `routeway` | Routeway | `https://api.routeway.ai/v1` | `ROUTEWAY_API_KEY` | 是 |
+| `opengateway` | OpenGateway | `https://opengateway.gitlawb.com/v1` | `OPENGATEWAY_API_KEY` | |
+| `tokenrouter` | TokenRouter | `https://api.tokenrouter.com/v1` | `TOKENROUTER_API_KEY` | |
+| `anyapi` | AnyAPI | `https://api.anyapi.ai/v1` | `ANYAPI_API_KEY` | |
+| `bai` | B.AI | `https://api.b.ai/v1` | `BAI_API_KEY` | |
+| `orcarouter` | OrcaRouter | `https://api.orcarouter.ai/v1` | `ORCAROUTER_API_KEY` | |
+| `xkiro` | XKiro | `https://api.xkiro.com/v1` | `XKIRO_API_KEY` | |
+| `fastrouter` | FastRouter | `https://api.fastrouter.ai/api/v1` | `FASTROUTER_API_KEY` | 是 |
+| `requesty` | Requesty | `https://router.requesty.ai/v1` | `REQUESTY_API_KEY` | |
+| `stepfun` | StepFun | `https://api.stepfun.ai/step_plan/v1` | `STEPFUN_API_KEY` | |
+| `gmi` | GMI Cloud | `https://api.gmi-serving.com/v1` | `GMI_API_KEY` | |
+| `agnes` | Agnes AI | `https://apihub.agnes-ai.com/v1` | `AGNES_API_KEY` | |
+| `venice` | Venice AI | `https://api.venice.ai/api/v1` | `VENICE_API_KEY` | |
+| `infron` | Infron | `https://llm.onerouter.pro/v1` | `INFRON_API_KEY` | |
+| `merge` | Merge Gateway | `https://api-gateway.merge.dev/v1/openai` | `MERGE_API_KEY` | |
+| `commandcode` | CommandCode | `https://api.commandcode.ai/provider/v1` | `COMMAND_CODE_API_KEY` | |
+| `ollama-cloud` | Ollama Cloud | `https://ollama.com/v1` | `OLLAMA_API_KEY` | |
+
+- “上游密钥变量”是该站点官方工具读取密钥的环境变量名，仅供参考。Hoshimi 只从 `config.json` 读取凭据，不会读取这些变量。
+- “无密钥可读目录”只表示能浏览模型列表，这些站点的聊天请求仍然需要密钥。
+- 预设只提供地址，不含模型列表；模型始终实时读取。
+
+## 同一渠道下的多个站点
+
+不同站点的同一个 ID 可能是不同的模型、不同的价格，因此网关记录每个 ID 来自哪个站点：
+
+- 请求某个 ID 时，先尝试在 `models` 中声明了它的账号，再尝试没有声明 `models` 的账号，最后才是其余账号。
+- 只有一个站点时不需要任何声明。站点多了以后，用 `models` 把 ID 固定到对应账号，可以避免请求先落到不认识该 ID 的站点上。
+- 站点的规则（聊天模型筛选、免费标记、能力表）按 `base_url` 地址识别，而不是按 `preset` 名字：写着 `preset: sambanova` 却把 `base_url` 指向别处的账号，不会套用 SambaNova 的规则。自定义地址不套用任何站点规则。
+
+## 能力声明
+
+站点的 `/models` 通常只有 ID。没有声明时，agg 把模型当作不支持图片、不思考的普通模型，调用方的请求原样转发。需要时在 `options` 中声明：
+
+```json
+{
+  "providers": {
+    "agg": {
+      "accounts": [
+        {
+          "id": "siliconflow",
+          "base_url": "https://api.siliconflow.cn/v1",
+          "api_key": "<SiliconFlow key>",
+          "options": {
+            "model_specs": {
+              "Qwen/Qwen3-8B": {"reasoning": true, "context_window": 131072},
+              "example/thinking-model": {
+                "reasoning": true,
+                "efforts": ["disabled", "low", "high"],
+                "effort_default": "high",
+                "effort_patch": {"reasoning_effort": "$effort"},
+                "effort_off_patch": {"reasoning_effort": "none"}
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+| 键 | 说明 |
+| --- | --- |
+| `vision` | 是否接受图片输入。 |
+| `reasoning` | 是否为思考模型。 |
+| `context_window` | 上下文长度（token）。 |
+| `max_output` | 最大输出长度（token）。 |
+| `efforts` | 思考级别菜单，按显示顺序。包含 `disabled` 时可以关闭思考。 |
+| `effort_default` | 默认级别。 |
+| `effort_patch` | 选中某个级别时合并到请求体的 JSON，其中的 `"$effort"` 替换为级别名。 |
+| `effort_off_patch` | 选中关闭级别时合并到请求体的 JSON。 |
+| `region_sensitive` | 是否与网络出口地区相关。 |
+| `model_specs` | 按模型 ID 覆盖以上各键。 |
+
+优先级：账号声明高于站点自己目录中的信息，站点信息高于默认值；平铺在 `options` 中的键作为默认值，`model_specs` 中该 ID 的值最后生效。平铺键会作用于整个渠道的所有 ID，渠道下有多个站点时，请把声明写在 `model_specs` 中。没有声明的 ID，只从 models.dev 补充“是否思考、是否接受图片”两项，不借用其他站点的上下文长度。也可以把同样的键写在 `providers.agg.options` 中作为整个渠道的默认值。能力与思考级别的完整规则见[模型行为](/docs/advanced-models)。
+
+## 免费标记
+
+`GET /v1/models` 中每个模型的 `free` 字段有三种值：`true`、`false`、`null`（站点没有说明）。agg 只采信站点自己公布的信息：
+
+- 从目录行读取：`anyapi`、`gmi`、`opengateway`、`orcarouter`、`tokenrouter`、`xkiro`、`bai`（ID 带 `:free`）、`merge`（某条线路输入输出价格都为 0）。
+- 从站点定价页记录的固定 ID：`agnes`、`bai`、`commandcode`。
+- `venice` 和 `llm7` 故意不标记：Venice 的 0 价模型仍要求账号有正余额，LLM7 的标价是公开报价而非账号余额。
+
+免费标记只说明站点的价目，不保证账号有额度或一定能调用。
+
+## 站点特有的处理
+
+- **聊天模型筛选**：已知站点的目录会去掉图像、视频、嵌入、语音转写等非聊天模型，筛选规则按站点分别实现；目录字段缺失时保留该行，避免站点改版后目录变空。LLM7 按自己的 `model_type` 字段筛选。
+- **CommandCode**：`claude-` 开头的模型改走 Anthropic Messages（`<base_url>/messages`）；站点的视觉和思考能力表作为默认值，账号声明优先。
+- **请求格式**：已知站点的请求把 `max_completion_tokens` 改为 `max_tokens`、`developer` 消息改为 `system`；自定义地址的请求不做这些改写。上游即使对流式请求返回完整的 JSON 文档也能正确读取。
+
+这些规则大多移植自 pi-free，差异见[从 pi-free 迁移](/docs/advanced-pi-free)。

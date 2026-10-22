@@ -1,0 +1,126 @@
+---
+title: "Connecting clients"
+description: "What you need to point an SDK, curl or a coding agent at Hoshimi: the Base URL, which key to send, how to write model names, which API to use, and the conventions for streaming, reasoning effort and tool calls."
+icon: Plug
+---
+
+Hoshimi speaks both the OpenAI and the Anthropic protocols. Any client that lets you set a Base URL can use it: upstream account credentials stay inside Hoshimi, and the client only needs the gateway's address, the gateway's key and a model name. This page covers what all clients have in common; the guides at the end give the exact configuration for each one.
+
+## What you need
+
+| Item | Value | Where to find it |
+| --- | --- | --- |
+| Base URL | `http://127.0.0.1:10600/v1` for OpenAI-compatible clients; `http://127.0.0.1:10600` for Anthropic-compatible clients | The **Endpoints** section of the **Overview** page lists each endpoint with a copy button |
+| Key | The gateway's **Model API key**; any non-empty string when none is set | **Settings** › **Access** › **Keys** |
+| Model name | An `id` from `GET /v1/models`, or `provider/model` | The **Models** page, or the curl command below |
+
+When port 10600 is taken, the server moves on to the next free port; use the address it prints at start-up. **Listening address** under **Settings** › **Access** shows the port in use.
+
+## Keys
+
+Hoshimi has two independent keys, and a client uses only one of them:
+
+| Key | Config key | Protects | How to send it |
+| --- | --- | --- | --- |
+| Model API key | `server.model_api_key` | `/v1/*`: Chat Completions, Responses, Messages, the model list | `Authorization: Bearer <key>` or `x-api-key: <key>` |
+| Tool access key | `server.access_token` | The `/api/*` management API, the Web UI, `/docs`, `/openapi.json` | `Authorization: Bearer <key>` |
+
+- Clients always use the **Model API key**. The tool access key does not open `/v1/*`, and the model key does not open `/api/*`.
+- With no model API key set, `/v1/*` checks no key. Most SDKs and tools insist on a value; any non-empty string will do.
+- When a request carries both `Authorization` and `x-api-key`, `Authorization` wins.
+- Provider account credentials (a station's API key, sign-in tokens) live only in Hoshimi. Never put them in a client.
+
+Setting the keys, LAN access and origin rules are covered in [Access control](/docs/config-security).
+
+## Model names
+
+List the available models first:
+
+```bash
+curl http://127.0.0.1:10600/v1/models
+```
+
+```json
+{
+  "object": "list",
+  "data": [
+    {"id": "big-pickle", "object": "model", "created": 0, "owned_by": "opencode", "free": null, "display_name": "Big Pickle"},
+    {"id": "kilo-auto/free", "object": "model", "created": 0, "owned_by": "kilo", "free": null, "display_name": "Kilo Auto Free"}
+  ]
+}
+```
+
+`id` is the upstream's own model name and `owned_by` the provider that serves it. The `model` field of a request takes either form:
+
+- **The bare `id`**, such as `big-pickle`. Hoshimi picks the first provider, in provider order, that lists it. With only one provider enabled, a name missing from the catalogue is passed to that provider as is.
+- **`provider/model`**, such as `opencode/big-pickle`, which names the provider. Everything after the first slash is sent as the upstream model name, further slashes included, e.g. `kilo/kilo-auto/free`. Use this form to choose between providers that list the same name.
+
+When a request has no `model`, Chat Completions and Responses use **Default model** from **Settings** › **General** (config key `server.default_model`, or `hoshimi serve --default-model`). Messages always requires `model`.
+
+The **Models** page shows whether each model reads images, reasons, calls tools and which effort levels it has; see [Models](/docs/guide-models).
+
+## Which API to use
+
+| API | Path | For |
+| --- | --- | --- |
+| Chat Completions | `POST /v1/chat/completions` | Most OpenAI-compatible clients, the OpenAI SDKs, OpenCode |
+| Responses | `POST /v1/responses` | Clients that only speak Responses, such as Codex |
+| Messages | `POST /v1/messages` | The Anthropic SDKs, Claude Code |
+
+All three share one model catalogue, and any model can be called through any of them: Hoshimi converts between the client's protocol and the upstream's. Conversion does not add features the upstream lacks; a model without tool support will not call tools whichever API you use.
+
+## Streaming
+
+<Callout type="warn" title="No stream field means streaming">
+
+Chat Completions and Responses stream (SSE) when the request has no `stream` field, the opposite of OpenAI's own API. Send `"stream": false` explicitly to get one JSON object. The OpenAI Python and JavaScript SDKs leave the field out when you do not pass `stream`, and then return a string of SSE text instead of an object, so always pass `stream=False` for a non-streaming call.
+
+</Callout>
+
+Messages behaves like Anthropic's: JSON by default, SSE with `"stream": true`.
+
+## Stateless
+
+Hoshimi keeps no conversation. Send the whole history with every request:
+
+- Chat Completions and Messages: all of `messages`.
+- Responses: all of `input`; `previous_response_id` is refused with `400`.
+
+Playground conversations are kept on the server, but through the Web UI's own API; see [Playground API](/docs/api-playground).
+
+## Reasoning effort
+
+Each API has its own field, and Hoshimi reads all of them:
+
+| API | Field | Example |
+| --- | --- | --- |
+| Chat Completions | `reasoning_effort` | `"reasoning_effort": "high"` |
+| Responses | `reasoning.effort` | `"reasoning": {"effort": "low"}` |
+| Messages | `output_config.effort` or `thinking` | `"output_config": {"effort": "medium"}` |
+
+Models differ in what they offer. A model with its own thinking menu (for example `disabled` / `low` / `high` / `max`) uses the level as named; other reasoning models use Hoshimi's three output budgets `light` / `balanced` / `deep`, and OpenAI's `minimal`, `low`, `medium`, `high` and the like are mapped onto them. A request that names no effort is left untouched. The mapping is in [OpenAI-compatible API](/docs/api-openai); what the budgets mean is in [Model and account behaviour](/docs/advanced-models).
+
+## Tool calls
+
+The client runs the tools; Hoshimi converts definitions, calls and results between protocols:
+
+- Chat Completions: `function` tools in `tools`, `tool_calls` in the reply, results sent back as `role: "tool"` messages.
+- Responses: `type: "function"` tools, `function_call` items in the reply, results sent back as `function_call_output` items. Other tool types are ignored.
+- Messages: tools with an `input_schema`, `tool_use` blocks in the reply, results sent back as `tool_result` blocks.
+
+Each client page has a worked example. Whether a model actually calls tools depends on the upstream; the capability marks on the **Models** page are a guide.
+
+## Connecting from another machine or a container
+
+By default Hoshimi listens on `127.0.0.1` only and accepts only requests whose `Host` is `localhost`, `127.0.0.1` or `::1`, so a client on another machine or in a container (say via `host.docker.internal`) is refused. Clients running in a web page also face the origin check. Set the listening address, **Allowed CIDRs**, **Allowed hosts** and **Allowed origins** as described in [Access control](/docs/config-security).
+
+## Client guides
+
+<Cards>
+  <Card title="OpenAI SDKs and curl" href="/docs/clients-openai" description="Python, JavaScript and curl: Chat Completions and Responses, streaming, reasoning and tool calls." />
+  <Card title="Anthropic SDK" href="/docs/clients-anthropic" description="Messages with the Anthropic SDK: streaming, tools, thinking and token counting." />
+  <Card title="Claude Code" href="/docs/clients-claude-code" description="ANTHROPIC_BASE_URL and friends, model aliases and known limits." />
+  <Card title="Codex" href="/docs/clients-codex" description="Add Hoshimi as a model provider in config.toml." />
+  <Card title="OpenCode" href="/docs/clients-opencode" description="Add an OpenAI-compatible provider in opencode.json." />
+  <Card title="API reference" href="/docs/api" description="Authentication, error shapes and every endpoint's fields." />
+</Cards>

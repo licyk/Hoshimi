@@ -1,0 +1,130 @@
+---
+title: "Claude Code"
+description: "让 Claude Code 通过 Hoshimi 调用模型：设置 ANTHROPIC_BASE_URL 和密钥、选择模型与后台模型、模型发现，以及经过协议转换的上游目前的限制。"
+icon: Bot
+---
+
+Claude Code 说的是 Anthropic Messages 协议，把它的 Base URL 指向 Hoshimi，它的请求就会走 Hoshimi 的 `/v1/messages`。用的是网关的模型 API 密钥，上游账号的凭据留在 Hoshimi 中。
+
+<Callout type="warn" title="先确认模型走原生 Messages">
+
+模型所在的渠道本身提供 Messages 接口时（例如 `anthropic` 渠道），Hoshimi 只替换模型名后原样转发，Claude Code 的各种请求字段都由上游处理。其他渠道的模型要经过协议转换，而较新的 Claude Code 会发送转换路径不支持的内容。在本地用 Claude Code 2.1.308（`claude -p`）测试时，经过转换的模型返回：
+
+- `400 <渠道>: context_management requires a native Messages upstream.`
+- 设置 `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` 后：`400 <渠道>: Messages roles must be user or assistant; use top-level system.`（这个版本会在 `messages` 中放入 `system` 角色的消息）
+
+所以目前请为 Claude Code 选择原生 Messages 渠道上的模型。两条路径的差别见 [Anthropic 兼容接口](/docs/api-anthropic)。
+
+</Callout>
+
+## 配置步骤
+
+<Steps>
+<Step>
+
+### 准备模型和密钥
+
+- 启动 Hoshimi，在 **渠道** 页添加一个提供 Messages 接口的渠道账号（如 Anthropic 的 API Key），见[渠道](/docs/guide-channels)。
+- 在 **模型** 页或用 `curl http://127.0.0.1:10600/v1/models` 找到模型 id。写成 `anthropic/<model-id>` 可以确保由这个渠道处理。
+- 如果设置了 **模型 API 密钥**（**设置** › **访问** › **密钥**），准备好它；没有设置时任意非空字符串都可以。
+
+</Step>
+<Step>
+
+### 设置环境变量并启动
+
+<Tabs items={["bash / zsh", "PowerShell"]}>
+<Tab value="bash / zsh">
+
+```bash
+export ANTHROPIC_BASE_URL="http://127.0.0.1:10600"
+export ANTHROPIC_API_KEY="你的模型 API 密钥"
+unset ANTHROPIC_AUTH_TOKEN
+claude --model "anthropic/<model-id>"
+```
+
+</Tab>
+<Tab value="PowerShell">
+
+```powershell
+$env:ANTHROPIC_BASE_URL = "http://127.0.0.1:10600"
+$env:ANTHROPIC_API_KEY = "你的模型 API 密钥"
+Remove-Item Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue
+claude --model "anthropic/<model-id>"
+```
+
+</Tab>
+</Tabs>
+
+- `ANTHROPIC_BASE_URL` 不带 `/v1`。
+- `ANTHROPIC_API_KEY` 以 `x-api-key` 发送。旧的 `ANTHROPIC_AUTH_TOKEN` 会以 `Authorization` 头发送，而 Hoshimi 在两者同时出现时以 `Authorization` 为准，所以要清掉它，或者干脆把模型 API 密钥填在 `ANTHROPIC_AUTH_TOKEN` 中。
+- 用的是 **模型 API 密钥**，不是工具访问密钥，也不是上游的 Anthropic Key。
+
+</Step>
+<Step>
+
+### 固定后台模型
+
+Claude Code 的后台请求使用 Haiku 别名，另外还有 Sonnet、Opus 两个别名。别名指向的模型 id 在 Hoshimi 中找不到时，请求会报路由错误。把 `ANTHROPIC_DEFAULT_HAIKU_MODEL` 指向网关里存在的模型，后台请求就会固定到它；用到 Sonnet、Opus 别名时也同样设置：
+
+```bash
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="anthropic/<小模型-id>"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="anthropic/<model-id>"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="anthropic/<大模型-id>"
+```
+
+</Step>
+</Steps>
+
+## 写进 settings.json
+
+不想每次设置环境变量时，可以写进 Claude Code 的用户设置 `~/.claude/settings.json` 的 `env` 中，`ANTHROPIC_MODEL` 代替 `--model`：
+
+```json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:10600",
+    "ANTHROPIC_API_KEY": "你的模型 API 密钥",
+    "ANTHROPIC_MODEL": "anthropic/<model-id>",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "anthropic/<小模型-id>"
+  }
+}
+```
+
+## 模型发现
+
+设置 `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1` 后，Claude Code 会向网关请求模型列表来填充模型选择器。Hoshimi 对它发出的 `GET /v1/models?limit=1000` 最多等待 2 秒：响应慢的渠道先用缓存、配置或内置的模型 id 顶上，发现在后台继续完成；每个条目带有 `display_name` 供显示。
+
+Claude Code 的选择器只显示 id 中含 `claude` 或 `anthropic` 的模型。其他模型请用 `--model`、`ANTHROPIC_MODEL` 或上面的别名变量显式指定；Hoshimi 不会把其他模型改名伪装成 Claude。
+
+## 相关环境变量
+
+| 变量 | 作用 |
+| --- | --- |
+| `ANTHROPIC_BASE_URL` | 网关地址，`http://127.0.0.1:10600` |
+| `ANTHROPIC_API_KEY` | 模型 API 密钥，以 `x-api-key` 发送 |
+| `ANTHROPIC_AUTH_TOKEN` | 以 `Authorization: Bearer` 发送；与上一项二选一，优先于它 |
+| `ANTHROPIC_MODEL` | 默认主模型，等同 `--model` |
+| `ANTHROPIC_DEFAULT_HAIKU_MODEL` / `_SONNET_MODEL` / `_OPUS_MODEL` | 三个模型别名对应的网关模型 id |
+| `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY` | 设为 `1` 时从网关的 `/v1/models` 发现模型 |
+| `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | 设为 `1` 时减少实验性 beta 功能，可用于排查上游不支持 beta 的问题；具体效果取决于 Claude Code 版本，它不会去掉所有 beta 头、推理强度或自适应思考，也不能代替原生转发 |
+
+## Claude Code 的请求如何被处理
+
+- Claude Code 发送 `thinking: {"type": "adaptive"}` 和 `output_config.effort`。原生转发时原样交给上游；转换时换算成该模型的推理强度。
+- 原生转发保留 `anthropic-beta` 等 `anthropic-*` 请求头，并合并 OAuth 账号必需的 beta 能力；上游的限流头（`retry-after`、`anthropic-ratelimit-*`、`x-should-retry`）原样返回，Claude Code 可以据此重试。上游明确返回 `x-should-retry: false` 时，Hoshimi 也不会换账号重试。
+- 流式响应在等待上游时每 15 秒插入一个 `ping` 事件，只出现在完整事件之间。
+- Hoshimi 不保存对话历史，Claude Code 每轮都会发送完整历史。
+
+Claude Code 遇到不认识的模型 id 时会提示它假定 200k 的上下文窗口，这只是 Claude Code 自己的提示。
+
+## 排查
+
+| 现象 | 原因与处理 |
+| --- | --- |
+| `401`，`A model API key is required` | 设置了模型 API 密钥但没有发送，或 `ANTHROPIC_AUTH_TOKEN` 中是旧值覆盖了 `ANTHROPIC_API_KEY` |
+| `404`，`Model '…' not found` | 主模型或某个别名指向的 id 不在目录中；检查 `--model` 和三个 `ANTHROPIC_DEFAULT_*_MODEL` |
+| `400`，`… requires a native Messages upstream` 或 `Messages roles must be user or assistant` | 模型经过协议转换，见本页开头 |
+| 连接被拒绝或 `Host not allowed` | 端口不是 10600（看服务器启动时打印的地址），或从另一台机器、容器访问，见[访问控制](/docs/config-security) |
+
+每次调用（包括失败的）都会出现在 **用量** 页，可以在那里看到错误信息和实际使用的渠道与账号。
