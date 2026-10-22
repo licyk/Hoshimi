@@ -24,6 +24,7 @@ import base64
 import json
 import logging
 import re
+import time
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -64,7 +65,7 @@ def event(kind: str, **fields: Any) -> dict[str, Any]:
     - ``stage``: what is happening before the reply starts (``stage``: ``describing``, with ``model``);
     - ``notice``: something the reader should know about this reply (``notice``);
     - ``delta``: more of the reply (``text``);
-    - ``thinking``: the model is reasoning before it answers;
+    - ``reasoning``: more of what the model reasons before it answers (``text``), for a model that shows it;
     - ``done``: the reply as kept, with how it ended (``message``).
     """
     return {"type": kind, **fields}
@@ -78,6 +79,25 @@ class Prepared:
     notices: list[dict[str, Any]] = field(default_factory=list)
     images: bool = False
     """Whether images go as images (and a refusal could be about them)."""
+
+
+@dataclass
+class Thought:
+    """What a reply reasoned, and when: from its first reasoning to its first word (or to the end)."""
+
+    parts: list[str] = field(default_factory=list)
+    started: float | None = None
+    ended: float | None = None
+
+    @property
+    def text(self) -> str:
+        return "".join(self.parts)
+
+    @property
+    def ms(self) -> int:
+        if self.started is None:
+            return 0
+        return round(((self.ended or time.monotonic()) - self.started) * 1000)
 
 
 class PlaygroundRunner:
@@ -236,6 +256,7 @@ class PlaygroundRunner:
         yield event("assistant", message=message)
         path = path_to(conversation.messages, parent_id)
         text: list[str] = []
+        thought = Thought()
         notices: list[dict[str, Any]] = []
         status: Status = "complete"
         error = ""
@@ -255,7 +276,7 @@ class PlaygroundRunner:
                 if effort:
                     body["reasoning_effort"] = effort
                 try:
-                    yield from self._stream(model, body, text)
+                    yield from self._stream(model, body, text, thought)
                     break
                 except HoshimiError as exc:
                     # A station that refuses images, before a word of the reply: once more, with descriptions.
@@ -268,28 +289,33 @@ class PlaygroundRunner:
                     raise
         except GeneratorExit:
             # The page stopped the reply, or went away: what came is kept.
-            self.store.finish_message(message.id, content="".join(text), status="stopped", notices=notices)
+            self.store.finish_message(message.id, content="".join(text), status="stopped", notices=notices, reasoning=thought.text, reasoning_ms=thought.ms)
             raise
         except HoshimiError as exc:
             status, error = "error", exc.message or str(exc)
         except Exception as exc:  # the reply must still be settled
             logger.exception("Playground reply failed")
             status, error = "error", str(exc) or exc.__class__.__name__
-        self.store.finish_message(message.id, content="".join(text), status=status, error=error, notices=notices)
+        self.store.finish_message(message.id, content="".join(text), status=status, error=error, notices=notices, reasoning=thought.text, reasoning_ms=thought.ms)
         yield event("done", message=self.store.message(message.id))
 
-    def _stream(self, model: str, body: dict[str, Any], text: list[str]) -> Iterator[dict[str, Any]]:
-        thinking = False
+    def _stream(self, model: str, body: dict[str, Any], text: list[str], thought: Thought) -> Iterator[dict[str, Any]]:
         for chunk in tracked_chunks(self.services, model, body, origin="playground", stream=True):
             kind = chunk.get("type")
             if kind == "text_delta":
                 piece = str(chunk.get("text") or "")
                 if piece:
+                    if thought.started is not None and thought.ended is None:
+                        thought.ended = time.monotonic()
                     text.append(piece)
                     yield event("delta", text=piece)
-            elif kind == "reasoning_delta" and not thinking and not text:
-                thinking = True
-                yield event("thinking")
+            elif kind == "reasoning_delta":
+                piece = str(chunk.get("text") or "")
+                if piece:
+                    if thought.started is None:
+                        thought.started = time.monotonic()
+                    thought.parts.append(piece)
+                    yield event("reasoning", text=piece)
             elif kind == "error":
                 raise HoshimiError(str(chunk.get("message") or "The upstream stream failed."))
 

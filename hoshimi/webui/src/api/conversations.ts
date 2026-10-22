@@ -15,7 +15,7 @@ export type ReplyEvent =
   | { type: 'assistant'; message: MessageView }
   | { type: 'stage'; stage: 'describing'; model: string }
   | { type: 'notice'; notice: Notice }
-  | { type: 'thinking' }
+  | { type: 'reasoning'; text: string }
   | { type: 'delta'; text: string }
   | { type: 'done'; message: MessageView };
 

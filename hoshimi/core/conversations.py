@@ -85,6 +85,10 @@ class ChatMessage:
     notices: list[dict[str, Any]] = field(default_factory=list)
     created_at: float = 0.0
     attachments: list[AttachmentInfo] = field(default_factory=list)
+    reasoning: str = ""
+    """What the model reasoned before it answered, when it shows that; empty otherwise."""
+    reasoning_ms: int = 0
+    """How long it reasoned: from its first reasoning to its first word (or to the end)."""
 
 
 @dataclass(frozen=True)
@@ -257,9 +261,12 @@ class ConversationStore:
             )
         return self.message(message_id)
 
-    def finish_message(self, message_id: str, *, content: str, status: Status, error: str = "", notices: list[dict[str, Any]] | None = None) -> None:
-        """Settle a streamed reply: what it said, and how it ended."""
-        changes: dict[str, object] = {"content": content, "status": status, "error": error}
+    def finish_message(
+        self, message_id: str, *, content: str, status: Status, error: str = "", notices: list[dict[str, Any]] | None = None,
+        reasoning: str = "", reasoning_ms: int = 0,
+    ) -> None:
+        """Settle a streamed reply: what it said (and reasoned), and how it ended."""
+        changes: dict[str, object] = {"content": content, "status": status, "error": error, "reasoning": reasoning, "reasoning_ms": reasoning_ms}
         if notices is not None:
             changes["notices"] = json.dumps(notices)
         assignments = ", ".join(f"{column} = ?" for column in changes)
@@ -293,8 +300,9 @@ class ConversationStore:
                 copy_id = _id()
                 # Kept in their order: each copy a moment after the last.
                 conn.execute(
-                    "INSERT INTO chat_messages(id, conversation_id, parent_id, role, content, model, effort, status, error, notices, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (copy_id, branch_id, parent, m.role, m.content, m.model, m.effort, m.status, m.error, json.dumps(m.notices), m.created_at + i * 1e-6),
+                    "INSERT INTO chat_messages(id, conversation_id, parent_id, role, content, model, effort, status, error, notices, reasoning, reasoning_ms, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (copy_id, branch_id, parent, m.role, m.content, m.model, m.effort, m.status, m.error, json.dumps(m.notices), m.reasoning, m.reasoning_ms, m.created_at + i * 1e-6),
                 )
                 conn.executemany(
                     "INSERT INTO message_attachments(message_id, attachment_id, position) VALUES (?, ?, ?)",
@@ -404,7 +412,7 @@ def _message(row: sqlite3.Row, attachments: list[AttachmentInfo]) -> ChatMessage
     return ChatMessage(
         id=row["id"], conversation_id=row["conversation_id"], parent_id=row["parent_id"], role=row["role"], content=row["content"],
         model=row["model"], effort=row["effort"], status=row["status"], error=row["error"], notices=notices if isinstance(notices, list) else [],
-        created_at=row["created_at"], attachments=attachments,
+        created_at=row["created_at"], attachments=attachments, reasoning=row["reasoning"], reasoning_ms=row["reasoning_ms"],
     )
 
 

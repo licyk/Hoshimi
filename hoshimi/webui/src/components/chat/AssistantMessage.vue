@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import type { MessageView, Notice } from '@/api/types';
 import ActionButton from '@/components/chat/ActionButton.vue';
+import ReasoningSection from '@/components/chat/ReasoningSection.vue';
 import VersionSwitcher from '@/components/chat/VersionSwitcher.vue';
 import { useI18n } from '@/i18n';
 import type { Stage } from '@/stores/chat';
@@ -10,8 +11,9 @@ import { AppButton, AppIcon, AppMenu, ComposerMenu, icons, type ComposerOption }
 import Markdown from '@/ui/Markdown.vue';
 
 /**
- * A reply, across the column with no bubble and no name: the Markdown it said, what is happening
- * while it has said nothing yet (thinking, reading an image), how it ended when it did not end
+ * A reply, across the column with no bubble and no name: what it reasoned, folded away (only for a
+ * model that shows its reasoning), the Markdown it said, what is happening while it has said nothing
+ * yet (reading an image, waiting for the model), how it ended when it did not end
  * well, and what the reader should know about how it was made (an image described by another
  * model). Under it: Copy, Try again (or with another model), Branch in a new chat, the way between
  * its versions, and More (Copy as API request). The latest reply keeps its actions in view.
@@ -32,10 +34,10 @@ const emit = defineEmits<{ copy: []; retry: [model?: string]; branch: []; 'copy-
 const { t } = useI18n();
 
 const streaming = computed(() => props.message.status === 'streaming');
+// Reasoning has its own line ("Thinking…"); the waiting line covers the time before anything comes.
 const waiting = computed(() => {
-  if (!streaming.value || props.message.content) return '';
+  if (!streaming.value || props.message.content || props.message.reasoning) return '';
   if (props.stage?.kind === 'describing') return t('playground.describing', { model: props.stage.model });
-  if (props.stage?.kind === 'thinking') return t('playground.thinking');
   return t('playground.answering');
 });
 const noticeText = (n: Notice) =>
@@ -48,6 +50,7 @@ const failure = computed(() => [t('playground.replyFailed'), props.message.error
 
 <template>
   <div class="assistant-message" :class="{ last, streaming }">
+    <ReasoningSection v-if="message.reasoning" :reasoning="message.reasoning" :ms="message.reasoning_ms" :active="streaming && !message.content" />
     <div v-if="waiting" class="waiting type-body-medium muted" role="status"><span class="dot" aria-hidden="true" />{{ waiting }}</div>
     <Markdown
       v-if="message.content"

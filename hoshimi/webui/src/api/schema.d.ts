@@ -473,7 +473,7 @@ export interface paths {
          * @description Add a question after ``parent_id`` and stream the reply.
          *
          *     Events, in order: ``user`` (the question as kept), ``assistant`` (the
-         *     reply as filed), then any of ``stage``, ``notice``, ``thinking`` and
+         *     reply as filed), then any of ``stage``, ``notice``, ``reasoning`` and
          *     ``delta``, and last ``done`` (the reply as kept, with how it ended).
          */
         post: operations["send_conversation_message"];
@@ -2079,6 +2079,16 @@ export interface components {
             notices: components["schemas"]["Notice"][];
             /** Parent Id */
             parent_id: string | null;
+            /**
+             * Reasoning
+             * @default
+             */
+            reasoning: string;
+            /**
+             * Reasoning Ms
+             * @default 0
+             */
+            reasoning_ms: number;
             /**
              * Role
              * @enum {string}

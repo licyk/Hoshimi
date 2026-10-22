@@ -63,9 +63,13 @@ def test_moving_between_versions_and_settling_a_reply(store: ConversationStore) 
     q = store.add_message(c.id, None, "user", "hi")
     a = store.add_message(c.id, q.id, "assistant", "", status="streaming")  # type: ignore[union-attr]
     assert a is not None
-    store.finish_message(a.id, content="partial", status="stopped", notices=[{"kind": "image-omitted", "name": "x.png"}])
+    store.finish_message(a.id, content="partial", status="stopped", notices=[{"kind": "image-omitted", "name": "x.png"}], reasoning="hmm", reasoning_ms=1200)
     settled = store.message(a.id)
     assert settled is not None and (settled.content, settled.status, settled.notices) == ("partial", "stopped", [{"kind": "image-omitted", "name": "x.png"}])
+    assert (settled.reasoning, settled.reasoning_ms) == ("hmm", 1200)
+    # A branch keeps what each reply reasoned.
+    branch = store.branch(c.id, a.id)
+    assert branch is not None and (branch.messages[-1].reasoning, branch.messages[-1].reasoning_ms) == ("hmm", 1200)
     assert store.update(c.id, current_leaf=q.id).current_leaf == q.id  # type: ignore[union-attr,union-attr]
     with pytest.raises(ValueError):
         store.update(c.id, current_leaf="missing")

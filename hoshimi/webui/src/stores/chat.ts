@@ -5,8 +5,8 @@ import type { AttachmentView, ConversationView, MessageView } from '@/api/types'
 
 type Summary = Omit<ConversationView, 'messages'>;
 
-/** What is happening before a reply's first word: the model is reasoning, or an image is being described. */
-export type Stage = { kind: 'thinking' } | { kind: 'describing'; model: string } | null;
+/** What is happening before a reply starts: an image is being described for a model that cannot read it. */
+export type Stage = { kind: 'describing'; model: string } | null;
 
 let localIds = 0;
 const localId = (kind: string) => `local-${kind}-${++localIds}`;
@@ -126,16 +126,19 @@ export const useChatStore = defineStore('chat', () => {
           const waiting = messages.get(reply);
           messages.delete(reply);
           reply = event.message.id;
-          messages.set(reply, { ...event.message, content: waiting?.content ?? '', notices: waiting?.notices ?? [] });
+          messages.set(reply, { ...event.message, content: waiting?.content ?? '', reasoning: waiting?.reasoning ?? '', notices: waiting?.notices ?? [] });
           leaf.value = reply;
           break;
         }
         case 'stage':
           stage.value = { kind: 'describing', model: event.model };
           break;
-        case 'thinking':
-          stage.value = { kind: 'thinking' };
+        case 'reasoning': {
+          stage.value = null;
+          const m = messages.get(reply);
+          if (m) m.reasoning += event.text;
           break;
+        }
         case 'notice': {
           const m = messages.get(reply);
           if (m) m.notices = [...m.notices, event.notice];
@@ -198,7 +201,7 @@ export const useChatStore = defineStore('chat', () => {
   function placeholder(role: 'user' | 'assistant', parent: string | null, content = '', attachments: AttachmentView[] = []): MessageView {
     return {
       id: localId(role), parent_id: parent, role, content, attachments, notices: [], created_at: Date.now() / 1000,
-      status: role === 'assistant' ? 'streaming' : 'complete', error: '', model: role === 'assistant' ? (model.value ?? '') : '', effort: '',
+      status: role === 'assistant' ? 'streaming' : 'complete', error: '', model: role === 'assistant' ? (model.value ?? '') : '', effort: '', reasoning: '', reasoning_ms: 0,
     };
   }
 

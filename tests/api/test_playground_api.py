@@ -22,7 +22,7 @@ class SightProvider(FakeProvider):
     """Models that do and do not read images, one whose station refuses them anyway, one that fails, and one that describes."""
 
     def fallback_models(self) -> list[str]:
-        return ["seer", "blind", "claims", "broken"]
+        return ["seer", "blind", "claims", "broken", "thinker"]
 
     def specs(self) -> dict[str, ModelSpec]:
         specs = super().specs()
@@ -35,6 +35,11 @@ class SightProvider(FakeProvider):
         messages = body.get("messages") or []
         last = messages[-1]["content"] if messages else ""
         images = any(isinstance(m.get("content"), list) and any(p.get("type") == "image_url" for p in m["content"]) for m in messages)
+        if model == "thinker":
+            for piece in ("First, ", "consider the question."):
+                yield {"type": "reasoning_delta", "text": piece}
+            yield {"type": "text_delta", "text": "The answer."}
+            return
         if model == "broken":
             yield {"type": "error", "message": "the station is down"}
             return
@@ -299,3 +304,31 @@ def test_archive_and_list(client: Any) -> None:
     assert [c["id"] for c in client.get("/api/v1/playground/conversations", params={"archived": True}).json()["conversations"]] == [cid]
     assert client.delete(f"/api/v1/playground/conversations/{cid}").status_code == 204
     assert client.get(f"/api/v1/playground/conversations/{cid}").status_code == 404
+
+
+def test_a_reply_s_reasoning_streams_first_and_is_kept_with_how_long_it_took(client: Any) -> None:
+    cid = _new(client, model="thinker")
+    events = _send(client, cid, "Think about it")
+    kinds = [e["type"] for e in events]
+    assert kinds == ["user", "assistant", "reasoning", "reasoning", "delta", "done"]
+    assert "".join(e["text"] for e in events if e["type"] == "reasoning") == "First, consider the question."
+    reply = events[-1]["message"]
+    assert (reply["content"], reply["reasoning"]) == ("The answer.", "First, consider the question.")
+    assert reply["reasoning_ms"] >= 0
+    kept = client.get(f"/api/v1/playground/conversations/{cid}").json()["messages"][-1]
+    assert kept["reasoning"] == "First, consider the question."
+    # A model that shows no reasoning keeps none.
+    plain = _send(client, _new(client), "hello")[-1]["message"]
+    assert (plain["reasoning"], plain["reasoning_ms"]) == ("", 0)
+    assert "reasoning" not in [e["type"] for e in _send(client, _new(client), "again")]
+
+
+def test_a_reply_stopped_while_reasoning_keeps_what_it_reasoned(services: Services) -> None:
+    conversation = services.conversations.create(model="thinker")
+    question = services.conversations.add_message(conversation.id, None, "user", "hmm")
+    assert question is not None
+    events = PlaygroundRunner(services).reply(conversation.id, question.id, model="thinker", effort="")
+    assert [next(events)["type"] for _ in range(2)] == ["assistant", "reasoning"]
+    events.close()
+    reply = services.conversations.path(conversation.id)[-1]
+    assert (reply.status, reply.content, reply.reasoning) == ("stopped", "", "First, ")

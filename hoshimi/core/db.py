@@ -233,6 +233,11 @@ MIGRATIONS: list[str] = [
     ) WITHOUT ROWID;
     CREATE INDEX message_attachments_attachment ON message_attachments(attachment_id);
     """,
+    # 4: what a reply reasoned before it answered, and for how long (a model that shows no reasoning keeps none).
+    """
+    ALTER TABLE chat_messages ADD COLUMN reasoning    TEXT    NOT NULL DEFAULT '';
+    ALTER TABLE chat_messages ADD COLUMN reasoning_ms INTEGER NOT NULL DEFAULT 0;
+    """,
 ]
 
 

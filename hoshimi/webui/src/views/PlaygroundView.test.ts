@@ -19,7 +19,7 @@ vi.mock('@/api/conversations', async (importOriginal) => ({ ...(await importOrig
 vi.mock('@/ui', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/ui')>()), useSnackbar: () => ({ error: state.error, show: state.show }) }));
 
 // -- a server in memory: conversations as trees, replies streamed by the test -----------------
-interface Msg { id: string; parent_id: string | null; role: 'user' | 'assistant'; content: string; model: string; effort: string; status: string; error: string; notices: { kind: string; name: string; model: string }[]; created_at: number; attachments: unknown[] }
+interface Msg { id: string; parent_id: string | null; role: 'user' | 'assistant'; content: string; model: string; effort: string; status: string; error: string; notices: { kind: string; name: string; model: string }[]; created_at: number; attachments: unknown[]; reasoning?: string; reasoning_ms?: number }
 interface Conv { id: string; title: string; title_state: string; model: string; effort: string; archived: boolean; temporary: boolean; branched_from: string; created_at: number; updated_at: number; current_leaf: string; messages: Msg[] }
 let server: { conversations: Map<string, Conv>; session: string | null; calls: { method: string; path: string; body: unknown }[]; ids: number; clock: number };
 /** The reply streams the test has not yet finished: it writes their events and closes them. */
@@ -264,6 +264,42 @@ describe('Playground chat', () => {
     expect(wrapper.find('.assistant-message').text()).toContain('partial');
     expect(wrapper.find('.assistant-message .ended').text()).toBe('Stopped');
     expect(wrapper.find('button[aria-label="Send"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('folds a reply\'s reasoning away under one line, and shows none for a reply without it', async () => {
+    const { wrapper } = await openPlayground();
+    await ask(wrapper, 'think first');
+    streams[0].send({ type: 'reasoning', text: 'Weigh the **options**, ' });
+    streams[0].send({ type: 'reasoning', text: 'then pick one.' });
+    await flushPromises();
+    const reasoning = () => wrapper.find('.assistant-message .reasoning');
+    expect(reasoning().find('.toggle').text()).toContain('Thinking…');
+    expect(reasoning().find('.toggle').attributes('aria-expanded')).toBe('false');
+    expect(reasoning().find('.body').exists()).toBe(false);
+    // The reasoning has its own line: no "Answering…" beside it.
+    expect(wrapper.find('.assistant-message .waiting').exists()).toBe(false);
+    await answer('Option two.', { reasoning: 'Weigh the **options**, then pick one.', reasoning_ms: 4200 });
+    expect(reasoning().find('.toggle').text()).toContain('Thought for 4.2 s');
+    expect(reasoning().find('.body').exists()).toBe(false);
+    await reasoning().find('.toggle').trigger('click');
+    expect(reasoning().find('.toggle').attributes('aria-expanded')).toBe('true');
+    expect(reasoning().find('.body').text()).toBe('Weigh the options, then pick one.');
+    expect(reasoning().find('.body strong').text()).toBe('options');
+    expect(wrapper.find('.assistant-message .content').text()).toBe('Option two.');
+    // A reply from a model that shows no reasoning has no such line.
+    await ask(wrapper, 'and now?');
+    await answer('Plainly.');
+    expect(wrapper.findAll('.assistant-message').at(-1)!.find('.reasoning').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('says a short think was a moment', async () => {
+    const { wrapper } = await openPlayground();
+    await ask(wrapper, 'quick');
+    streams[0].send({ type: 'reasoning', text: 'Easy.' });
+    await answer('Done.', { reasoning: 'Easy.', reasoning_ms: 300 });
+    expect(wrapper.find('.reasoning .toggle').text()).toContain('Thought for a moment');
     wrapper.unmount();
   });
 

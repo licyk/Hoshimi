@@ -85,6 +85,10 @@ class MessageView(Record):
     notices: list[Notice] = Field(default_factory=list)
     created_at: float
     attachments: list[AttachmentView] = Field(default_factory=list)
+    reasoning: str = ""
+    """What the model reasoned before it answered, for a model that shows it; empty otherwise."""
+    reasoning_ms: int = 0
+    """How long it reasoned, in milliseconds."""
 
 
 class ConversationSummary(Record):
@@ -166,7 +170,7 @@ def _message(m: ChatMessage) -> MessageView:
     return MessageView(
         id=m.id, parent_id=m.parent_id, role=m.role, content=m.content, model=m.model, effort=m.effort, status=m.status, error=m.error,
         notices=[Notice(**{k: v for k, v in n.items() if k in ("kind", "name", "model")}) for n in m.notices if isinstance(n, dict) and n.get("kind")],
-        created_at=m.created_at, attachments=[_attachment(a) for a in m.attachments],
+        created_at=m.created_at, attachments=[_attachment(a) for a in m.attachments], reasoning=m.reasoning, reasoning_ms=m.reasoning_ms,
     )
 
 
@@ -286,7 +290,7 @@ def send_message(services: ServicesDep, conversation_id: str, body: MessageSend)
     """Add a question after ``parent_id`` and stream the reply.
 
     Events, in order: ``user`` (the question as kept), ``assistant`` (the
-    reply as filed), then any of ``stage``, ``notice``, ``thinking`` and
+    reply as filed), then any of ``stage``, ``notice``, ``reasoning`` and
     ``delta``, and last ``done`` (the reply as kept, with how it ended).
     """
     conversation = _conversation(services, conversation_id)
