@@ -452,6 +452,23 @@ describe('Playground chat', () => {
     wrapper.unmount();
   });
 
+  it('brings the approval chip in when a tool is turned on and takes it away when the last goes, in a box of its own', async () => {
+    const { wrapper } = await openPlayground();
+    const approvalChip = () => wrapper.find('.chip-slot > .approval-menu');
+    expect(approvalChip().exists()).toBe(false);
+    await wrapper.find('.tools-menu button').trigger('click');
+    await flushPromises();
+    const switches = () => [...document.body.querySelectorAll<HTMLElement>('.menu [role="switch"]')];
+    switches()[0].click();
+    await flushPromises();
+    expect(approvalChip().exists()).toBe(true);
+    expect(wrapper.find('.chip-slot > .tools-menu').text()).toContain('1');
+    switches()[0].click();
+    await flushPromises();
+    expect(approvalChip().exists()).toBe(false);
+    wrapper.unmount();
+  });
+
   it('sets when the chat\'s tools ask first from a menu in the composer', async () => {
     state.tools = ['shell'];
     const { wrapper } = await openPlayground();

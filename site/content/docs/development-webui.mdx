@@ -108,7 +108,7 @@ t('settings.listeningOn', { address: '127.0.0.1:10600' });
 - **选择**：从少数几项中选一项（列表筛选、报表范围）用 `SegmentedControl`，放不下时变成下拉选择；日期用 `DatePicker`。
 - **回复**：`ui/Markdown.vue` 按块渲染回复（流式输出时只有正在写的块会变，已画好的图表或上方打开的预览不受影响）。模型文本不可信：原始 HTML 保持为文字；数学公式交给不带 `trust` 的 KaTeX；Mermaid 以 `strict` 模式绘制，首次用到时加载（`ui/mermaid.ts`），并按源码和主题缓存；`html` 代码块只在请求时预览，放在 `sandbox="allow-scripts"` 且 CSP 禁止联网的 `iframe` 中；其他网站上的媒体要等用户点击，除非浏览器偏好设置为始终加载（`ui/markdownRich.ts`）。任何标记了 `data-view` 的元素都通过 `useImageViewer` 在 `ImageViewer` 中打开。
 - **图层**：浮在页面上的东西（对话框、侧边面板、菜单、打开的选择器）都通过 `ui/layers.ts` 叠放：后打开的画在上面；<kbd>Esc</kbd> 和点击外部只关闭最上层；模态层打开时，页面和它下面的层都设为 `inert`；层关闭后把焦点还给打开它的元素。
-- **动效**：页面之间用 View Transitions 淡入淡出；标签页和筛选沿共享的水平轴滑动（`AxisPanes`）；列表-详情的详情区在条目之间纵向移动（`shared-axis-y`）；一个视图替换另一个时淡入淡出（`FadeSwap`），Playground 中一个对话替换另一个时也是如此；切换 Playground 中某条消息的版本时，该消息及其后的内容沿水平轴滑动（`components/chat/VersionPanes.vue`，基于 `AxisPanes`），上方的内容保持不动；列表项使用 `list` 动效。**设置 › 外观 › 动画**（或系统的“减少动态效果”）把所有过渡换成简短的淡入淡出。
+- **动效**：页面之间用 View Transitions 淡入淡出；标签页和筛选沿共享的水平轴滑动（`AxisPanes`）；列表-详情的详情区在条目之间纵向移动（`shared-axis-y`）；一个视图替换另一个时淡入淡出（`FadeSwap`），Playground 中一个对话替换另一个时也是如此；切换 Playground 中某条消息的版本时，该消息及其后的内容沿水平轴滑动（`components/chat/VersionPanes.vue`，基于 `AxisPanes`），上方的内容保持不动；一排控件中出现和消失的控件（输入框里的推理强度和审批芯片、上下文圆环）连同旁边的间距一起展开和收起宽度（`chip-row`、`chipRowHooks`），其他控件随之滑动，较长的模型名称逐渐收窄而不是跳变；文字变化的芯片平滑过渡到新宽度（`useMorphWidth`）；列表项使用 `list` 动效。**设置 › 外观 › 动画**（或系统的“减少动态效果”）把所有过渡换成简短的淡入淡出。
 
 ## 布局规则
 

@@ -82,7 +82,7 @@ export { default as TweenNumber } from '@/ui/TweenNumber.vue';
 export { default as Tooltip } from '@/ui/Tooltip.vue';
 export { default as TopAppBar } from '@/ui/TopAppBar.vue';
 export * as icons from '@/ui/icons';
-export { collapseHooks, containerFrom, keepLeavingInPlace, prefersReducedMotion, sectionHooks, staggerStyle, TRANSITIONS, useAxisDirection } from '@/ui/motion/transitions';
+export { chipRowHooks, collapseHooks, containerFrom, keepLeavingInPlace, prefersReducedMotion, sectionHooks, staggerStyle, TRANSITIONS, useAxisDirection, useMorphWidth } from '@/ui/motion/transitions';
 export { useTween } from '@/ui/motion/useTween';
 export { installViewTransitions, morphStyle } from '@/ui/motion/viewTransition';
 export { useElementHeight } from '@/ui/useElementHeight';

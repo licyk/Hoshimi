@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, h, nextTick, ref, Transition } from 'vue';
 import Collapse from '@/ui/Collapse.vue';
-import { milliseconds, morphHeight, prefersReducedMotion, sectionHooks, TRANSITIONS } from '@/ui/motion/transitions';
+import { chipRowHooks, milliseconds, morphHeight, prefersReducedMotion, sectionHooks, TRANSITIONS, useMorphWidth } from '@/ui/motion/transitions';
 
 const SRC = join(process.cwd(), 'src');
 
@@ -149,6 +149,63 @@ describe('motion', () => {
     column.remove();
   });
 
+  it('opens and closes a chip in a row with the gap beside it, and takes no presses while it goes', () => {
+    // A flex row with a 2px gap: chip, chip, the chip that comes and goes last.
+    const row = document.createElement('div');
+    Object.assign(row.style, { display: 'flex', columnGap: '2px' });
+    const [first, second, chip] = ['span', 'span', 'span'].map((tag) => document.createElement(tag));
+    row.append(first!, second!, chip!);
+    document.body.append(row);
+    const el = chip!;
+    Object.defineProperty(el, 'offsetWidth', { get: () => (el.style.width === '0px' ? 0 : 84) });
+
+    chipRowHooks.onEnter(el);
+    expect([el.style.width, el.style.marginInlineStart, el.style.overflow]).toEqual(['84px', '0px', 'clip']);
+    chipRowHooks.onAfterEnter(el);
+    expect([el.style.width, el.style.marginInlineStart, el.style.overflow]).toEqual(['', '', '']);
+    chipRowHooks.onBeforeLeave(el);
+    expect(el.inert).toBe(true);
+    expect(el.style.width).toBe('84px');
+    chipRowHooks.onLeave(el);
+    // Closed, it takes the gap before it back: the row is as it was without it.
+    expect([el.style.width, el.style.marginInlineStart]).toEqual(['0px', '-2px']);
+
+    // The first in its row gives back the gap after it instead.
+    first!.remove();
+    second!.remove();
+    row.append(document.createElement('span'));
+    el.removeAttribute('style');
+    chipRowHooks.onLeave(el);
+    expect([el.style.marginInlineStart, el.style.marginInlineEnd]).toEqual(['', '-2px']);
+
+    // Under reduced motion it only fades: its width is left alone.
+    document.documentElement.dataset.motion = 'reduced';
+    el.removeAttribute('style');
+    chipRowHooks.onEnter(el);
+    chipRowHooks.onLeave(el);
+    expect(el.style.width).toBe('');
+    delete document.documentElement.dataset.motion;
+    row.remove();
+  });
+
+  it('mounts and removes a chip-row control under the zero-duration test stylesheet', async () => {
+    cleanup.push(useStylesheet('ui/motion/motion.css'), useStylesheet('test/motion-zero.css'));
+    const shown = ref(false);
+    const Comp = defineComponent(() => () =>
+      h('div', { style: 'display: flex; gap: 2px' }, [h('span', 'model'), h(Transition, { name: TRANSITIONS.chipRow, ...chipRowHooks }, () => (shown.value ? h('span', { class: 'chip' }, 'Ask') : null))]),
+    );
+    const wrapper = mount(Comp, { attachTo: document.body });
+    shown.value = true;
+    await nextTick();
+    await new Promise((r) => setTimeout(r, 30));
+    expect((wrapper.find('.chip').element as HTMLElement).style.width).toBe('');
+    shown.value = false;
+    await nextTick();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(wrapper.find('.chip').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
   it('mounts and removes a Collapse section under the zero-duration test stylesheet', async () => {
     cleanup.push(useStylesheet('ui/motion/motion.css'), useStylesheet('test/motion-zero.css'));
     const shown = ref(false);
@@ -213,5 +270,48 @@ describe('morphHeight', () => {
     el.getBoundingClientRect = () => ({ height: (h += 50) }) as DOMRect;
     await morphHeight(el, () => undefined);
     expect(el.animate).not.toHaveBeenCalled();
+  });
+});
+
+describe('useMorphWidth', () => {
+  afterEach(() => {
+    delete document.documentElement.dataset.motion;
+  });
+
+  /** A chip whose words come from ``text``, its width following them, eased by ``useMorphWidth``. */
+  function chip(text: ReturnType<typeof ref<string>>) {
+    const box = ref<HTMLElement | null>(null);
+    const Comp = defineComponent(() => {
+      useMorphWidth(box, () => text.value);
+      return () => h('span', { ref: box }, text.value);
+    });
+    const wrapper = mount(Comp);
+    const el = wrapper.element as HTMLElement;
+    Object.defineProperty(el, 'offsetWidth', { get: () => 10 * (el.textContent?.length ?? 0) });
+    el.animate = vi.fn() as unknown as typeof el.animate;
+    return { el, wrapper };
+  }
+
+  it('eases a chip from its old width to the one its new words take', async () => {
+    const text = ref('Off');
+    const { el, wrapper } = chip(text);
+    text.value = 'Full access';
+    await nextTick();
+    const [frames] = vi.mocked(el.animate).mock.calls[0] as [Keyframe[], KeyframeAnimationOptions];
+    expect(frames.map((f) => f.width)).toEqual(['30px', '110px']);
+    expect(frames.every((f) => f.overflow === 'clip')).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('leaves the width alone under reduced motion, or when it stays', async () => {
+    const text = ref('Ask');
+    const { el, wrapper } = chip(text);
+    text.value = 'Low';
+    await nextTick();
+    document.documentElement.dataset.motion = 'reduced';
+    text.value = 'High!';
+    await nextTick();
+    expect(el.animate).not.toHaveBeenCalled();
+    wrapper.unmount();
   });
 });

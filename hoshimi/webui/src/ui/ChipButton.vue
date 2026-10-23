@@ -61,6 +61,7 @@ defineEmits<{ click: [MouseEvent] }>();
   color: var(--md-sys-color-on-surface-variant); font: inherit; cursor: pointer; white-space: nowrap;
   transition:
     color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
+    background-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
     border-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard),
     transform var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
 }

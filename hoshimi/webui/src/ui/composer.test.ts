@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import Composer from '@/ui/Composer.vue';
 import ComposerMenu from '@/ui/ComposerMenu.vue';
 
@@ -59,6 +59,31 @@ describe('ComposerMenu', () => {
     { value: 'b/two', label: 'b/two', description: 'Two · beta' },
     { value: 'b/three', label: 'b/three', description: 'Three · beta' },
   ];
+
+  it('follows its control while open when the control moves without a scroll or a resize', async () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb));
+    vi.stubGlobal('cancelAnimationFrame', () => frames.splice(0));
+    const tick = () => frames.splice(0).forEach((cb) => cb(0));
+    const wrapper = mount(ComposerMenu, { props: { label: 'Tools', options, multiple: true, values: [] }, attachTo: document.body });
+    let left = 100;
+    (wrapper.element as HTMLElement).getBoundingClientRect = () => ({ left, top: 500, bottom: 532, width: 80, height: 32, right: left + 80, x: left, y: 500, toJSON: () => ({}) }) as DOMRect;
+    await wrapper.find('button').trigger('click');
+    await flushPromises();
+    const menu = document.querySelector<HTMLElement>('.menu')!;
+    tick();
+    expect(menu.style.left).toBe('100px');
+    // A chip opening beside it pushes it over: the menu goes with it, a frame later.
+    left = 60;
+    tick();
+    await flushPromises();
+    expect(menu.style.left).toBe('60px');
+    await wrapper.find('button').trigger('click');
+    await flushPromises();
+    expect(frames).toHaveLength(0);
+    wrapper.unmount();
+    vi.unstubAllGlobals();
+  });
 
   it('shows the choice, searches the list and picks with the keyboard', async () => {
     const wrapper = mount(ComposerMenu, { props: { label: 'Model', options, modelValue: 'a/one', searchLabel: 'Search' }, attachTo: document.body });

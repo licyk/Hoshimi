@@ -14,6 +14,7 @@ export const TRANSITIONS = {
   snackbar: 'snackbar',
   popover: 'popover',
   chip: 'chip',
+  chipRow: 'chip-row',
   iconSwap: 'icon-swap',
 } as const;
 
@@ -128,6 +129,30 @@ export const collapseHooks = {
   },
 };
 
+/**
+ * Ease ``el``'s width from what it was to what it is whenever ``source`` changes (a chip whose words
+ * change: "Off" becoming "2", "Ask" becoming "Full access"), rather than letting the row jump. The
+ * width is read before the change renders and after; under reduced motion it just takes its new width.
+ */
+export function useMorphWidth(el: Ref<HTMLElement | null | undefined>, source: () => unknown): void {
+  let from = 0;
+  watch(source, () => (from = el.value?.offsetWidth ?? 0), { flush: 'pre' });
+  watch(
+    source,
+    () => {
+      const e = el.value;
+      if (!e || !from || prefersReducedMotion() || typeof e.animate !== 'function') return;
+      const to = e.offsetWidth;
+      if (Math.abs(to - from) < 1) return;
+      const root = getComputedStyle(document.documentElement);
+      const duration = milliseconds(root.getPropertyValue('--md-sys-motion-duration-medium2')) || 300;
+      const easing = root.getPropertyValue('--md-sys-motion-easing-emphasized').trim() || 'cubic-bezier(0.2, 0, 0, 1)';
+      e.animate([{ width: `${from}px`, overflow: 'clip' }, { width: `${to}px`, overflow: 'clip' }], { duration, easing });
+    },
+    { flush: 'post' },
+  );
+}
+
 type GapSide = 'marginTop' | 'marginBottom';
 
 /**
@@ -177,6 +202,67 @@ export const sectionHooks = {
     const gap = gapBeside(e);
     void e.offsetHeight;
     e.style.height = '0px';
+    if (gap) e.style[gap[0]] = `${-gap[1]}px`;
+  },
+};
+
+type InlineGapSide = 'marginInlineStart' | 'marginInlineEnd';
+
+/**
+ * The column gap a flex row puts beside ``el``, and the side it is on: before it, or after it for
+ * the first one. A control that only narrows to nothing still leaves that gap, which would close in
+ * one step at the end; the control's margin takes it in and gives it back instead.
+ */
+function gapInline(el: HTMLElement): [side: InlineGapSide, px: number] | null {
+  const parent = el.parentElement;
+  if (!parent) return null;
+  const style = getComputedStyle(parent);
+  const row = style.display.includes('flex') && !style.flexDirection.startsWith('column');
+  const gap = Number.parseFloat(style.columnGap);
+  if (!row || !gap) return null;
+  if (el.previousElementSibling) return ['marginInlineStart', gap];
+  return el.nextElementSibling ? ['marginInlineEnd', gap] : null;
+}
+
+/**
+ * Hooks for <Transition name="chip-row"> on a control that comes and goes in a row of them (the
+ * composer's chips): its width opens from nothing to its own and closes again, the gap beside it
+ * with it, so the others slide over and a control that gives way (a long model name) narrows
+ * rather than jumping. A change of mind halfway turns back from where it is. The control must have
+ * no padding or border of its own (wrap one that does); while it leaves it takes no presses. Under
+ * reduced motion it only fades.
+ */
+export const chipRowHooks = {
+  onEnter(el: Element) {
+    const e = el as HTMLElement;
+    if (prefersReducedMotion()) return;
+    const gap = gapInline(e);
+    const width = e.offsetWidth;
+    e.style.overflow = 'clip';
+    e.style.width = '0px';
+    if (gap) e.style[gap[0]] = `${-gap[1]}px`;
+    // Lay the closed box out first: a box inserted and opened in one go has no start to move from.
+    void e.offsetWidth;
+    e.style.width = `${width}px`;
+    if (gap) e.style[gap[0]] = '0px';
+  },
+  onAfterEnter(el: Element) {
+    Object.assign((el as HTMLElement).style, { width: '', overflow: '', marginInlineStart: '', marginInlineEnd: '' });
+  },
+  onBeforeLeave(el: Element) {
+    const e = el as HTMLElement;
+    e.inert = true;
+    if (prefersReducedMotion()) return;
+    // Where it is now, mid-way through opening or not.
+    const style = getComputedStyle(e);
+    Object.assign(e.style, { width: `${e.offsetWidth}px`, overflow: 'clip', marginInlineStart: style.marginInlineStart, marginInlineEnd: style.marginInlineEnd });
+  },
+  onLeave(el: Element) {
+    const e = el as HTMLElement;
+    if (prefersReducedMotion()) return;
+    const gap = gapInline(e);
+    void e.offsetWidth;
+    e.style.width = '0px';
     if (gap) e.style[gap[0]] = `${-gap[1]}px`;
   },
 };

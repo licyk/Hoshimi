@@ -153,8 +153,29 @@ function listen(on: boolean) {
   window[method]('resize', onReflow);
 }
 
+/**
+ * While it is open the menu also follows its control when the control moves without a scroll or a
+ * resize: a chip opening or closing beside it in the row. One read of its box a frame, a new place
+ * only when that box moved.
+ */
+let following = 0;
+function follow(on: boolean) {
+  if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(following);
+  if (!on || typeof requestAnimationFrame !== 'function') return;
+  let last = '';
+  const step = () => {
+    const box = root.value?.getBoundingClientRect();
+    const at = box ? `${box.left},${box.top},${box.width},${box.height}` : '';
+    if (last && at !== last) place();
+    last = at;
+    following = requestAnimationFrame(step);
+  };
+  following = requestAnimationFrame(step);
+}
+
 watch(open, async (isOpen) => {
   listen(isOpen);
+  follow(isOpen);
   if (!isOpen) return;
   query.value = '';
   active.value = props.multiple ? 0 : Math.max(0, props.options.findIndex((o) => o.value === model.value));
@@ -170,6 +191,7 @@ watch(() => props.disabled, (disabled) => disabled && (open.value = false));
 onBeforeUnmount(() => {
   open.value = false;
   listen(false);
+  follow(false);
 });
 
 function toggle() {

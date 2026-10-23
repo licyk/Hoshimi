@@ -171,6 +171,26 @@
 }
 .chip-enter-from, .chip-leave-to { opacity: 0; transform: scale(0.8); }
 
+/* chip-row: a control that comes and goes in a row of controls (chipRowHooks): its width opens, the
+   gap beside it with it, and its face pops in a beat later; going, the face fades first and the box
+   closes after. Whatever it holds keeps its own width meanwhile (clipped), rather than squeezing. */
+.chip-row-enter-active {
+  transition:
+    width var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate),
+    margin var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate),
+    opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized-decelerate) var(--md-sys-motion-duration-short2),
+    transform var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized-decelerate) var(--md-sys-motion-duration-short2);
+}
+.chip-row-leave-active {
+  transition:
+    width var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard) var(--md-sys-motion-duration-short1),
+    margin var(--md-sys-motion-duration-medium1) var(--md-sys-motion-easing-standard) var(--md-sys-motion-duration-short1),
+    opacity var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-emphasized-accelerate),
+    transform var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-emphasized-accelerate);
+}
+.chip-row-enter-from, .chip-row-leave-to { opacity: 0; transform: scale(0.8); }
+.chip-row-enter-active > *, .chip-row-leave-active > * { flex-shrink: 0; }
+
 /* icon-swap: one icon turning into another in the same place (send and stop); the two share a grid
    cell while they cross, the old one turning away as the new one turns in. */
 .icon-swap-enter-active, .icon-swap-leave-active {

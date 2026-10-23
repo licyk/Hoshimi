@@ -19,7 +19,7 @@ import VersionPanes from '@/components/chat/VersionPanes.vue';
 import { useI18n } from '@/i18n';
 import { isLocal, stepsOf, useChatStore } from '@/stores/chat';
 import { usePreferencesStore } from '@/stores/preferences';
-import { AppButton, AppDialog, AppIcon, AppMenu, ChipButton, Composer, ComposerMenu, ConfirmDialog, EmptyState, FadeSwap, IconButton, ImageViewer, SideSheet, TRANSITIONS, TextField, icons, useImageViewer, useSnackbar } from '@/ui';
+import { AppButton, AppDialog, AppIcon, AppMenu, ChipButton, Composer, ComposerMenu, ConfirmDialog, EmptyState, FadeSwap, IconButton, ImageViewer, SideSheet, TRANSITIONS, TextField, chipRowHooks, icons, useImageViewer, useMorphWidth, useSnackbar } from '@/ui';
 import { MARKDOWN_CONTEXT, type MarkdownLabels } from '@/ui/markdownRich';
 import { useElementHeight } from '@/ui/useElementHeight';
 import { useElementWidth } from '@/ui/useElementWidth';
@@ -117,6 +117,15 @@ watch(
   },
 );
 const runningTerminals = computed(() => chat.terminals.filter((term) => term.running));
+// The composer's row of chips moves rather than jumps: the effort and approval chips (and the context
+// ring) open and close their width as they come and go (``chip-row``), the others slide over and a
+// long model name narrows; a chip whose words change eases to its new width.
+const effortSlot = ref<HTMLElement | null>(null);
+const toolsSlot = ref<HTMLElement | null>(null);
+const approvalSlot = ref<HTMLElement | null>(null);
+useMorphWidth(effortSlot, () => effortText.value);
+useMorphWidth(toolsSlot, () => toolsOn.value.length);
+useMorphWidth(approvalSlot, () => approval.value);
 async function approve(step: ToolStep, decision: ApprovalDecision) {
   try {
     await chat.approve(step, decision);
@@ -748,56 +757,65 @@ onBeforeUnmount(() => {
               :no-matches="t('models.none')"
               @update:model-value="(m) => chat.choose({ model: m, effort: '' })"
             />
-            <ComposerMenu
-              v-if="effortOptions.length > 1"
-              :model-value="chat.effort"
-              class="effort"
-              :class="{ flash: flashed === 'effort' }"
-              :icon="icons.Brain"
-              :label="t('playground.effort')"
-              :hint="t('playground.effortHelp')"
-              :text="effortText"
-              :options="effortOptions"
-              :disabled="chat.busy"
-              @update:model-value="(e) => chat.choose({ effort: e ?? '' })"
-            />
-            <ComposerMenu
-              class="tools-menu"
-              :class="{ flash: flashed === 'tools' }"
-              multiple
-              :values="toolsOn"
-              :icon="icons.Wrench"
-              :label="t('playground.tools')"
-              :hint="t('playground.toolsHelp')"
-              :text="toolsOn.length ? String(toolsOn.length) : t('playground.toolsOff')"
-              :options="toolOptions"
-              :disabled="chat.busy"
-              @update:values="chooseTools"
-            />
-            <ComposerMenu
-              v-if="toolsOn.length"
-              class="approval-menu"
-              :class="{ flash: flashed === 'approval' }"
-              :model-value="approval"
-              :icon="APPROVAL_ICONS[approval]"
-              :label="t('settings.approval')"
-              :hint="t('playground.approvalHint', { mode: t(`settings.approvalModes.${defaultApproval}`) })"
-              :text="t(`playground.approvalShort.${approval}`)"
-              :options="approvalOptions"
-              :danger="approval === 'full'"
-              @update:model-value="(m) => m && chat.chooseApproval(m as ApprovalMode)"
-            />
+            <Transition :name="TRANSITIONS.chipRow" v-bind="chipRowHooks">
+              <span v-if="effortOptions.length > 1" ref="effortSlot" class="chip-slot">
+                <ComposerMenu
+                  :model-value="chat.effort"
+                  class="effort"
+                  :class="{ flash: flashed === 'effort' }"
+                  :icon="icons.Brain"
+                  :label="t('playground.effort')"
+                  :hint="t('playground.effortHelp')"
+                  :text="effortText"
+                  :options="effortOptions"
+                  :disabled="chat.busy"
+                  @update:model-value="(e) => chat.choose({ effort: e ?? '' })"
+                />
+              </span>
+            </Transition>
+            <span ref="toolsSlot" class="chip-slot">
+              <ComposerMenu
+                class="tools-menu"
+                :class="{ flash: flashed === 'tools' }"
+                multiple
+                :values="toolsOn"
+                :icon="icons.Wrench"
+                :label="t('playground.tools')"
+                :hint="t('playground.toolsHelp')"
+                :text="toolsOn.length ? String(toolsOn.length) : t('playground.toolsOff')"
+                :options="toolOptions"
+                :disabled="chat.busy"
+                @update:values="chooseTools"
+              />
+            </span>
+            <Transition :name="TRANSITIONS.chipRow" v-bind="chipRowHooks">
+              <span v-if="toolsOn.length" ref="approvalSlot" class="chip-slot">
+                <ComposerMenu
+                  class="approval-menu"
+                  :class="{ flash: flashed === 'approval' }"
+                  :model-value="approval"
+                  :icon="APPROVAL_ICONS[approval]"
+                  :label="t('settings.approval')"
+                  :hint="t('playground.approvalHint', { mode: t(`settings.approvalModes.${defaultApproval}`) })"
+                  :text="t(`playground.approvalShort.${approval}`)"
+                  :options="approvalOptions"
+                  :danger="approval === 'full'"
+                  @update:model-value="(m) => m && chat.chooseApproval(m as ApprovalMode)"
+                />
+              </span>
+            </Transition>
           </template>
           <template #actions>
-            <Transition :name="TRANSITIONS.chip">
-              <ContextRing
-                v-if="chat.conversation && statusView && statusView.used > 0"
-                :used="statusView.used"
-                :window="statusView.window"
-                :limit="statusView.limit"
-                :estimate="statusView.used_source === 'estimate'"
-                @click="openStatus"
-              />
+            <Transition :name="TRANSITIONS.chipRow" v-bind="chipRowHooks">
+              <span v-if="chat.conversation && statusView && statusView.used > 0" class="chip-slot">
+                <ContextRing
+                  :used="statusView.used"
+                  :window="statusView.window"
+                  :limit="statusView.limit"
+                  :estimate="statusView.used_source === 'estimate'"
+                  @click="openStatus"
+                />
+              </span>
             </Transition>
           </template>
         </Composer>
@@ -906,6 +924,8 @@ onBeforeUnmount(() => {
 .tray { display: flex; flex-wrap: wrap; gap: var(--app-space-2); padding: var(--app-space-3) var(--app-space-4) 0; }
 .file-input { display: none; }
 .attach, .effort, .tools-menu, .approval-menu { flex: none; }
+/* A chip's own box, which its width opens and eases in (chip-row, useMorphWidth): no padding of its own. */
+.chip-slot { display: inline-flex; flex: none; min-width: 0; }
 /* A chip a slash command just changed glows once. */
 .flash :deep(.face) { animation: chip-flash 0.8s var(--md-sys-motion-easing-standard); }
 @keyframes chip-flash {
