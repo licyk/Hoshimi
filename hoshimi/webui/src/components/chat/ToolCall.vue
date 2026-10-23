@@ -212,7 +212,8 @@ code.detail { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-
 @keyframes tool-spin { to { transform: rotate(360deg); } }
 .chevron { flex: none; transition: transform var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard); }
 .open .chevron { transform: rotate(180deg); }
-.body { display: flex; flex-direction: column; gap: var(--app-space-2); padding: 0 var(--app-space-3) var(--app-space-3); }
+/* What it asked and what came back stand a step under the line, as far apart as from each other. */
+.body { display: flex; flex-direction: column; gap: var(--app-space-2); padding: var(--app-space-2) var(--app-space-3) var(--app-space-3); }
 /* Commands, patches and output wrap rather than scroll sideways; long output scrolls down. */
 .block {
   margin: 0; padding: var(--app-space-2) var(--app-space-3); border-radius: var(--md-sys-shape-corner-small);

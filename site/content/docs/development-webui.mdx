@@ -107,7 +107,7 @@ t('settings.listeningOn', { address: '127.0.0.1:10600' });
 - **共享组件**：页面和组合组件从 `@/ui` 取用共享组件，不重新设定它们的样式（`ui/index.ts` 的约定）。页面的骨架是一行 `Toolbar`，下面是一列 `PageSection`；页面按内容区的宽度调整布局（`@container app-content`）。可能无限增长的列表放在 `ScrollArea` 或 `DataTable` 里（`DataTable` 可排序，超过 200 行时只渲染可见部分）。渠道页面是 `ListDetail` 布局。
 - **选择**：从少数几项中选一项（列表筛选、报表范围）用 `SegmentedControl`，放不下时变成下拉选择；日期用 `DatePicker`。
 - **图层**：浮在页面上的东西（对话框、侧边面板、菜单、打开的选择器）都通过 `ui/layers.ts` 叠放：后打开的画在上面；<kbd>Esc</kbd> 和点击外部只关闭最上层；模态层打开时，页面和它下面的层都设为 `inert`；层关闭后把焦点还给打开它的元素。
-- **动效**：页面之间用 View Transitions 淡入淡出；标签页和筛选沿共享的水平轴滑动（`AxisPanes`）；列表-详情的详情区在条目之间纵向移动（`shared-axis-y`）；一个视图替换另一个时淡入淡出（`FadeSwap`）；列表项使用 `list` 动效。**设置 › 外观 › 动画**（或系统的“减少动态效果”）把所有过渡换成简短的淡入淡出。
+- **动效**：页面之间用 View Transitions 淡入淡出；标签页和筛选沿共享的水平轴滑动（`AxisPanes`）；列表-详情的详情区在条目之间纵向移动（`shared-axis-y`）；一个视图替换另一个时淡入淡出（`FadeSwap`），Playground 中一个对话替换另一个时也是如此；切换 Playground 中某条消息的版本时，该消息及其后的内容沿水平轴滑动（`components/chat/VersionPanes.vue`，基于 `AxisPanes`），上方的内容保持不动；列表项使用 `list` 动效。**设置 › 外观 › 动画**（或系统的“减少动态效果”）把所有过渡换成简短的淡入淡出。
 
 ## 布局规则
 

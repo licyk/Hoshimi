@@ -221,6 +221,9 @@ describe('Playground chat', () => {
     await answer('second reply');
     expect(turns(wrapper)).toEqual(['Q: hello', 'A: second reply']);
     expect(wrapper.find('.assistant-message .versions').text()).toContain('2 / 2');
+    // The reply stands in a pane of its own that slides between its versions; the question above stays put.
+    expect(wrapper.find('.version-panes .pane .assistant-message').exists()).toBe(true);
+    expect(wrapper.find('.version-panes .user-message').exists()).toBe(false);
     // No separate "Try again with…": switch the model in the composer, then Try again.
     expect(wrapper.find('.assistant-message .retry-with').exists()).toBe(false);
     await wrapper.find('.composer .model button').trigger('click');
@@ -519,6 +522,29 @@ describe('Playground chat', () => {
     expect(wrapper.find('.composer').text()).toContain('other/model');
     await ask(wrapper, 'more');
     expect(calls('POST', /\/messages$/)[0]).toMatchObject({ path: '/conversations/old/messages', body: { parent_id: 'o2', content: 'more', model: 'other/model' } });
+    wrapper.unmount();
+  });
+
+  it('keeps the thread blank while it looks for the chat open last, and greets once there is none', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    state.route.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input instanceof Request ? input.url : input).includes('/session')) await held;
+      return handle(input, init);
+    });
+    const { wrapper } = await openPlayground();
+    expect(wrapper.find('.greeting').exists()).toBe(false);
+    release();
+    await flushPromises();
+    expect(wrapper.find('.greeting').text()).toContain('What can I help with?');
+    wrapper.unmount();
+  });
+
+  it('opens on a phone with the chat list put away, never standing beside the chat first', async () => {
+    vi.stubGlobal('innerWidth', 400);
+    const { wrapper } = await openPlayground();
+    expect(wrapper.find('.sidebar').exists()).toBe(false);
+    expect(wrapper.find('.chat-header .list-toggle').attributes('aria-expanded')).toBe('false');
     wrapper.unmount();
   });
 

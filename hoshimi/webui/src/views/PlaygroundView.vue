@@ -15,9 +15,10 @@ import ContextRing from '@/components/chat/ContextRing.vue';
 import { find, parseDraft, unavailable, type SlashContext, type SlashId, type SlashPage } from '@/components/chat/slash/commands';
 import SlashMenu from '@/components/chat/SlashMenu.vue';
 import UserMessage from '@/components/chat/UserMessage.vue';
+import VersionPanes from '@/components/chat/VersionPanes.vue';
 import { useI18n } from '@/i18n';
 import { isLocal, stepsOf, useChatStore } from '@/stores/chat';
-import { AppButton, AppDialog, AppIcon, AppMenu, ChipButton, Composer, ComposerMenu, ConfirmDialog, EmptyState, IconButton, SideSheet, TRANSITIONS, TextField, icons, useSnackbar } from '@/ui';
+import { AppButton, AppDialog, AppIcon, AppMenu, ChipButton, Composer, ComposerMenu, ConfirmDialog, EmptyState, FadeSwap, IconButton, SideSheet, TRANSITIONS, TextField, icons, useSnackbar } from '@/ui';
 import { useElementHeight } from '@/ui/useElementHeight';
 import { useElementWidth } from '@/ui/useElementWidth';
 
@@ -124,7 +125,8 @@ async function approve(step: ToolStep, decision: ApprovalDecision) {
 
 // -- the layout ----------------------------------------------------------------
 const root = ref<HTMLElement | null>(null);
-const width = useElementWidth(root, 1280);
+// The page is never wider than the window: a phone starts without the sidebar rather than dropping it.
+const width = useElementWidth(root, window.innerWidth);
 /** Room for the sidebar beside the chat; on a narrower page it is a drawer. */
 const wide = computed(() => width.value >= 900);
 /** A phone's width: a long menu stands centred over the composer rather than over its button. */
@@ -149,6 +151,12 @@ const drawerOpen = ref(false);
 /** The chat list: the panel beside the chat where there is room, the drawer where there is not. */
 const listOpen = computed(() => (wide.value ? sidebarOpen.value : drawerOpen.value));
 const toggleList = () => (wide.value ? (sidebarOpen.value = !sidebarOpen.value) : (drawerOpen.value = !drawerOpen.value));
+/**
+ * Until the page has been laid out, its width is a guess (the window's, the rail not taken out): the
+ * sidebar takes its place without sliding, so it never slides away the moment the page appears.
+ */
+const laidOut = ref(false);
+onMounted(() => requestAnimationFrame(() => (laidOut.value = true)));
 
 // -- the thread ------------------------------------------------------------------
 const scroller = ref<HTMLElement | null>(null);
@@ -528,13 +536,18 @@ const checkpointStep = (m: MessageView) => (m.steps?.[0] ?? { type: 'compaction'
 
 // -- coming back, and leaving ---------------------------------------------------------
 // The chat open last comes back when the page first opens, unless it was opened to try one model.
+// While it is on its way the thread stays blank rather than greeting a new chat it is not, and it
+// fades in once it comes (or the greeting does, when there was none).
+const restoring = ref(!openedForModel && !chat.conversation);
 onMounted(async () => {
-  if (openedForModel || chat.conversation) return;
+  if (!restoring.value) return;
   try {
     const { conversation_id } = await conversationsApi.session();
     if (conversation_id && !chat.conversation && !chat.path.length) await chat.open(conversation_id);
   } catch {
     /* nothing to come back to */
+  } finally {
+    restoring.value = false;
   }
 });
 function onKey(e: KeyboardEvent) {
@@ -554,7 +567,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="root" class="playground" :class="{ empty, wide }">
-    <Transition name="chat-sidebar">
+    <Transition name="chat-sidebar" :css="laidOut">
       <aside v-if="wide && sidebarOpen" class="sidebar">
         <ChatSidebar :current="chat.conversation?.id ?? null" @select="select" @act="act" />
       </aside>
@@ -594,54 +607,60 @@ onBeforeUnmount(() => {
           <p v-if="chat.temporary" class="temporary-note type-body-medium" role="note">
             <AppIcon :icon="icons.MessageCircleDashed" :size="18" />{{ t('playground.temporaryText') }}
           </p>
-          <EmptyState
-            v-if="empty"
-            class="greeting"
-            :icon="icons.Sparkles"
-            :title="models.data.value?.data.length || models.isFetching.value ? t('playground.empty') : t('playground.noModels')"
-            :text="models.data.value?.data.length || models.isFetching.value ? '' : t('playground.noModelsText')"
-          />
-          <template v-for="(m, i) in chat.path" :key="m.id">
-            <UserMessage
-              v-if="m.role === 'user'"
-              :message="m"
-              v-bind="versionsOf(m)"
-              :editing="editingId === m.id"
-              :busy="chat.busy"
-              :local="isLocal(m.id)"
-              @copy="copy(m.content)"
-              @edit-start="editingId = m.id"
-              @edit-cancel="editingId = null"
-              @edit-submit="(content, attachments) => submitEdit(m, content, attachments)"
-              @previous="step(m, -1)"
-              @next="step(m, 1)"
+          <!-- One conversation replaced by another, or by the greeting, fades through. -->
+          <FadeSwap>
+            <div v-if="!empty" :key="chat.conversation?.id ?? ''" class="conversation">
+              <VersionPanes v-slot="{ message: m, index: i }" :path="chat.path" :siblings="chat.siblings">
+                <UserMessage
+                  v-if="m.role === 'user'"
+                  :message="m"
+                  v-bind="versionsOf(m)"
+                  :editing="editingId === m.id"
+                  :busy="chat.busy"
+                  :local="isLocal(m.id)"
+                  @copy="copy(m.content)"
+                  @edit-start="editingId = m.id"
+                  @edit-cancel="editingId = null"
+                  @edit-submit="(content, attachments) => submitEdit(m, content, attachments)"
+                  @previous="step(m, -1)"
+                  @next="step(m, 1)"
+                />
+                <CompactionMarker v-else-if="m.role === 'checkpoint'" :step="checkpointStep(m)" :settled="m.status !== 'streaming'" />
+                <AssistantMessage
+                  v-else
+                  :message="m"
+                  :started-at="m.status === 'streaming' ? chat.startedAt : 0"
+                  v-bind="versionsOf(m)"
+                  :busy="chat.busy"
+                  :last="i === chat.path.length - 1"
+                  :stage="chat.stage"
+                  :local="isLocal(m.id)"
+                  :temporary="chat.temporary"
+                  @copy="copy(m.content)"
+                  @copied="snackbar.show(t('common.copied'))"
+                  @copy-failed="snackbar.error(t('common.error'))"
+                  @retry="retry(m)"
+                  @branch="branch(m)"
+                  @copy-request="copyRequest(m)"
+                  @previous="step(m, -1)"
+                  @next="step(m, 1)"
+                  @approve="approve"
+                />
+              </VersionPanes>
+              <div v-for="q in chat.queued" :key="q.id" class="queued" role="status">
+                <p class="bubble type-body-large">{{ q.text }}</p>
+                <span class="type-body-small muted">{{ t('playground.steerQueued') }}</span>
+              </div>
+            </div>
+            <EmptyState
+              v-else-if="!restoring"
+              key="greeting"
+              class="greeting"
+              :icon="icons.Sparkles"
+              :title="models.data.value?.data.length || models.isFetching.value ? t('playground.empty') : t('playground.noModels')"
+              :text="models.data.value?.data.length || models.isFetching.value ? '' : t('playground.noModelsText')"
             />
-            <CompactionMarker v-else-if="m.role === 'checkpoint'" :step="checkpointStep(m)" :settled="m.status !== 'streaming'" />
-            <AssistantMessage
-              v-else
-              :message="m"
-              :started-at="m.status === 'streaming' ? chat.startedAt : 0"
-              v-bind="versionsOf(m)"
-              :busy="chat.busy"
-              :last="i === chat.path.length - 1"
-              :stage="chat.stage"
-              :local="isLocal(m.id)"
-              :temporary="chat.temporary"
-              @copy="copy(m.content)"
-              @copied="snackbar.show(t('common.copied'))"
-              @copy-failed="snackbar.error(t('common.error'))"
-              @retry="retry(m)"
-              @branch="branch(m)"
-              @copy-request="copyRequest(m)"
-              @previous="step(m, -1)"
-              @next="step(m, 1)"
-              @approve="approve"
-            />
-          </template>
-          <div v-for="q in chat.queued" :key="q.id" class="queued" role="status">
-            <p class="bubble type-body-large">{{ q.text }}</p>
-            <span class="type-body-small muted">{{ t('playground.steerQueued') }}</span>
-          </div>
+          </FadeSwap>
         </div>
       </div>
 
@@ -855,7 +874,8 @@ onBeforeUnmount(() => {
 .column { display: flex; flex-direction: column; gap: var(--app-space-4); width: min(100%, var(--column)); margin: 0 auto; padding: var(--app-space-2) 0 var(--app-space-6); }
 /* The greeting sits on the composer, the two centred together as one block. */
 .empty .column { flex: 1; justify-content: flex-end; padding-bottom: var(--app-space-4); }
-.greeting { flex: none; }
+/* A long conversation fades in from its foot, where it opens: the part in view does not drift. */
+.conversation { display: flex; flex-direction: column; gap: var(--app-space-4); min-width: 0; transform-origin: 50% 100%; }
 .temporary-note {
   display: flex; align-items: center; gap: var(--app-space-2); margin: 0; padding: var(--app-space-2) var(--app-space-3);
   border-radius: var(--md-sys-shape-corner-medium); background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container);
