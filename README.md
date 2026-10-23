@@ -1,3 +1,5 @@
+<div align="center">
+
 # Hoshimi
 
 <p align="center">
@@ -27,6 +29,8 @@
 [English](https://github.com/licyk/Hoshimi/blob/main/README.md) | [简体中文](https://github.com/licyk/Hoshimi/blob/main/README.zh-CN.md)
 
 **[Website](https://hoshimi-dev.netlify.app)** · **[Documentation](https://hoshimi-dev.netlify.app/docs)**
+
+</div>
 
 An OpenAI- and Anthropic-compatible gateway connecting free model stations,
 cloud services and local models through one API and Web UI.

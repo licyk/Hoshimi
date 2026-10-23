@@ -1,3 +1,5 @@
+<div align="center">
+
 # Hoshimi
 
 <p align="center">
@@ -27,6 +29,8 @@
 [English](https://github.com/licyk/Hoshimi/blob/main/README.md) | [简体中文](https://github.com/licyk/Hoshimi/blob/main/README.zh-CN.md)
 
 **[官网](https://hoshimi-dev.netlify.app)** · **[文档](https://hoshimi-dev.netlify.app/docs)**
+
+</div>
 
 探索星辰，连接不同的模型。
 
