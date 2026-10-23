@@ -92,6 +92,8 @@ describe('scrolling areas', () => {
   it.each([
     ['ui/Markdown.vue', '<pre class="app-scroll app-scroll-x'],
     ['ui/Markdown.vue', '<div class="table app-scroll app-scroll-x'],
+    ['ui/Markdown.vue', '<div class="diagram app-scroll app-scroll-x'],
+    ['ui/markdownMath.ts', '<div class="math-block app-scroll app-scroll-x'],
     ['ui/Stepper.vue', 'class="stepper app-scroll app-scroll-x'],
   ])('%s scrolls %s sideways on its own', (file, marker) => {
     expect(readFileSync(join(SRC, file), 'utf8')).toContain(marker);

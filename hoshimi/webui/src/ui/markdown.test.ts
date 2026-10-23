@@ -1,14 +1,34 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { defineComponent, h } from 'vue';
 import Markdown, { COPIED_MS, renderMarkdown } from '@/ui/Markdown.vue';
+import { MARKDOWN_CONTEXT, allowedMedia, blockModes, type RemoteMedia } from '@/ui/markdownRich';
+
+// Mermaid itself is large and draws with a real layout engine: here it answers with a fixed drawing.
+const mermaid = vi.hoisted(() => ({
+  initialize: vi.fn(),
+  render: vi.fn(async (_id: string, source: string) => {
+    if (source.includes('broken')) throw new Error('Parse error on line 1\nmore');
+    return { svg: `<svg viewBox="0 0 10 10"><text>${source.length}</text></svg>` };
+  }),
+}));
+vi.mock('mermaid', () => ({ default: mermaid }));
 
 const render = (source: string) => mount(Markdown, { props: { source, copyLabel: 'Copy code', copiedLabel: 'Copied' } });
+/** As a page that chose how remote media loads renders it. */
+const withMedia = (source: string, remoteMedia: RemoteMedia) =>
+  mount(
+    defineComponent({ setup: () => () => h(Markdown, { source, copyLabel: 'Copy code', copiedLabel: 'Copied' }) }),
+    { global: { provide: { [MARKDOWN_CONTEXT as symbol]: { remoteMedia: () => remoteMedia, labels: () => undefined } } } },
+  );
 const clipboard = (writeText: (text: string) => Promise<void>) => vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
 
 describe('Markdown', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    allowedMedia.clear();
+    blockModes.clear();
   });
 
   it('renders the usual blocks and inline marks', () => {
@@ -101,4 +121,119 @@ describe('Markdown', () => {
     expect(links.map((a) => a.attributes('href'))).toEqual(['https://example.com/docs', 'https://example.org']);
     expect(links.every((a) => a.attributes('target') === '_blank' && a.attributes('rel') === 'noopener noreferrer')).toBe(true);
   });
+  it('renders block by block, so what is above the block being written stays as it was', async () => {
+    const w = render('# Title\n\nfirst');
+    const heading = w.find('h1').element;
+    await w.setProps({ source: '# Title\n\nfirst and more' });
+    expect(w.find('h1').element).toBe(heading);
+    expect(w.findAll('.md-block')).toHaveLength(2);
+  });
+});
+
+describe('Markdown math', () => {
+  it('typesets TeX between each kind of mark, in a line and set apart', () => {
+    const w = render('Inline $x^2$ and \\(y_1\\).\n\n$$\n\\frac{a}{b}\n$$\n\n\\[\nE = mc^2\n\\]');
+    expect(w.findAll('p .katex')).toHaveLength(2);
+    expect(w.findAll('.math-block.app-scroll.app-scroll-x .katex-display')).toHaveLength(2);
+    expect(w.find('.math-block').text()).toContain('a');
+  });
+
+  it('leaves money as money, and math still being written as text', () => {
+    expect(render('It costs $5 and $10, or $5-$10.').find('.katex').exists()).toBe(false);
+    const open = render('$$\n\\frac{a}{b}');
+    expect(open.find('.katex').exists()).toBe(false);
+    expect(open.text()).toContain('$$');
+  });
+
+  it('keeps markdown out of a formula, and shows TeX it cannot read as code', () => {
+    const w = render('$a*b*c$ and $\\frac{$');
+    expect(w.find('em').exists()).toBe(false);
+    expect(w.find('code.math-error').exists()).toBe(true);
+  });
+});
+
+describe('Markdown media', () => {
+  afterEach(() => allowedMedia.clear());
+
+  it('asks before loading an image from another site, naming the site, and loads it when pressed', async () => {
+    const w = render('![a cat](https://img.example.com/cat.png)');
+    expect(w.find('img').exists()).toBe(false);
+    const gate = w.find('button.media-gate');
+    expect(gate.text()).toBe('Load image from img.example.com');
+    await gate.trigger('click');
+    const view = w.find('button.media-view');
+    expect(view.attributes()).toMatchObject({ 'data-view': 'https://img.example.com/cat.png', 'data-alt': 'a cat', 'aria-label': 'Open image: a cat' });
+    expect(view.find('img').attributes()).toMatchObject({ src: 'https://img.example.com/cat.png', alt: 'a cat', loading: 'lazy', referrerpolicy: 'no-referrer' });
+  });
+
+  it('loads at once what the reply holds itself, or anything when the reader chose so', () => {
+    const png = 'data:image/png;base64,iVBORw0KGgo=';
+    expect(render(`![dot](${png})`).find('.media-view img').attributes('src')).toBe(png);
+    const w = withMedia('![clip](https://cdn.example.com/a.mp4) ![song](https://cdn.example.com/a.mp3) ![pic](https://cdn.example.com/a.webp)', 'always');
+    expect(w.find('video').attributes()).toMatchObject({ src: 'https://cdn.example.com/a.mp4', controls: '', preload: 'metadata' });
+    expect(w.find('audio').attributes('src')).toBe('https://cdn.example.com/a.mp3');
+    expect(w.find('.media-view img').exists()).toBe(true);
+  });
+
+  it('names the kind of media waiting, and keeps an image inside a link the link’s', () => {
+    expect(render('![clip](https://cdn.example.com/a.webm)').find('.media-gate').text()).toBe('Load video from cdn.example.com');
+    const w = withMedia('[![logo](https://example.com/l.png)](https://example.com)', 'always');
+    expect(w.find('a > img').exists()).toBe(true);
+    expect(w.find('.media-view').exists()).toBe(false);
+  });
+});
+
+describe('Markdown diagrams and previews', () => {
+  afterEach(() => blockModes.clear());
+
+  it('draws a closed mermaid block, keeps its code a press away, and leaves one being written as code', async () => {
+    const w = render('```mermaid\ngraph TD; A-->B\n```');
+    expect(w.find('.diagram.pending').exists()).toBe(true);
+    await flushPromises();
+    await flushPromises();
+    expect(mermaid.render).toHaveBeenCalledWith(expect.stringMatching(/^hoshimi-mermaid-/), 'graph TD; A-->B\n');
+    expect(mermaid.initialize).toHaveBeenCalledWith(expect.objectContaining({ securityLevel: 'strict', htmlLabels: false }));
+    expect(w.find('.diagram-view svg').exists()).toBe(true);
+    // As an image the drawing takes its viewBox's size: Mermaid states only a share of its box.
+    expect(decodeURIComponent(w.find('.diagram-view').attributes('data-view')!)).toContain('<svg width="10" height="10" viewBox="0 0 10 10">');
+    expect(w.find('pre').attributes('hidden')).toBeDefined();
+    const toggle = w.find('.code-toggle');
+    expect(toggle.text()).toBe('Code');
+    await toggle.trigger('click');
+    expect(w.find('pre').attributes('hidden')).toBeUndefined();
+    expect(w.find('.diagram-view').exists()).toBe(false);
+    expect(w.find('.code-toggle').text()).toBe('Diagram');
+
+    const writing = render('```mermaid\ngraph TD; A-->');
+    expect(writing.find('.code-toggle').exists()).toBe(false);
+    expect(writing.find('pre').attributes('hidden')).toBeUndefined();
+  });
+
+  it('says why a diagram could not be drawn, under its code', async () => {
+    const w = render('```mermaid\nbroken diagram\n```');
+    await flushPromises();
+    await flushPromises();
+    expect(w.find('.diagram-error').text()).toBe('Couldn’t draw this diagram: Parse error on line 1');
+    expect(w.find('pre').attributes('hidden')).toBeUndefined();
+  });
+
+  it('shows an SVG block as an image, where its scripts never run', () => {
+    const w = render('```svg\n<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script><circle r="4"/></svg>\n```');
+    expect(w.find('script').exists()).toBe(false);
+    expect(w.find('.svg-figure img').attributes('src')).toMatch(/^data:image\/svg\+xml;charset=utf-8,%3Csvg/);
+    expect(w.find('.svg-figure .media-view').attributes('data-view')).toBe(w.find('.svg-figure img').attributes('src'));
+  });
+
+  it('previews an HTML block only when asked, in a frame with no origin and no network', async () => {
+    const w = render('```html\n<h1>Hi</h1><script>document.title = 1</script>\n```');
+    expect(w.find('iframe').exists()).toBe(false);
+    expect(w.find('h1').exists()).toBe(false);
+    await w.find('.code-toggle').trigger('click');
+    const frame = w.find('iframe.html-preview');
+    expect(frame.attributes('sandbox')).toBe('allow-scripts');
+    expect(frame.attributes('srcdoc')).toContain("default-src 'none'");
+    expect(frame.attributes('srcdoc')).toContain('<h1>Hi</h1>');
+    expect(w.find('pre').attributes('hidden')).toBeDefined();
+  });
+
 });

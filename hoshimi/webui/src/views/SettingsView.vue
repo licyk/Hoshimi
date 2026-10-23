@@ -120,6 +120,7 @@ const contrasts = computed(() => [
 ]);
 const contrast = computed({ get: () => String(prefs.prefs.contrast), set: (v: string) => (prefs.prefs.contrast = Number(v)) });
 const motions = computed(() => (['system', 'reduced'] as const).map((v) => ({ value: v, label: t(`settings.motions.${v}`) })));
+const remoteMediaModes = computed(() => (['ask', 'always'] as const).map((v) => ({ value: v, label: t(`settings.remoteMediaModes.${v}`) })));
 
 // About
 const openDocs = () => window.open(`${BASE_URL}/docs`, '_blank', 'noopener');
@@ -324,6 +325,13 @@ async function copy(text: string) {
               <span class="type-body-small muted">{{ t('settings.motionHelp') }}</span>
             </span>
             <SegmentedButton v-model="prefs.prefs.motion" :options="motions" />
+          </div>
+          <div class="field-row">
+            <span class="field-text">
+              <span class="type-body-large">{{ t('settings.remoteMedia') }}</span>
+              <span class="type-body-small muted">{{ t('settings.remoteMediaHelp') }}</span>
+            </span>
+            <SegmentedButton v-model="prefs.prefs.remoteMedia" :options="remoteMediaModes" />
           </div>
         </PageSection>
       </div>

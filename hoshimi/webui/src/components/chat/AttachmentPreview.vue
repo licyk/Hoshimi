@@ -7,7 +7,7 @@ import { AppIcon, ProgressCircle, icons } from '@/ui';
 
 /**
  * One attachment, as a thumbnail (an image) or a card (a file: its name, and its type and size). An
- * image opens at full size in a new tab. In the composer it can be taken back (``remove``) and shows
+ * image opens in the page's image viewer (``data-view``: the page catches the press). In the composer it can be taken back (``remove``) and shows
  * that it is still uploading.
  */
 const props = defineProps<{
@@ -37,12 +37,11 @@ const type = computed(() => {
   const ext = props.name.includes('.') ? props.name.slice(props.name.lastIndexOf('.') + 1).toUpperCase() : '';
   return props.mime === 'application/pdf' ? 'PDF' : ext || t('playground.attach');
 });
-const open = () => src.value && window.open(src.value, '_blank', 'noopener');
 </script>
 
 <template>
   <div class="attachment" :class="kind">
-    <button v-if="kind === 'image'" type="button" class="thumb" :aria-label="`${t('playground.openImage')}: ${name}`" :title="name" @click="open">
+    <button v-if="kind === 'image'" type="button" class="thumb" :data-view="src || undefined" :data-alt="name" :aria-label="`${t('playground.openImage')}: ${name}`" :title="name">
       <img v-if="src" :src="src" :alt="name" />
     </button>
     <div v-else class="card" :title="name">

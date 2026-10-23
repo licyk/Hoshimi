@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, provide, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { BASE_URL } from '@/api/baseUrl';
 import { conversationsApi, rememberAttachment, useRefreshConversations } from '@/api/conversations';
@@ -18,7 +18,9 @@ import UserMessage from '@/components/chat/UserMessage.vue';
 import VersionPanes from '@/components/chat/VersionPanes.vue';
 import { useI18n } from '@/i18n';
 import { isLocal, stepsOf, useChatStore } from '@/stores/chat';
-import { AppButton, AppDialog, AppIcon, AppMenu, ChipButton, Composer, ComposerMenu, ConfirmDialog, EmptyState, FadeSwap, IconButton, SideSheet, TRANSITIONS, TextField, icons, useSnackbar } from '@/ui';
+import { usePreferencesStore } from '@/stores/preferences';
+import { AppButton, AppDialog, AppIcon, AppMenu, ChipButton, Composer, ComposerMenu, ConfirmDialog, EmptyState, FadeSwap, IconButton, ImageViewer, SideSheet, TRANSITIONS, TextField, icons, useImageViewer, useSnackbar } from '@/ui';
+import { MARKDOWN_CONTEXT, type MarkdownLabels } from '@/ui/markdownRich';
 import { useElementHeight } from '@/ui/useElementHeight';
 import { useElementWidth } from '@/ui/useElementWidth';
 
@@ -157,6 +159,21 @@ const toggleList = () => (wide.value ? (sidebarOpen.value = !sidebarOpen.value) 
  */
 const laidOut = ref(false);
 onMounted(() => requestAnimationFrame(() => (laidOut.value = true)));
+
+// -- what replies show beyond text, and the image viewer ----------------------------------
+// Replies render math, diagrams, media and HTML previews (``Markdown``); media on another site waits
+// for a press unless Settings say to always load it. Any image here (an attachment, an image in a
+// reply, a drawn diagram) opens in the viewer, with the others to move between.
+const prefs = usePreferencesStore();
+const MEDIA_KEYS = ['loadImage', 'loadVideo', 'loadAudio', 'code', 'diagram', 'image', 'preview', 'drawing', 'diagramFailed', 'previewTitle'] as const;
+const markdownLabels = computed(
+  () => ({ openImage: t('playground.openImage'), ...Object.fromEntries(MEDIA_KEYS.map((k) => [k, t(`playground.media.${k}`)])) }) as MarkdownLabels,
+);
+provide(MARKDOWN_CONTEXT, { remoteMedia: () => prefs.prefs.remoteMedia, labels: () => markdownLabels.value });
+const main = ref<HTMLElement | null>(null);
+const viewer = useImageViewer(() => main.value);
+const VIEWER_KEYS = ['title', 'previous', 'next', 'zoomIn', 'zoomOut', 'resetZoom', 'download', 'openOriginal', 'counter', 'failed'] as const;
+const viewerLabels = computed(() => ({ close: t('common.close'), ...Object.fromEntries(VIEWER_KEYS.map((k) => [k, t(`playground.viewer.${k}`)])) }));
 
 // -- the thread ------------------------------------------------------------------
 const scroller = ref<HTMLElement | null>(null);
@@ -573,7 +590,7 @@ onBeforeUnmount(() => {
       </aside>
     </Transition>
 
-    <div class="main" @dragenter.prevent="dragging = true" @dragover.prevent @dragleave.self="dragging = false" @drop.prevent="onDrop">
+    <div ref="main" class="main" @click="viewer.onClick" @dragenter.prevent="dragging = true" @dragover.prevent @dragleave.self="dragging = false" @drop.prevent="onDrop">
       <header class="chat-header">
         <button
           type="button"
@@ -808,6 +825,7 @@ onBeforeUnmount(() => {
     <SideSheet v-if="!wide" v-model:open="drawerOpen" side="start" :title="t('playground.chats')" :close-label="t('common.close')">
       <ChatSidebar :current="chat.conversation?.id ?? null" @select="select" @act="act" />
     </SideSheet>
+    <ImageViewer v-model:open="viewer.open.value" v-model:index="viewer.index.value" :images="viewer.images.value" :from-rect="viewer.fromRect.value" :labels="viewerLabels" />
     <AppDialog v-model:open="renameOpen" :title="t('playground.renameTitle')" width="small">
       <TextField v-model="renameText" :label="t('playground.titleLabel')" @enter="saveRename" />
       <template #actions>

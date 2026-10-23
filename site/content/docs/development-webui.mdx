@@ -14,7 +14,7 @@ Web UI 位于 `hoshimi/webui/`，是一个 Vue 3 + Vite + TypeScript 应用，�
 | 组件 | `@material/web`（`md-*` 自定义元素）、`@lucide/vue` 图标、Roboto Flex 字体 |
 | 颜色 | `@material/material-color-utilities` |
 | 数据 | `@tanstack/vue-query`、`openapi-fetch` |
-| 内容 | markdown-it、highlight.js、pdfjs-dist（读取 PDF 附件） |
+| 内容 | markdown-it、highlight.js、KaTeX（数学公式）、Mermaid（图表，首次用到时加载）、pdfjs-dist（读取 PDF 附件） |
 | 测试 | Vitest、happy-dom、`@vue/test-utils`、vue-tsc |
 
 `package.json` 的脚本（在 `hoshimi/webui` 中用 `bun run <脚本>` 运行，或通过 `scripts/dev.py`）：
@@ -106,6 +106,7 @@ t('settings.listeningOn', { address: '127.0.0.1:10600' });
 
 - **共享组件**：页面和组合组件从 `@/ui` 取用共享组件，不重新设定它们的样式（`ui/index.ts` 的约定）。页面的骨架是一行 `Toolbar`，下面是一列 `PageSection`；页面按内容区的宽度调整布局（`@container app-content`）。可能无限增长的列表放在 `ScrollArea` 或 `DataTable` 里（`DataTable` 可排序，超过 200 行时只渲染可见部分）。渠道页面是 `ListDetail` 布局。
 - **选择**：从少数几项中选一项（列表筛选、报表范围）用 `SegmentedControl`，放不下时变成下拉选择；日期用 `DatePicker`。
+- **回复**：`ui/Markdown.vue` 按块渲染回复（流式输出时只有正在写的块会变，已画好的图表或上方打开的预览不受影响）。模型文本不可信：原始 HTML 保持为文字；数学公式交给不带 `trust` 的 KaTeX；Mermaid 以 `strict` 模式绘制，首次用到时加载（`ui/mermaid.ts`），并按源码和主题缓存；`html` 代码块只在请求时预览，放在 `sandbox="allow-scripts"` 且 CSP 禁止联网的 `iframe` 中；其他网站上的媒体要等用户点击，除非浏览器偏好设置为始终加载（`ui/markdownRich.ts`）。任何标记了 `data-view` 的元素都通过 `useImageViewer` 在 `ImageViewer` 中打开。
 - **图层**：浮在页面上的东西（对话框、侧边面板、菜单、打开的选择器）都通过 `ui/layers.ts` 叠放：后打开的画在上面；<kbd>Esc</kbd> 和点击外部只关闭最上层；模态层打开时，页面和它下面的层都设为 `inert`；层关闭后把焦点还给打开它的元素。
 - **动效**：页面之间用 View Transitions 淡入淡出；标签页和筛选沿共享的水平轴滑动（`AxisPanes`）；列表-详情的详情区在条目之间纵向移动（`shared-axis-y`）；一个视图替换另一个时淡入淡出（`FadeSwap`），Playground 中一个对话替换另一个时也是如此；切换 Playground 中某条消息的版本时，该消息及其后的内容沿水平轴滑动（`components/chat/VersionPanes.vue`，基于 `AxisPanes`），上方的内容保持不动；列表项使用 `list` 动效。**设置 › 外观 › 动画**（或系统的“减少动态效果”）把所有过渡换成简短的淡入淡出。
 
@@ -119,7 +120,7 @@ t('settings.listeningOn', { address: '127.0.0.1:10600' });
 | 模型和用量页面的列表用 `DataTable`，渠道详情的账号列表用 `ScrollArea` | 可能无限增长的列表在自身内部滚动，不把页面拉成无尽的一列 |
 | 任何组件的样式里都不写会滚动的 `overflow: auto` / `scroll`，也不写 `scrollbar-width`、`scrollbar-color`、`scrollbar-gutter`（只有 `ui/NavigationRail.vue` 例外，它有意隐藏滚动条） | 每个滚动区域都通过 `.app-scroll` 滚动，见下文 |
 | `.app-scroll` 纵向滚动、横向裁剪；`.app-scroll.app-scroll-x` 横向滚动、纵向不滚动，纵向滑动交给外层 | 一个区域只朝一个方向滚动 |
-| Markdown 的代码块和表格、`Stepper` 自己横向滚动（`app-scroll app-scroll-x`） | 有意比所在列更宽的内容 |
+| Markdown 的代码块、表格、独立公式和图表，以及 `Stepper`，自己横向滚动（`app-scroll app-scroll-x`） | 有意比所在列更宽的内容 |
 | `tokens.css` 里没有作用于 `.app-scroll` 子元素的规则 | 这类规则会覆盖组件自己的外边距，使页面、菜单项、Playground 的对话列一个接一个地溢出 |
 | `ui/` 里的组件不在根元素上声明 `transition`（`AppCard`、`StackedBarChart` 例外） | 切换面板时由动效系统移动根元素，自己的 `transition` 会覆盖它 |
 | 每个页面的根元素、`AppDialog` 与 `SideSheet` 的 `.body`、`DataTable` 的 `.row`，其 `padding-inline-end` 用到 `var(--app-scroll-lane)` | 滚动条的通道只在末端一侧，末端的内边距要减去它，内容两侧才对称 |

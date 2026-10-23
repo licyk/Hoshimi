@@ -9,6 +9,8 @@ export type LocalePreference = Locale | 'auto';
 const LOCALE_PREFERENCES: LocalePreference[] = ['auto', 'en', 'zh-CN', 'ja'];
 /** ``system`` follows the operating system's reduced-motion setting; ``reduced`` asks for it here. */
 export type MotionPreference = 'system' | 'reduced';
+/** ``ask``: an image or video a reply points to on another site waits for a press; ``always``: it loads. */
+export type RemoteMediaPreference = 'ask' | 'always';
 
 export interface Preferences {
   theme: ThemeMode;
@@ -16,6 +18,7 @@ export interface Preferences {
   contrast: number;
   locale: LocalePreference;
   motion: MotionPreference;
+  remoteMedia: RemoteMediaPreference;
 }
 
 const STORAGE_KEY = 'hoshimi:preferences';
@@ -26,6 +29,7 @@ export const DEFAULTS: Preferences = {
   contrast: 0,
   locale: 'auto',
   motion: 'system',
+  remoteMedia: 'ask',
 };
 
 function readLocal(): Partial<Preferences> {
@@ -41,6 +45,7 @@ function merge(base: Preferences, patch: Partial<Preferences>): Preferences {
   // A locale this build does not know (saved by a newer one, or edited by hand) follows the system.
   if (!LOCALE_PREFERENCES.includes(merged.locale)) merged.locale = 'auto';
   if (merged.motion !== 'reduced') merged.motion = 'system';
+  if (merged.remoteMedia !== 'always') merged.remoteMedia = 'ask';
   return merged;
 }
 

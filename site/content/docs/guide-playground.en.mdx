@@ -119,6 +119,31 @@ Which model describes images is the **Image model** setting. **Automatic** takes
 
 If a model listed as reading images is refused by its station because of the image, the reply is tried once more with descriptions, and a note says so.
 
+## What a reply can show
+
+Replies are Markdown, and the Playground renders more than text:
+
+| In the reply | Shows as |
+| --- | --- |
+| `$…$` or `\(…\)` in a line; `$$…$$` or `\[…\]` on lines of their own | Typeset math (KaTeX). A wide formula scrolls sideways. A lone `$` stays a dollar sign, so "$5 and $10" is not math. TeX that cannot be read shows as code in the error colour |
+| A ` ```mermaid ` block | The diagram, drawn in the interface's colours once the block is complete. **Code** shows its source, **Diagram** the drawing again. A diagram that cannot be drawn shows why, above its code |
+| A ` ```svg ` block | The image. **Code** shows the source |
+| A ` ```html ` block | Its code, with a **Preview** button that shows the page in a frame. The frame runs the page's scripts but cannot reach the network, this interface or its access key |
+| `![description](address)` | The image. An address ending in `.mp4`, `.webm` or `.mov` shows a video player; `.mp3`, `.wav`, `.ogg` and similar an audio player |
+
+Every diagram, SVG and code block keeps its copy button. HTML written directly in a reply (outside a code block) is shown as text.
+
+**Media from other sites.** Loading an image tells the site that serves it you are reading, and the address can carry text from the conversation, so an image, video or audio file a reply points to on another site waits behind a button that names the site ("Load image from example.com"). Media written into the reply itself (a `data:` address) shows at once. To always load media, set **Images and video from other sites** to **Always load** in **Settings › Appearance**.
+
+### The image viewer
+
+Click any image in the chat (an attachment, an image in a reply, a diagram or an SVG) to open it in the viewer:
+
+- **Zoom** with the mouse wheel, a pinch, a double click, or <kbd>+</kbd> and <kbd>-</kbd>; <kbd>0</kbd> or **Fit to window** goes back. Drag to look around while zoomed.
+- **Move** between all the images in the chat with the side buttons, <kbd>←</kbd> and <kbd>→</kbd>, or a swipe.
+- **Download** saves the image; **Open in a new tab** opens it on its own (not offered for images written into the reply, which browsers do not open as pages).
+- <kbd>Esc</kbd> or **Close** closes it.
+
 ## Reasoning
 
 For a model that shows its reasoning, the reply starts with a folded line: **Thinking…** with the time so far while it reasons, then **Thought for** *time* once it answers. Click the line to read the reasoning; it stays as you left it. Models that do not return reasoning have no such line.

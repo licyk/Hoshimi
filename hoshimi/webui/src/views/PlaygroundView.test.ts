@@ -525,6 +525,26 @@ describe('Playground chat', () => {
     wrapper.unmount();
   });
 
+  it('opens an image of a reply in the image viewer, and asks before loading one from another site', async () => {
+    const dot = 'data:image/png;base64,iVBORw0KGgo=';
+    server.conversations.set('pics', {
+      id: 'pics', title: 'Pictures', title_state: 'auto', model: 'test/model', effort: '', archived: false, temporary: false, branched_from: '', created_at: 0, updated_at: 0, current_leaf: 'p2',
+      messages: [
+        { id: 'p1', parent_id: null, role: 'user', content: 'draw', model: '', effort: '', status: 'complete', error: '', notices: [], created_at: 1, attachments: [] },
+        { id: 'p2', parent_id: 'p1', role: 'assistant', content: `Here: ![a dot](${dot})\n\n![remote](https://img.example.com/r.png)`, model: 'test/model', effort: '', status: 'complete', error: '', notices: [], created_at: 2, attachments: [] },
+      ],
+    });
+    server.session = 'pics';
+    const { wrapper } = await openPlayground();
+    expect(wrapper.find('.assistant-message .media-gate').text()).toBe('Load image from img.example.com');
+    await wrapper.find('.assistant-message .media-view').trigger('click');
+    await flushPromises();
+    const viewer = document.body.querySelector('[role="dialog"][aria-label="Image viewer"]');
+    expect(viewer?.querySelector('img.picture')?.getAttribute('src')).toBe(dot);
+    expect(viewer?.textContent).toContain('a dot');
+    wrapper.unmount();
+  });
+
   it('keeps the thread blank while it looks for the chat open last, and greets once there is none', async () => {
     let release!: () => void;
     const held = new Promise<void>((resolve) => (release = resolve));

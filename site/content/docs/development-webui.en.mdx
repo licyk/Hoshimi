@@ -14,7 +14,7 @@ The Web UI lives in `hoshimi/webui/`: a Vue 3 + Vite + TypeScript app following 
 | Components | `@material/web` (`md-*` custom elements), `@lucide/vue` icons, the Roboto Flex font |
 | Colour | `@material/material-color-utilities` |
 | Data | `@tanstack/vue-query`, `openapi-fetch` |
-| Content | markdown-it, highlight.js, pdfjs-dist (reading PDF attachments) |
+| Content | markdown-it, highlight.js, KaTeX (math), Mermaid (diagrams, loaded on first use), pdfjs-dist (reading PDF attachments) |
 | Tests | Vitest, happy-dom, `@vue/test-utils`, vue-tsc |
 
 The `package.json` scripts (run with `bun run <script>` in `hoshimi/webui`, or through `scripts/dev.py`):
@@ -106,6 +106,7 @@ t('settings.listeningOn', { address: '127.0.0.1:10600' });
 
 - **Shared components**: pages and composites take shared components from `@/ui` and do not restyle them (the convention stated in `ui/index.ts`). A page is a `Toolbar` row over one column of `PageSection`s, and adapts to the content area's width (`@container app-content`). A list that can grow without bound sits in a `ScrollArea` or a `DataTable` (sortable, rendering only what is in view past 200 rows). Channels is a `ListDetail` layout.
 - **Choices**: one choice out of a few (a list filter, a report range) is a `SegmentedControl`, which becomes a select where it does not fit; days are picked with `DatePicker`.
+- **Replies**: `ui/Markdown.vue` renders a reply block by block (only the block being written changes as it streams, so a drawn diagram or an open preview above it stays). Model text is untrusted: raw HTML stays text; math goes through KaTeX without `trust`; Mermaid draws in `strict` mode, loaded on first use (`ui/mermaid.ts`) and kept by source and theme; an `html` block previews only on request, in an `iframe` with `sandbox="allow-scripts"` and a CSP that keeps it off the network; media on another site waits for a press unless the browser preference says otherwise (`ui/markdownRich.ts`). Any element marked `data-view` opens in `ImageViewer` through `useImageViewer`.
 - **Layers**: everything that opens over the page (dialogs, sheets, menus, an open picker) stacks through `ui/layers.ts`: what opened later paints above; <kbd>Esc</kbd> and an outside click close the topmost layer alone; while a modal layer is open, the page and every layer under it are `inert`; a closing layer gives focus back to what opened it.
 - **Motion**: navigation fades through with View Transitions; tabs and filters slide along a shared horizontal axis (`AxisPanes`); a list-detail pane moves vertically between items (`shared-axis-y`); one view replacing another fades through (`FadeSwap`), as one Playground chat replacing another does; moving to another version of a Playground turn slides that turn and what follows it along the horizontal axis (`components/chat/VersionPanes.vue`, over `AxisPanes`), keeping what is above in place; list items use the `list` motion. **Settings › Appearance › Motion** (or the system's reduced-motion setting) turns every transition into a short fade.
 
@@ -119,7 +120,7 @@ t('settings.listeningOn', { address: '127.0.0.1:10600' });
 | The Models and Usage lists use `DataTable`; the channel details' account list uses `ScrollArea` | A list that can grow without bound scrolls inside itself instead of stretching the page into an endless column |
 | No component style sets a scrolling `overflow: auto` / `scroll`, nor `scrollbar-width`, `scrollbar-color` or `scrollbar-gutter` (except `ui/NavigationRail.vue`, which hides its scrollbar on purpose) | Every scrolling area scrolls through `.app-scroll`; see below |
 | `.app-scroll` scrolls down and clips sideways; `.app-scroll.app-scroll-x` scrolls sideways, never down, and passes vertical swipes on | An area scrolls in one direction |
-| Markdown's code blocks and tables and the `Stepper` scroll sideways on their own (`app-scroll app-scroll-x`) | Content that is wider than its column on purpose |
+| Markdown's code blocks, tables, display math and diagrams, and the `Stepper`, scroll sideways on their own (`app-scroll app-scroll-x`) | Content that is wider than its column on purpose |
 | `tokens.css` has no rule aimed at the children of `.app-scroll` | Such a rule overrides the components' own margins, and a page, a menu item and the Playground's column overflowed one after another |
 | Components in `ui/` declare no `transition` on their root element (`AppCard` and `StackedBarChart` excepted) | A pane switch moves the root through the motion system, and the component's own `transition` would replace it |
 | Every page's root, the `.body` of `AppDialog` and `SideSheet`, and `DataTable`'s `.row` use `var(--app-scroll-lane)` in `padding-inline-end` | The scrollbar lane is on the end side only, so the end padding takes it out and content sits evenly between both sides |
