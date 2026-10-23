@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import AppIcon from '@/ui/AppIcon.vue';
 import IconButton from '@/ui/IconButton.vue';
 import { ChevronLeft, ChevronRight, Download, ExternalLink, ImageOff, Scan, X, ZoomIn, ZoomOut } from '@/ui/icons';
@@ -11,7 +11,8 @@ import { TRANSITIONS, containerFrom } from '@/ui/motion/transitions';
  * closes it, the page under it is inert, focus goes back to what opened it). The first grows out of
  * ``fromRect`` (the thumbnail pressed), as a dialog grows from its card; the next and previous fade
  * through. Zoom with the wheel, a pinch, a double press or + and -, and drag to look around while
- * zoomed; move between the images with the side buttons, the arrow keys or a swipe. Each can be
+ * zoomed (the image is laid out at the zoomed size rather than scaled, so an SVG, a diagram, is
+ * drawn again sharp at every step); move between the images with the side buttons, the arrow keys or a swipe. Each can be
  * downloaded, or opened by itself in a new tab (not one written into the page: browsers refuse
  * those as pages).
  */
@@ -56,15 +57,26 @@ const MIN = 1;
 const MAX = 8;
 const view = reactive({ scale: 1, x: 0, y: 0 });
 const zoomed = computed(() => view.scale > 1.01);
-const pictureStyle = computed(() => ({ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }));
+const picture = ref<HTMLImageElement | null>(null);
+/** The image's size fitted to the window, measured as zooming starts: zoomed, it is laid out at a multiple of it. */
+const fit = reactive({ width: 0, height: 0 });
+const pictureStyle = computed((): Record<string, string> => {
+  if (!zoomed.value || !fit.width) return { transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` };
+  return {
+    position: 'absolute', left: '50%', top: '50%', width: `${fit.width * view.scale}px`, height: `${fit.height * view.scale}px`, maxWidth: 'none', maxHeight: 'none',
+    transform: `translate(calc(-50% + ${view.x}px), calc(-50% + ${view.y}px))`,
+  };
+});
 const failed = ref(false);
 function reset() {
   Object.assign(view, { scale: 1, x: 0, y: 0 });
 }
-/** Zoom to ``scale`` about a point of the window (its centre by default), which stays where it is. */
+/** Zoom to ``scale`` about a point of the window (the image's centre by default), which stays where it is. */
 function zoomTo(scale: number, at?: { x: number; y: number }) {
   const next = Math.min(MAX, Math.max(MIN, scale));
-  const box = stage.value?.getBoundingClientRect();
+  // Offsets ignore transforms: the fitted size, before any zoom.
+  if (!zoomed.value && picture.value) Object.assign(fit, { width: picture.value.offsetWidth, height: picture.value.offsetHeight });
+  const box = figure.value?.getBoundingClientRect() ?? stage.value?.getBoundingClientRect();
   const px = at && box ? at.x - (box.left + box.width / 2) : 0;
   const py = at && box ? at.y - (box.top + box.height / 2) : 0;
   const ratio = next / view.scale;
@@ -133,6 +145,11 @@ function onKey(e: KeyboardEvent) {
   else return;
   e.preventDefault();
 }
+
+// A window resized while zoomed would leave the fitted size stale: it starts again from fitting.
+const onResize = () => zoomed.value && reset();
+onMounted(() => window.addEventListener('resize', onResize, { passive: true }));
+onBeforeUnmount(() => window.removeEventListener('resize', onResize));
 
 const figure = ref<HTMLElement | null>(null);
 const motionStyle = ref<Record<string, string>>({});
@@ -208,7 +225,7 @@ const openOriginal = () => current.value && window.open(current.value.src, '_bla
           <Transition :name="motion" mode="out-in" appear>
             <div v-if="current" :key="index" ref="figure" class="figure" :style="motionStyle">
               <p v-if="failed" class="failed type-body-medium"><AppIcon :icon="ImageOff" :size="24" />{{ label.failed }}</p>
-              <img v-else class="picture" :src="current.src" :alt="current.alt" :style="pictureStyle" draggable="false" @error="failed = true" />
+              <img v-else ref="picture" class="picture" :src="current.src" :alt="current.alt" :style="pictureStyle" draggable="false" @error="failed = true" />
             </div>
           </Transition>
         </div>
@@ -230,7 +247,8 @@ const openOriginal = () => current.value && window.open(current.value.src, '_bla
 /* The image fits the window under the bar; zoomed, it is dragged about rather than scrolled. */
 .stage { position: relative; display: grid; place-items: center; flex: 1; min-height: 0; overflow: hidden; touch-action: none; cursor: zoom-in; padding: 0 calc(2 * var(--app-space-8)) var(--app-space-6); }
 .stage.zoomed { cursor: grab; }
-.figure { display: grid; place-items: center; max-width: 100%; max-height: 100%; min-height: 0; }
+/* Zoomed, the image leaves the flow and is centred on this box (then of no size) by its own offsets. */
+.figure { position: relative; display: grid; place-items: center; max-width: 100%; max-height: 100%; min-height: 0; }
 .picture {
   display: block; max-width: 100%; max-height: calc(100vh - 96px); max-height: calc(100dvh - 96px); object-fit: contain; user-select: none;
   border-radius: var(--md-sys-shape-corner-small); box-shadow: var(--app-elevation-3); background: var(--md-sys-color-surface-container-lowest);

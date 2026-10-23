@@ -167,7 +167,11 @@ onMounted(() => requestAnimationFrame(() => (laidOut.value = true)));
 const prefs = usePreferencesStore();
 const MEDIA_KEYS = ['loadImage', 'loadVideo', 'loadAudio', 'code', 'diagram', 'image', 'preview', 'drawing', 'diagramFailed', 'previewTitle'] as const;
 const markdownLabels = computed(
-  () => ({ openImage: t('playground.openImage'), ...Object.fromEntries(MEDIA_KEYS.map((k) => [k, t(`playground.media.${k}`)])) }) as MarkdownLabels,
+  () =>
+    ({
+      openImage: t('playground.openImage'), zoomIn: t('playground.viewer.zoomIn'), zoomOut: t('playground.viewer.zoomOut'), resetZoom: t('playground.viewer.resetZoom'),
+      ...Object.fromEntries(MEDIA_KEYS.map((k) => [k, t(`playground.media.${k}`)])),
+    }) as MarkdownLabels,
 );
 provide(MARKDOWN_CONTEXT, { remoteMedia: () => prefs.prefs.remoteMedia, labels: () => markdownLabels.value });
 const main = ref<HTMLElement | null>(null);

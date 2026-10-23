@@ -24,6 +24,9 @@ export interface MarkdownLabels {
   /** ``{reason}`` is the diagram library's own message. */
   diagramFailed: string;
   previewTitle: string;
+  zoomIn: string;
+  zoomOut: string;
+  resetZoom: string;
 }
 
 export const DEFAULT_LABELS: MarkdownLabels = {
@@ -38,6 +41,9 @@ export const DEFAULT_LABELS: MarkdownLabels = {
   drawing: 'Drawing the diagram…',
   diagramFailed: 'Couldn’t draw this diagram: {reason}',
   previewTitle: 'HTML preview',
+  zoomIn: 'Zoom in',
+  zoomOut: 'Zoom out',
+  resetZoom: 'Fit to window',
 };
 
 export interface MarkdownContext {

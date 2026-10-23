@@ -209,6 +209,51 @@ describe('Markdown diagrams and previews', () => {
     expect(writing.find('pre').attributes('hidden')).toBeUndefined();
   });
 
+  it('zooms a drawn diagram in place with its buttons or Ctrl and the wheel, and leaves a plain wheel to the page', async () => {
+    const w = render('```mermaid\ngraph LR; zoom-->me\n```');
+    await flushPromises();
+    await flushPromises();
+    const frame = w.find('.diagram-frame');
+    const svg = () => w.find('.diagram-view svg').element as SVGElement;
+    expect(frame.findAll('[data-zoom]').map((b) => b.attributes('aria-label'))).toEqual(['Zoom out', 'Zoom in', 'Fit to window']);
+    await frame.find('[data-zoom="in"]').trigger('click');
+    expect(svg().style.transform).toBe('translate(0px, 0px) scale(1.5)');
+    expect(frame.classes()).toContain('zoomed');
+    await frame.find('[data-zoom="reset"]').trigger('click');
+    expect(svg().style.transform).toBe('');
+    expect(frame.classes()).not.toContain('zoomed');
+
+    const plain = new WheelEvent('wheel', { deltaY: -50, bubbles: true, cancelable: true });
+    svg().dispatchEvent(plain);
+    expect(plain.defaultPrevented).toBe(false);
+    expect(svg().style.transform).toBe('');
+    const pinch = new WheelEvent('wheel', { deltaY: -50, bubbles: true, cancelable: true });
+    // happy-dom's WheelEvent drops the modifier keys it is given.
+    Object.defineProperty(pinch, 'ctrlKey', { value: true });
+    svg().dispatchEvent(pinch);
+    expect(pinch.defaultPrevented).toBe(true);
+    expect(svg().style.transform).toMatch(/scale\(1\.3/);
+  });
+
+  it('drags a zoomed diagram, and does not take the press that dragged it for a click', async () => {
+    const opened = vi.fn();
+    const w = mount(defineComponent({ setup: () => () => h('div', { onClick: opened }, [h(Markdown, { source: '```mermaid\ngraph LR; drag-->me\n```', copyLabel: 'Copy', copiedLabel: 'Copied' })]) }));
+    await flushPromises();
+    await flushPromises();
+    await w.find('[data-zoom="in"]').trigger('click');
+    opened.mockClear();
+    const view = w.find('.diagram-view');
+    const at = (type: string, x: number) => view.element.dispatchEvent(new PointerEvent(type, { pointerId: 1, clientX: x, clientY: 0, bubbles: true }));
+    at('pointerdown', 0);
+    at('pointermove', 30);
+    at('pointerup', 30);
+    await view.trigger('click');
+    expect((w.find('.diagram-view svg').element as SVGElement).style.transform).toBe('translate(30px, 0px) scale(1.5)');
+    expect(opened).not.toHaveBeenCalled();
+    await view.trigger('click');
+    expect(opened).toHaveBeenCalledTimes(1);
+  });
+
   it('says why a diagram could not be drawn, under its code', async () => {
     const w = render('```mermaid\nbroken diagram\n```');
     await flushPromises();

@@ -32,7 +32,10 @@ import { drawings } from '@/ui/mermaid';
  *   image viewer (any ``[data-view]`` is one: the page catches the click).
  * - **Diagrams**: a ``mermaid`` block is drawn once it is closed (``mermaid.ts``), an ``svg`` block is
  *   shown as an image (its scripts never run), and an ``html`` block offers a preview in a frame with
- *   no origin and no network. Each keeps its code a press away, and its copy button.
+ *   no origin and no network. Each keeps its code a press away, and its copy button. A drawn diagram
+ *   zooms in place (Ctrl or ⌘ with the wheel, a pinch on a trackpad or a screen, or its buttons) and is
+ *   dragged about while zoomed; a plain wheel still scrolls the conversation, and a press that did not
+ *   drag opens it in the viewer.
  *
  * The reply renders block by block: as it streams, only the block being written changes, so a
  * diagram or a preview above it is not drawn again.
@@ -52,6 +55,11 @@ const COPY_ICONS =
   ICON('icon-check', '<path d="M20 6 9 17l-5-5"/>');
 const IMAGE_ICON = ICON('icon-media', '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>');
 const PLAY_ICON = ICON('icon-media', '<polygon points="6 3 20 12 6 21 6 3"/>');
+const ZOOM_ICONS = {
+  in: ICON('', '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/>'),
+  out: ICON('', '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M8 11h6"/>'),
+  reset: ICON('', '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>'),
+};
 /** How long a copy button shows its check. */
 export const COPIED_MS = 1500;
 
@@ -130,7 +138,16 @@ function diagram(source: string, env: Env): Pick<BlockParts, 'body' | 'hideCode'
     return { body: `<div class="diagram pending" data-mermaid="${key}" role="status">${escape(env.labels.drawing)}</div>`, hideCode: true };
   }
   if (drawing.error !== undefined) return { body: `<p class="diagram-error" role="note">${escape(fill(env.labels.diagramFailed, { reason: drawing.error }))}</p>` };
-  return { body: `<div class="diagram app-scroll app-scroll-x app-scroll-auto">${viewButton(svgUrl(drawing.svg!), env.labels.diagram, env, drawing.svg!, 'diagram-view')}</div>`, hideCode: true };
+  const tool = (zoom: keyof typeof ZOOM_ICONS, label: string) =>
+    `<button type="button" class="diagram-tool${zoom === 'reset' ? ' diagram-reset' : ''}" data-zoom="${zoom}" aria-label="${escape(label)}" title="${escape(label)}">${ZOOM_ICONS[zoom]}</button>`;
+  return {
+    body:
+      '<div class="diagram-frame">' +
+      `<div class="diagram-tools">${tool('out', env.labels.zoomOut)}${tool('in', env.labels.zoomIn)}${tool('reset', env.labels.resetZoom)}</div>` +
+      `<div class="diagram app-scroll app-scroll-x app-scroll-auto">${viewButton(svgUrl(drawing.svg!), env.labels.diagram, env, drawing.svg!, 'diagram-view')}</div>` +
+      '</div>',
+    hideCode: true,
+  };
 }
 
 function richBlock(kind: Rich, token: Token, env: Env): string {
@@ -257,8 +274,102 @@ async function refocus(selector: string) {
   root.value?.querySelector<HTMLElement>(selector)?.focus();
 }
 
+// -- a drawn diagram, zoomed and dragged in place ------------------------------------------------ #
+/** How far each diagram is zoomed and moved, by its frame: a frame a render replaces starts afresh. */
+interface Zoom {
+  scale: number;
+  x: number;
+  y: number;
+}
+const zooms = new WeakMap<Element, Zoom>();
+const DIAGRAM_MAX = 6;
+const zoomOf = (frame: Element): Zoom => zooms.get(frame) ?? (zooms.set(frame, { scale: 1, x: 0, y: 0 }), zooms.get(frame)!);
+function paint(frame: HTMLElement, z: Zoom) {
+  const svg = frame.querySelector<SVGElement>('.diagram-view svg');
+  if (svg) svg.style.transform = z.scale === 1 && !z.x && !z.y ? '' : `translate(${z.x}px, ${z.y}px) scale(${z.scale})`;
+  frame.classList.toggle('zoomed', z.scale > 1.01);
+}
+/** Zoom a diagram to ``scale`` about a point of the window (its centre by default), which stays where it is. */
+function zoomDiagram(frame: HTMLElement, scale: number, at?: { x: number; y: number }) {
+  const z = zoomOf(frame);
+  const next = Math.min(DIAGRAM_MAX, Math.max(1, scale));
+  const box = frame.querySelector('.diagram-view svg')?.getBoundingClientRect();
+  // The drawing scales about its centre, so its box's centre less the move is where that centre sits unzoomed.
+  const px = at && box ? at.x - (box.left + box.width / 2 - z.x) : 0;
+  const py = at && box ? at.y - (box.top + box.height / 2 - z.y) : 0;
+  const ratio = next / z.scale;
+  Object.assign(z, next === 1 ? { scale: 1, x: 0, y: 0 } : { scale: next, x: px - (px - z.x) * ratio, y: py - (py - z.y) * ratio });
+  paint(frame, z);
+}
+const frameAt = (target: EventTarget | null) => (target as Element | null)?.closest?.<HTMLElement>('.diagram-frame') ?? null;
+
+/** With Ctrl or ⌘ (a trackpad's pinch sends that too) the wheel zooms a diagram; alone it scrolls the page. */
+function onWheel(event: WheelEvent) {
+  const frame = frameAt(event.target);
+  if (!frame || !(event.ctrlKey || event.metaKey)) return;
+  event.preventDefault();
+  const delta = Math.max(-50, Math.min(50, event.deltaY));
+  zoomDiagram(frame, zoomOf(frame).scale * Math.exp(-delta * 0.006), { x: event.clientX, y: event.clientY });
+}
+
+// Pointers on a diagram: two pinch it; one drags it while it is zoomed. A press that moved is not a click.
+const pointers = new Map<number, { x: number; y: number }>();
+let gesture: { frame: HTMLElement; start: { x: number; y: number }; moved: boolean; pinch: { distance: number; scale: number } | null } | null = null;
+let swallowClick = false;
+const spread = () => {
+  const [a, b] = [...pointers.values()];
+  return Math.hypot(a.x - b.x, a.y - b.y);
+};
+function onPointerDown(event: PointerEvent) {
+  const frame = frameAt(event.target);
+  if (!frame || (event.target as Element).closest('.diagram-tools') || (gesture && gesture.frame !== frame)) return;
+  pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  gesture ??= { frame, start: { x: event.clientX, y: event.clientY }, moved: false, pinch: null };
+  if (pointers.size === 2) gesture.pinch = { distance: spread(), scale: zoomOf(frame).scale };
+  if (pointers.size === 2 || zoomOf(frame).scale > 1.01) frame.setPointerCapture?.(event.pointerId);
+}
+function onPointerMove(event: PointerEvent) {
+  const last = pointers.get(event.pointerId);
+  if (!last || !gesture) return;
+  pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  if (Math.hypot(event.clientX - gesture.start.x, event.clientY - gesture.start.y) > 4) gesture.moved = true;
+  const z = zoomOf(gesture.frame);
+  if (gesture.pinch && pointers.size === 2) {
+    const [a, b] = [...pointers.values()];
+    zoomDiagram(gesture.frame, (gesture.pinch.scale * spread()) / gesture.pinch.distance, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  } else if (z.scale > 1.01 && pointers.size === 1) {
+    z.x += event.clientX - last.x;
+    z.y += event.clientY - last.y;
+    paint(gesture.frame, z);
+  }
+}
+function onPointerUp(event: PointerEvent) {
+  if (!pointers.delete(event.pointerId) || !gesture) return;
+  if (pointers.size < 2) gesture.pinch = null;
+  if (pointers.size) return;
+  // The click that follows a drag or a pinch must not open the viewer; one that never comes is forgotten.
+  if (gesture.moved) {
+    swallowClick = true;
+    setTimeout(() => (swallowClick = false), 0);
+  }
+  gesture = null;
+}
+
 async function onClick(event: MouseEvent) {
   const target = event.target as Element;
+  if (swallowClick) {
+    swallowClick = false;
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  const zoom = target.closest<HTMLElement>('[data-zoom]');
+  const frame = frameAt(zoom);
+  if (zoom && frame) {
+    const scale = zoomOf(frame).scale;
+    zoomDiagram(frame, zoom.dataset.zoom === 'in' ? scale * 1.5 : zoom.dataset.zoom === 'out' ? scale / 1.5 : 1);
+    return;
+  }
   const load = target.closest<HTMLElement>('[data-load]');
   if (load) {
     event.preventDefault();
@@ -294,7 +405,17 @@ function onError(event: Event) {
 
 <template>
   <!-- markdown-it's output, with raw HTML switched off (above): a reply's own tags are shown as text. -->
-  <div ref="root" class="markdown" @click="onClick" @error.capture="onError">
+  <div
+    ref="root"
+    class="markdown"
+    @click="onClick"
+    @error.capture="onError"
+    @wheel="onWheel"
+    @pointerdown="onPointerDown"
+    @pointermove="onPointerMove"
+    @pointerup="onPointerUp"
+    @pointercancel="onPointerUp"
+  >
     <div v-for="(block, i) in blocks" :key="i" class="md-block" v-html="block" />
   </div>
 </template>
@@ -369,7 +490,28 @@ function onError(event: Event) {
 }
 /* The drawing takes the column's width (Mermaid sizes it as a share of its box), up to its own. */
 .markdown :deep(.diagram-view) { display: block; width: 100%; margin: 0 auto; }
-.markdown :deep(.diagram-view svg) { display: block; height: auto; margin: 0 auto; }
+.markdown :deep(.diagram-view svg) { display: block; height: auto; margin: 0 auto; transform-origin: center; }
+/* Zoomed in place: the drawing is clipped to its box (not scrolled) and dragged about; a finger on it
+   scrolls the page until two of them pinch it, or it is zoomed. */
+.markdown :deep(.diagram-frame) { position: relative; }
+.markdown :deep(.diagram-frame .diagram) { touch-action: pan-x pan-y; }
+.markdown :deep(.diagram-frame.zoomed .diagram) { overflow: hidden; touch-action: none; }
+.markdown :deep(.diagram-frame.zoomed .diagram-view) { cursor: grab; }
+.markdown :deep(.diagram-frame.zoomed .diagram-view:active) { cursor: grabbing; }
+.markdown :deep(.diagram-tools) {
+  position: absolute; top: var(--app-space-2); right: var(--app-space-2); z-index: 1; display: flex; gap: 2px; padding: 2px;
+  border-radius: var(--md-sys-shape-corner-full); background: var(--md-sys-color-surface-container-high); box-shadow: var(--app-elevation-1);
+  opacity: 0; transition: opacity var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
+}
+.markdown :deep(.diagram-frame:hover .diagram-tools), .markdown :deep(.diagram-tools:focus-within), .markdown :deep(.diagram-frame.zoomed .diagram-tools) { opacity: 1; }
+@media (hover: none) { .markdown :deep(.diagram-tools) { opacity: 1; } }
+.markdown :deep(.diagram-tool) {
+  display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--md-sys-shape-corner-full);
+  background: transparent; color: var(--md-sys-color-on-surface-variant); cursor: pointer;
+}
+.markdown :deep(.diagram-tool:hover) { background: color-mix(in srgb, currentColor calc(var(--md-sys-state-hover-state-layer-opacity) * 100%), transparent); }
+.markdown :deep(.diagram-tool:active) { background: color-mix(in srgb, currentColor calc(var(--md-sys-state-pressed-state-layer-opacity) * 100%), transparent); }
+.markdown :deep(.diagram-frame:not(.zoomed) .diagram-reset) { display: none; }
 .markdown :deep(.diagram-error) { margin: 0; padding: var(--app-space-2) var(--app-space-3); color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small-size); }
 .markdown :deep(.html-preview) {
   display: block; width: 100%; height: 200px; border: 0; border-radius: 0 0 var(--md-sys-shape-corner-small) var(--md-sys-shape-corner-small);
