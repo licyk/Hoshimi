@@ -57,7 +57,8 @@ def create_playground_chat_completion(
 # -- views ---------------------------------------------------------------------- #
 class Notice(Record):
     """Something about how a reply was made: ``image-described`` (by ``model``), ``image-omitted``, ``image-refused`` (by ``model``),
-    ``tools-unsupported`` (``model`` makes no tool calls), or ``step-limit`` (the reply spent its ``name`` rounds of tool calls)."""
+    ``tools-unsupported`` (``model`` makes no tool calls), or ``step-limit`` (kept on replies from before rounds of tool calls were
+    unlimited: the reply spent its ``name`` rounds)."""
 
     kind: str
     name: str = ""

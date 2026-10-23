@@ -78,8 +78,6 @@ class Settings:
     # When tools ask first (playground.approval): "ask" before commands, file changes and anything outside
     # the workspace; "auto" only before reaching outside the workspace; "full" never.
     playground_approval: str = "ask"
-    # The most rounds of tool calls one reply makes (playground.max_steps).
-    playground_max_steps: int = 50
     # A SearXNG instance for web_search (playground.search_url); empty searches DuckDuckGo.
     playground_search_url: str = ""
     # Compact a conversation by itself as it nears its model's context window (playground.auto_compact).
@@ -115,8 +113,6 @@ def validate_settings(settings: Settings) -> str | None:
         return f"playground.tools: unknown tool {unknown[0]!r} (known: {', '.join(GROUPS)})."
     if settings.playground_approval not in ("ask", "auto", "full"):
         return "playground.approval must be ask, auto or full."
-    if not 1 <= settings.playground_max_steps <= 500:
-        return "playground.max_steps must be between 1 and 500."
     if settings.playground_search_url and not settings.playground_search_url.startswith(("http://", "https://")):
         return "playground.search_url must be an http(s) address."
     if not 0.5 <= settings.playground_compact_threshold <= 0.95:
@@ -214,11 +210,6 @@ def settings_from_dict(data: dict[str, Any], settings: Settings | None = None) -
             if not isinstance(tools, list) or not all(isinstance(t, str) for t in tools):
                 raise ValueError("playground.tools must be a list of tool names")
             settings.playground_tools = list(dict.fromkeys(t.strip() for t in tools if t.strip()))
-        if "max_steps" in playground:
-            value = playground["max_steps"]
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise ValueError("playground.max_steps must be a whole number")
-            settings.playground_max_steps = value
         if "auto_compact" in playground:
             value = playground["auto_compact"]
             if not isinstance(value, bool):
@@ -338,7 +329,6 @@ def settings_to_dict(settings: Settings) -> dict[str, Any]:
             ("tools", settings.playground_tools, []),
             ("workspace", settings.playground_workspace, ""),
             ("approval", settings.playground_approval, "ask"),
-            ("max_steps", settings.playground_max_steps, 50),
             ("search_url", settings.playground_search_url, ""),
             ("auto_compact", settings.playground_auto_compact, True),
             ("compact_threshold", settings.playground_compact_threshold, 0.85),

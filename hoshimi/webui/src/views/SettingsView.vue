@@ -238,10 +238,7 @@ async function copy(text: string) {
             :supporting-text="t('settings.workspaceHelp', { path: s.playground.workspace_path })"
             @change="save({ playground: { workspace: $event } })"
           />
-          <div class="row">
-            <NumberField :model-value="s.playground.max_steps" :min="1" :max="500" :label="t('settings.maxSteps')" :supporting-text="t('settings.maxStepsHelp')" v-bind="arrows('settings.maxSteps')" @change="save({ playground: { max_steps: num($event) } })" />
-            <TextField :model-value="s.playground.search_url" :label="t('settings.searchUrl')" placeholder="https://searx.example.org" :supporting-text="t('settings.searchUrlHelp')" @change="save({ playground: { search_url: $event } })" />
-          </div>
+          <TextField :model-value="s.playground.search_url" :label="t('settings.searchUrl')" placeholder="https://searx.example.org" :supporting-text="t('settings.searchUrlHelp')" @change="save({ playground: { search_url: $event } })" />
         </PageSection>
       </div>
 

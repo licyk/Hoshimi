@@ -1,4 +1,4 @@
-"""The Playground as an agent: tool rounds, approvals, stops, the round limit, and replies with tools sent again."""
+"""The Playground as an agent: tool rounds (as many as a reply takes), approvals, stops, and replies with tools sent again."""
 
 from __future__ import annotations
 
@@ -17,15 +17,18 @@ from hoshimi.core.context import Services
 from hoshimi.core.providers.base import Account
 from tests.conftest import FakeProvider, make_services
 
+# More rounds of tool calls than replies were once allowed (50 by default).
+TIRELESS_ROUNDS = 60
+
 
 class AgentProvider(FakeProvider):
     """``agent`` calls what the question asks for (a JSON list of calls), then says what the last result was.
 
-    ``stubborn`` calls ``read`` every round, even when told it may not; ``plain`` makes no tool calls at all.
+    ``tireless`` calls ``read`` round after round, ``TIRELESS_ROUNDS`` times, then answers; ``plain`` makes no tool calls at all.
     """
 
     def fallback_models(self) -> list[str]:
-        return ["agent", "stubborn", "plain", "picky"]
+        return ["agent", "tireless", "plain", "picky"]
 
     def specs(self) -> dict[str, ModelSpec]:
         specs = super().specs()
@@ -41,7 +44,10 @@ class AgentProvider(FakeProvider):
             else:
                 yield {"type": "text_delta", "text": "answered plainly"}
             return
-        if model == "stubborn":
+        if model == "tireless":
+            if sum(m["role"] == "tool" for m in body["messages"]) >= TIRELESS_ROUNDS:
+                yield {"type": "text_delta", "text": "done at last"}
+                return
             yield {"type": "tool_call_start", "id": "", "name": "read", "arguments": '{"path": "a.txt"}', "index": 0}
             yield {"type": "finish", "reason": "tool_calls"}
             return
@@ -177,19 +183,18 @@ def test_calls_go_as_text_once_tools_are_off(client: Any, provider: AgentProvide
     assert sent[1]["content"] == 'Let me look.\n\n[Called read({"path": "a.txt"}); it gave:]\nL1: hello'
 
 
-def test_the_round_limit_ends_a_reply_that_keeps_calling(provider: AgentProvider) -> None:
-    services = make_services(provider, playground_tools=["read"], playground_approval="auto", playground_max_steps=2)
+def test_a_reply_calls_tools_for_as_many_rounds_as_it_takes(provider: AgentProvider) -> None:
+    services = make_services(provider, playground_tools=["read"], playground_approval="auto")
     PlaygroundRunner(services).workspace().mkdir(parents=True)
     (PlaygroundRunner(services).workspace() / "a.txt").write_text("hello\n")
-    conversation = services.conversations.create(model="stubborn")
+    conversation = services.conversations.create(model="tireless")
     question = services.conversations.add_message(conversation.id, None, "user", "go")
     assert question is not None
-    events = list(PlaygroundRunner(services).reply(conversation.id, question.id, model="stubborn", effort=""))
-    assert [b["tool_choice"] for b in provider.seen] == ["auto", "auto", "none"]
+    events = list(PlaygroundRunner(services).reply(conversation.id, question.id, model="tireless", effort=""))
+    assert [b["tool_choice"] for b in provider.seen] == ["auto"] * (TIRELESS_ROUNDS + 1)
     reply = events[-1]["message"]
-    assert [s["status"] for s in reply.steps] == ["done", "done", "stopped"]
-    assert reply.steps[-1]["output"] == "Not run: this reply reached its limit of 2 rounds of tool calls."
-    assert {"kind": "step-limit", "name": "2"} in reply.notices
+    assert [s["status"] for s in reply.steps if s["type"] == "tool"] == ["done"] * TIRELESS_ROUNDS
+    assert reply.content == "done at last" and reply.notices == []
 
 
 # -- approvals ------------------------------------------------------------------------- #
@@ -377,10 +382,11 @@ def test_the_tools_are_set_in_settings(client: Any, services: Services) -> None:
     view = client.get("/api/v1/settings").json()["playground"]
     assert view["tools"] == ["read", "apply_patch", "shell", "terminal"] and view["approval"] == "auto"
     assert view["workspace_path"] == str(PlaygroundRunner(services).workspace())
-    saved = client.patch("/api/v1/settings", json={"playground": {"tools": ["web_search"], "approval": "ask", "max_steps": 5, "workspace": "/tmp/ws"}}).json()["playground"]
-    assert (saved["tools"], saved["approval"], saved["max_steps"], saved["workspace_path"]) == (["web_search"], "ask", 5, "/tmp/ws")
+    saved = client.patch("/api/v1/settings", json={"playground": {"tools": ["web_search"], "approval": "ask", "workspace": "/tmp/ws"}}).json()["playground"]
+    assert (saved["tools"], saved["approval"], saved["workspace_path"]) == (["web_search"], "ask", "/tmp/ws")
+    assert "max_steps" not in saved
     assert client.patch("/api/v1/settings", json={"playground": {"approval": "full"}}).json()["playground"]["approval"] == "full"
-    for bad in ({"tools": ["rm"]}, {"approval": "never"}, {"max_steps": 0}, {"search_url": "searx.local"}):
+    for bad in ({"tools": ["rm"]}, {"approval": "never"}, {"search_url": "searx.local"}):
         assert client.patch("/api/v1/settings", json={"playground": bad}).status_code == 400, bad
 
 # -- steering ------------------------------------------------------------------------------ #

@@ -117,7 +117,6 @@ Hoshimi 不认识的顶层键和字段在读取时被忽略，并且**在下一�
 | `playground.tools` | 字符串列表 | `[]` | 新对话默认开启的内置工具：`read`、`apply_patch`、`shell`、`terminal`、`web_search`、`web_fetch`。每个对话可以在输入框中单独开关 |
 | `playground.workspace` | 字符串 | `""` | 工具的工作目录，支持 `~`；空则为 `<数据目录>/workspace` |
 | `playground.approval` | `"ask"`、`"auto"` 或 `"full"` | `"ask"` | 工具何时先询问：`ask` 在运行命令、修改文件和访问工作区外的内容前询问；`auto` 只在读写工作区外的文件时询问；`full` 从不询问。空字符串按 `ask` 处理 |
-| `playground.max_steps` | 整数 1–500 | `50` | 一条回复最多进行几轮工具调用，最后一轮必须作答 |
 | `playground.search_url` | 字符串 | `""` | `web_search` 使用的 SearXNG 地址（需开启其 JSON 格式），必须以 `http://` 或 `https://` 开头；空则使用 DuckDuckGo |
 | `playground.auto_compact` | 布尔值 | `true` | 对话接近模型上下文窗口时自动压缩；被拒绝为过长的请求无论如何都会压缩 |
 | `playground.compact_threshold` | 数字 0.5–0.95 | `0.85` | 对话达到窗口的多大比例时压缩；剩余空间不足以容纳回复时会更早压缩 |
@@ -181,7 +180,6 @@ Hoshimi 不认识的顶层键和字段在读取时被忽略，并且**在下一�
 | `cline client_profile must be sdk or extension` | Cline 登录方式拼错 |
 | `playground.tools: unknown tool '…'` | 工具名拼错 |
 | `playground.approval must be ask, auto or full.` | 询问模式拼错 |
-| `playground.max_steps must be between 1 and 500.` | 轮数超出范围 |
 | `playground.search_url must be an http(s) address.` | SearXNG 地址不是 http(s) |
 | `playground.compact_threshold must be between 0.5 and 0.95.` | 压缩阈值超出范围 |
 | `security.allow_origins requires server.access_token …` | 设置了允许的来源却没有工具访问密钥 |

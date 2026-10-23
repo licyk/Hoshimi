@@ -757,8 +757,6 @@ export default {
     },
     workspace: '工作区',
     workspaceHelp: '工具的起始目录，也是审批模式划界的位置：读取或更改其外的文件属于更高权限，“仅在工作区外询问”模式下仍会询问。命令不受其限制。当前：{path}',
-    maxSteps: '每条回复的工具调用轮数',
-    maxStepsHelp: '持续调用工具的回复在达到此轮数后，会用已有信息作答。',
     searchUrl: 'SearXNG 地址',
     searchUrlHelp: '使用你自己的 SearXNG 搜索（需开启 JSON 格式）。留空：DuckDuckGo。',
     maxBodyBytes: '请求体大小上限（字节）',

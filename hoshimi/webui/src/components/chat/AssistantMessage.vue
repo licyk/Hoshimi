@@ -80,6 +80,7 @@ const workedDetail = computed(() => {
   if ((m.waited_ms ?? 0) >= 1000) parts.push(t('playground.waitedFor', { time: elapsed(m.waited_ms) }));
   return parts.join(' · ');
 });
+// ``step-limit`` is no longer given (rounds of tool calls are unlimited), but replies kept from before still carry it.
 const noticeText = (n: Notice) =>
   n.kind === 'image-described' ? t('playground.noticeDescribed', { name: n.name, model: n.model })
   : n.kind === 'image-refused' ? t('playground.noticeRefused', { model: n.model })

@@ -322,6 +322,6 @@ hoshimi config set server.model_api_key null                         # 清除
 需要注意：
 
 - 文件会以 Hoshimi 自己的格式重写。Hoshimi 不认识的键不会被保存；渠道的 `accounts` 和 `options` 中的内容原样保留。
-- 类型不对的值，有的会报错（例如 `playground.max_steps` 不是整数、`server.access_token` 不是字符串，退出码 2），有的会被忽略、保持原值（例如给 `server.port` 一个字符串），而命令仍然打印新值；改完后可以用 `config get` 确认。
+- 类型不对的值，有的会报错（例如 `playground.auto_compact` 不是 `true` 或 `false`、`server.access_token` 不是字符串，退出码 2），有的会被忽略、保持原值（例如给 `server.port` 一个字符串），而命令仍然打印新值；改完后可以用 `config get` 确认。
 - 修改在服务器重启后生效。在 Web UI 的 **设置** 页修改则立即生效（监听地址和端口除外）。
 - 写在命令行里的密钥会留在 shell 历史中；介意的话改用 Web UI 设置。

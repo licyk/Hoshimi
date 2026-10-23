@@ -94,7 +94,6 @@ class PlaygroundSettingsView(Record):
     approval: Literal["ask", "auto", "full"] = "ask"
     """When tools ask first: ``ask`` before commands, file changes and anything outside the workspace; ``auto`` only before
     reaching outside the workspace; ``full`` never (a conversation can also be given full access on its own)."""
-    max_steps: int = 50
     search_url: str = ""
     """A SearXNG instance for ``web_search``; empty searches DuckDuckGo."""
     auto_compact: bool = True
@@ -149,7 +148,7 @@ def _view(services: Services, request: Request | None = None) -> SettingsView:
         playground=PlaygroundSettingsView(
             system_prompt=settings.playground_system_prompt, title_model=settings.playground_title_model, vision_model=settings.playground_vision_model,
             tools=list(settings.playground_tools), workspace=settings.playground_workspace, workspace_path=str(PlaygroundRunner(services).workspace()),
-            approval=settings.playground_approval if settings.playground_approval in ("auto", "full") else "ask", max_steps=settings.playground_max_steps,
+            approval=settings.playground_approval if settings.playground_approval in ("auto", "full") else "ask",
             search_url=settings.playground_search_url, auto_compact=settings.playground_auto_compact,
             compact_threshold=settings.playground_compact_threshold, compact_model=settings.playground_compact_model,
         ),

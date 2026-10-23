@@ -41,7 +41,7 @@ def config_keys() -> list[str]:
     settings = Settings(
         access_token="x", model_api_key="x", default_model="m", playground_system_prompt="p", playground_title_model="t",
         playground_vision_model="off", playground_tools=["read"], playground_workspace="w", playground_approval="auto",
-        playground_max_steps=3, playground_search_url="http://search",
+        playground_search_url="http://search",
     )
     data = settings_to_dict(settings)
     return [f"{section}.{key}" for section, values in data.items() if isinstance(values, dict) and section != "providers" for key in values]

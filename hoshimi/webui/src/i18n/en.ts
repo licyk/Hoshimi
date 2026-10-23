@@ -757,8 +757,6 @@ export default {
     },
     workspace: 'Workspace',
     workspaceHelp: 'Where tools start, and where the approval modes draw the line: files outside it are a step up that Ask outside the workspace still asks about. Commands are not confined to it. Now: {path}',
-    maxSteps: 'Rounds of tool calls per reply',
-    maxStepsHelp: 'A reply that keeps calling tools answers with what it has after this many.',
     searchUrl: 'SearXNG address',
     searchUrlHelp: 'Search with your own SearXNG (its JSON format turned on). Empty: DuckDuckGo.',
     maxBodyBytes: 'Maximum request size (bytes)',

@@ -322,6 +322,6 @@ Before saving, the whole configuration is checked with the same rules as `check`
 Keep in mind:
 
 - The file is rewritten in Hoshimi's own form. Keys Hoshimi does not know are not saved; the contents of a channel's `accounts` and `options` are kept as they are.
-- A value of the wrong type is either refused (for example a `playground.max_steps` that is not a whole number, or a `server.access_token` that is not a string: exit code 2) or ignored with the old value kept (for example a string for `server.port`), while the command still prints the new value; check with `config get` afterwards.
+- A value of the wrong type is either refused (for example a `playground.auto_compact` that is not `true` or `false`, or a `server.access_token` that is not a string: exit code 2) or ignored with the old value kept (for example a string for `server.port`), while the command still prints the new value; check with `config get` afterwards.
 - Changes apply when the server restarts. Changes made on the Web UI's **Settings** page apply at once (except the listening address and port).
 - A key typed on the command line stays in your shell history; use the Web UI to set it if that matters.

@@ -757,8 +757,6 @@ export default {
     },
     workspace: 'ワークスペース',
     workspaceHelp: 'ツールが作業を始める場所で、承認モードが線を引く場所です。外のファイルの読み取りや変更は一段上の権限で、「ワークスペース外のみ確認」でも確認されます。コマンドはここに限定されません。現在：{path}',
-    maxSteps: '1 回の返信のツール呼び出し回数',
-    maxStepsHelp: 'ツールを呼び出し続ける返信は、この回数で手元の情報から回答します。',
     searchUrl: 'SearXNG のアドレス',
     searchUrlHelp: '自分の SearXNG で検索します（JSON 形式を有効にしてください）。空欄：DuckDuckGo。',
     maxBodyBytes: 'リクエスト本体の上限（バイト）',

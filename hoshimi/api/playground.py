@@ -17,7 +17,7 @@ turned off), a reply is an agent loop: the model is offered the built-in
 tools (:mod:`hoshimi.core.agent`); each round it streams, the tools it called
 run one after another (after the user approves the ones the approval mode
 asks about: see :func:`PlaygroundRunner.approval_mode`), their results go back to it, and it goes
-on until a round calls nothing, or ``playground.max_steps`` rounds are spent.
+on until a round calls nothing.
 Such a reply keeps its *steps*, in order:
 
 - ``{"type": "reasoning", "text", "ms", "round"}``;
@@ -567,12 +567,11 @@ class PlaygroundRunner:
         return self._body(model, effort, prepared.messages, tools)
 
     @staticmethod
-    def _body(model: str, effort: str, messages: list[dict[str, Any]], tools: list[Tool], *, last_round: bool = False) -> dict[str, Any]:
+    def _body(model: str, effort: str, messages: list[dict[str, Any]], tools: list[Tool]) -> dict[str, Any]:
         body: dict[str, Any] = {"model": model, "messages": messages, "stream": True}
         if tools:
             body["tools"] = [t.definition() for t in tools]
-            # The last round may not call: it answers with what it has.
-            body["tool_choice"] = "none" if last_round else "auto"
+            body["tool_choice"] = "auto"
         if effort:
             body["reasoning_effort"] = effort
         return body
@@ -631,7 +630,7 @@ class PlaygroundRunner:
                     for item in prepared.notices:
                         yield from notice(item)
                     try:
-                        yield from self._agent(run, conversation_id, message.id, model, effort, prepared.messages, tools, cancel, notice, opening=self._opening(path, model))
+                        yield from self._agent(run, conversation_id, message.id, model, effort, prepared.messages, tools, cancel, opening=self._opening(path, model))
                         break
                     except HoshimiError as exc:
                         # A station that refuses tools, before a word of the reply: once more, without them.
@@ -674,7 +673,7 @@ class PlaygroundRunner:
 
     def _agent(
         self, run: Run, conversation_id: str, message_id: str, model: str, effort: str, messages: list[dict[str, Any]], tools: list[Tool],
-        cancel: threading.Event, notice: Any, *, opening: int | None = None,
+        cancel: threading.Event, *, opening: int | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Rounds of streaming and calling, until a round calls nothing (and no message steers it on).
 
@@ -683,7 +682,6 @@ class PlaygroundRunner:
         round the station refuses as too long is compacted and asked again:
         once with a summary, once more with long tool outputs cut.
         """
-        limit = self.services.settings.playground_max_steps
         ctx = self.context(conversation_id, cancel)
         steering = self.services.agent.steering
         if tools:
@@ -721,12 +719,11 @@ class PlaygroundRunner:
             else:
                 yield from follow_up(0)
             while True:
-                last_round = bool(tools) and run.round >= limit
                 counted = run.usage_rounds
                 retries = 0
                 while True:
                     try:
-                        calls = yield from self._stream(model, self._body(model, effort, live.messages, tools, last_round=last_round), run)
+                        calls = yield from self._stream(model, self._body(model, effort, live.messages, tools), run)
                         break
                     except HoshimiError as exc:
                         # Too long for the model, before a word of this round: compacted, then with long outputs cut, then given up.
@@ -766,12 +763,6 @@ class PlaygroundRunner:
                     run.round += 1
                     yield from self._steer(run, message_id, waiting, live.messages)
                     continue
-                if last_round:
-                    for step in calls:
-                        step.update(status="stopped", output=f"Not run: this reply reached its limit of {limit} rounds of tool calls.")
-                        yield event("tool", step=step)
-                    yield from notice({"kind": "step-limit", "name": str(limit)})
-                    return
                 live.messages = answered
                 for step in calls:
                     yield from self._call(run, step, offered.get(step["name"]), ctx)

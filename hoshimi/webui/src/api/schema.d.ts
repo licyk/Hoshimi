@@ -2539,7 +2539,8 @@ export interface components {
         /**
          * Notice
          * @description Something about how a reply was made: ``image-described`` (by ``model``), ``image-omitted``, ``image-refused`` (by ``model``),
-         *     ``tools-unsupported`` (``model`` makes no tool calls), or ``step-limit`` (the reply spent its ``name`` rounds of tool calls).
+         *     ``tools-unsupported`` (``model`` makes no tool calls), or ``step-limit`` (kept on replies from before rounds of tool calls were
+         *     unlimited: the reply spent its ``name`` rounds).
          */
         Notice: {
             /** Kind */
@@ -2652,11 +2653,6 @@ export interface components {
              * @default 0.85
              */
             compact_threshold: number;
-            /**
-             * Max Steps
-             * @default 50
-             */
-            max_steps: number;
             /**
              * Search Url
              * @default

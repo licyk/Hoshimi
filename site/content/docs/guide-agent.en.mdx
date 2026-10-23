@@ -160,7 +160,7 @@ Each call is a line in the reply: an icon, a verb and what it acted on (**Read**
 | A check with the time | Done |
 | **Exit** *code* or **Failed** | The command exited with an error, or the tool failed; the model reads why |
 | **Declined** | You denied it |
-| **Stopped** | The reply was stopped before it finished, or it was not run because of the round limit |
+| **Stopped** | The reply was stopped before it finished |
 
 Click a card to open it: the command, the patch, or the arguments as sent, and what came back. Between rounds the reply shows **Working…**.
 
@@ -183,13 +183,9 @@ The workspace is where the tools start: relative paths resolve there, and `shell
 
 The workspace is the line the approval modes draw: reading or changing files outside it asks in **Ask first** and **Ask outside the workspace**. It is not a boundary for commands: a command can `cd` anywhere and touch anything the user running Hoshimi can.
 
-## Round limit
-
-**Rounds of tool calls per reply** (`playground.max_steps`, 1 to 500, default 50) caps how many rounds of calls one reply makes. After that many, the model is asked once more with tools withheld, so it answers with what it has. If it still calls a tool, the call is not run (its card shows **Stopped**) and the reply notes "This reply reached its limit of *n* rounds of tool calls."
-
 ## Stopping
 
-**Stop** (or <kbd>Esc</kbd>) ends the reply at once. A running `shell` command is stopped with everything it started; a call waiting for approval is dropped; calls not yet run are marked **Stopped**. What the reply said and did so far is kept. Background commands keep running: stop them above the composer.
+A reply calls tools for as many rounds as it takes: there is no limit, and it ends when the model answers without calling one. **Stop** (or <kbd>Esc</kbd>) ends the reply at once. A running `shell` command is stopped with everything it started; a call waiting for approval is dropped; calls not yet run are marked **Stopped**. What the reply said and did so far is kept. Background commands keep running: stop them above the composer.
 
 ## Safety
 
@@ -210,7 +206,6 @@ There is no sandbox. Tools run as the user running Hoshimi, on that machine, wit
 | **Tools for new chats** | `playground.tools`: any of `read`, `apply_patch`, `shell`, `terminal`, `web_search`, `web_fetch` | `[]` (none) |
 | **When tools ask first** | `playground.approval`: `ask`, `auto` or `full` | `ask` |
 | **Workspace** | `playground.workspace` | empty: `workspace` in the data folder |
-| **Rounds of tool calls per reply** | `playground.max_steps` (1–500) | `50` |
 | **SearXNG address** | `playground.search_url` (an `http(s)` address) | empty: DuckDuckGo |
 
 `terminal` is the switch for the three background-command tools.
@@ -221,7 +216,6 @@ There is no sandbox. Tools run as the user running Hoshimi, on that machine, wit
     "tools": ["read", "apply_patch", "shell", "web_search", "web_fetch"],
     "approval": "ask",
     "workspace": "~/hoshimi-work",
-    "max_steps": 50,
     "search_url": ""
   }
 }

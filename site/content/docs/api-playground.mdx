@@ -134,7 +134,7 @@ curl -X POST $BASE/conversations \
 | `image-omitted` | `name` | 图片被略去：没有模型能描述它，或 `playground.vision_model` 为 `off` |
 | `image-refused` | `model` | 站点拒绝了图片，回复已改用描述重试 |
 | `tools-unsupported` | `model` | 模型不支持工具调用，或其站点拒绝了工具；它在没有工具的情况下作答 |
-| `step-limit` | `name`（上限值） | 回复用完了 `playground.max_steps` 轮工具调用 |
+| `step-limit` | `name`（上限值） | 只出现在工具调用轮数取消上限之前的回复中：该回复用完了 `name` 轮工具调用 |
 
 ## 发送消息
 
@@ -233,7 +233,7 @@ data: {"type": "done", "message": {"id": "5828…", "content": "Let me look.\n\n
 | `done` | 已完成 |
 | `error` | 失败（非零退出码、参数错误、未知工具）；`output` 说明原因 |
 | `denied` | 用户拒绝，未运行 |
-| `stopped` | 回复先被停止，或因回复达到轮数上限而未运行 |
+| `stopped` | 回复先被停止（或在轮数取消上限之前的回复中，因达到轮数上限而未运行） |
 
 `output` 是发给模型的内容（最多 32,000 个字符）。`meta` 是页面在旁边显示的信息：
 

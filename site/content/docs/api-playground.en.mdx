@@ -134,7 +134,7 @@ An update does not change `updated_at`: only a new message moves a conversation 
 | `image-omitted` | `name` | The image was left out: no model could describe it, or `playground.vision_model` is `off` |
 | `image-refused` | `model` | The station refused the image; the reply was tried again with descriptions |
 | `tools-unsupported` | `model` | The model makes no tool calls, or its station refused the tools; it answered without them |
-| `step-limit` | `name` (the limit) | The reply spent its `playground.max_steps` rounds of tool calls |
+| `step-limit` | `name` (the limit) | Only on replies made before rounds of tool calls became unlimited: the reply spent its `name` rounds |
 
 ## Send a message
 
@@ -233,7 +233,7 @@ A tool step's `status`:
 | `done` | Finished |
 | `error` | Failed (a non-zero exit, bad arguments, an unknown tool); `output` says why |
 | `denied` | The user denied it; it did not run |
-| `stopped` | The reply was stopped first, or the call was not run because the reply hit its round limit |
+| `stopped` | The reply was stopped first (or, on replies from before rounds of tool calls became unlimited, it hit its round limit) |
 
 `output` is what the model was sent (at most 32,000 characters). `meta` carries what the page shows beside it:
 
