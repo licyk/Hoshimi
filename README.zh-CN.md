@@ -1,5 +1,29 @@
 # Hoshimi
 
+<p align="center">
+  <a href="https://github.com/licyk/Hoshimi/stargazers">
+    <img src="https://img.shields.io/github/stars/licyk/Hoshimi?style=flat&logo=github&logoColor=silver&color=bluegreen&labelColor=grey" alt="Stars">
+  </a>
+  <a href="https://github.com/licyk/Hoshimi/issues">
+    <img src="https://img.shields.io/github/issues/licyk/Hoshimi?style=flat&logo=github&logoColor=silver&color=bluegreen&labelColor=grey" alt="Issues">
+  </a>
+  <a href="https://github.com/licyk/Hoshimi/commits/main">
+    <img src="https://flat.badgen.net/github/last-commit/licyk/Hoshimi/main?icon=github&color=green&label=last%20main%20commit" alt="Last main commit">
+  </a>
+  <a href="https://github.com/licyk/Hoshimi/actions/workflows/ci.yml">
+    <img src="https://github.com/licyk/Hoshimi/actions/workflows/ci.yml/badge.svg" alt="CI">
+  </a>
+  <a href="https://github.com/licyk/Hoshimi/actions/workflows/release.yml">
+    <img src="https://github.com/licyk/Hoshimi/actions/workflows/release.yml/badge.svg" alt="Release">
+  </a>
+  <a href="https://pypi.org/project/hoshimi/">
+    <img src="https://img.shields.io/pypi/v/hoshimi?style=flat&logo=pypi&logoColor=silver&color=bluegreen&labelColor=grey" alt="PyPI version">
+  </a>
+  <a href="https://pypi.org/project/hoshimi/">
+    <img src="https://img.shields.io/pypi/pyversions/hoshimi?style=flat&logo=python&logoColor=silver&color=bluegreen&labelColor=grey" alt="Python versions">
+  </a>
+</p>
+
 [English](https://github.com/licyk/Hoshimi/blob/main/README.md) | [简体中文](https://github.com/licyk/Hoshimi/blob/main/README.zh-CN.md)
 
 **[官网](https://hoshimi-dev.netlify.app)** · **[文档](https://hoshimi-dev.netlify.app/docs)**
