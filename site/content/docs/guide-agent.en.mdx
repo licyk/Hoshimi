@@ -78,7 +78,7 @@ Takes a patch in the Codex `apply_patch` format, so a model that knows the tool 
 ### Run commands (`shell`)
 
 - Runs the command in the shell the model names, or else in the default shell (see Choose the shell below), in the workspace unless the model gives a `workdir`.
-- Waits for it to finish: 10 seconds by default, as with Codex; the model asks for more (`timeout_ms`) for a long build or test run, with no upper limit. A command that runs longer is stopped, with everything it started, and reported as timed out (exit code 124).
+- Waits for it to finish: 10 minutes by default; the model can ask for more or less (`timeout_ms`), with no upper limit. A command that runs longer is stopped, with everything it started, and reported as timed out (exit code 124).
 - Returns the exit code, the time taken and the output, standard error included. The command gets no input (standard input is closed), and pagers and colours are turned off (`PAGER=cat`, `NO_COLOR=1`, `TERM=dumb`, `GIT_TERMINAL_PROMPT=0`).
 - For something that keeps running or asks for input, the model is told to use a background command instead.
 

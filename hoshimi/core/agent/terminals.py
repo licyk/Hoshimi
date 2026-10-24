@@ -36,9 +36,9 @@ from typing import Any
 from hoshimi.core.agent.base import Cancelled, Permission, Tool, ToolContext, ToolError, ToolResult, clip, integer, string
 
 # Codex's time limits (``exec.rs``, ``unified_exec/mod.rs``): a ``shell`` command runs as long as
-# its call says (10 s unless told otherwise); a background one runs until it exits or is stopped,
-# and each call only waits a while for its output.
-SHELL_TIMEOUT_MS = 10_000
+# its call says (10 minutes unless told otherwise, where Codex gives 10 s); a background one runs
+# until it exits or is stopped, and each call only waits a while for its output.
+SHELL_TIMEOUT_MS = 600_000
 TIMEOUT_EXIT_CODE = 124
 """The exit code of a command stopped for running too long, as ``timeout`` gives it."""
 YIELD_MS = 10_000
@@ -473,7 +473,7 @@ SHELL = Tool(
             "workdir": _WORKDIR,
             "timeout_ms": {
                 "type": "integer",
-                "description": f"How long it may run before it is stopped, in milliseconds. Default {SHELL_TIMEOUT_MS}; give more for a long build or test run.",
+                "description": f"How long it may run before it is stopped, in milliseconds. Default {SHELL_TIMEOUT_MS} (10 minutes); give less to stop a command that may hang sooner.",
             },
         },
         "required": ["command"],
