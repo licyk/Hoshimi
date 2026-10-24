@@ -477,6 +477,7 @@ export default {
     steerQueued: '現在のステップの後に読まれます',
     steerLate: '返信はすでに終わっていました。メッセージは入力欄に戻しました。',
     hint: 'Enter で送信 · Shift + Enter で改行 · / でコマンド',
+    hintTouch: 'Enter で改行 · 送信ボタンで送信 · / でコマンド',
     send: '送信',
     stop: '停止',
     newChat: '新しいチャット',

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import AppIcon from '@/ui/AppIcon.vue';
+import { touchFirst } from '@/ui/device';
 import { ArrowUp, Square } from '@/ui/icons';
 import { TRANSITIONS } from '@/ui/motion/transitions';
 
@@ -8,8 +9,9 @@ import { TRANSITIONS } from '@/ui/motion/transitions';
  * Where a message is written and sent, as in a coding agent's chat: one rounded surface holding the
  * text, a row of tools under it (``tools`` at the start, ``actions`` before the send button) and a
  * round send button that becomes Stop while an answer comes in. The text grows with what is typed
- * up to a few lines, then scrolls. Enter sends and Shift+Enter starts a new line; Enter while an
- * input method composes is the method's own. Escape stops an answer coming in, and the up arrow in
+ * up to a few lines, then scrolls. Enter sends and Shift+Enter starts a new line; on a device used
+ * by touch first (``touchFirst``: a phone, whose keyboard has no Shift+Enter) Enter starts a new
+ * line and only the button sends. Enter while an input method composes is the method's own. Escape stops an answer coming in, and the up arrow in
  * an empty box asks for the last message back (``recall``), to edit it. What is attached goes in
  * ``above`` (over the text); ``attached`` lets a message go with no text of its own.
  *
@@ -63,7 +65,7 @@ function submit() {
 }
 function onKeydown(e: KeyboardEvent) {
   if (props.keydownGuard?.(e)) return;
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !touchFirst()) {
     e.preventDefault();
     submit();
   } else if (e.key === 'Escape' && props.busy) {

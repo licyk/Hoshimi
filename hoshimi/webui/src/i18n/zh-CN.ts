@@ -477,6 +477,7 @@ export default {
     steerQueued: '当前步骤完成后读取',
     steerLate: '回复已经结束，你的消息已放回输入框。',
     hint: 'Enter 发送 · Shift + Enter 换行 · / 打开命令',
+    hintTouch: 'Enter 换行 · 点按发送按钮发送 · / 打开命令',
     send: '发送',
     stop: '停止',
     newChat: '新对话',

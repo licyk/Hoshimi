@@ -477,6 +477,7 @@ export default {
     steerQueued: 'Read after the current step',
     steerLate: 'The reply had already ended; your message is back in the box.',
     hint: 'Enter to send · Shift + Enter for a new line · / for commands',
+    hintTouch: 'Enter for a new line · Send to send · / for commands',
     send: 'Send',
     stop: 'Stop',
     newChat: 'New chat',

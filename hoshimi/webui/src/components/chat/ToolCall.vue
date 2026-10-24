@@ -198,7 +198,7 @@ function answer(decision: ApprovalDecision) {
         <p v-if="review && step.status !== 'waiting'" class="review type-body-small" :class="review.tone">
           <AppIcon :icon="review.icon" :size="18" /><span><strong>{{ review.text }}</strong><span v-if="review.risk"> · {{ review.risk }}</span><span v-if="review.why"> — {{ review.why }}</span></span>
         </p>
-        <pre v-if="output" class="block output app-scroll type-body-small" :class="{ failed: step.status === 'error' }">{{ output }}</pre>
+        <pre v-if="output" class="block output app-scroll app-scroll-chain type-body-small" :class="{ failed: step.status === 'error' }">{{ output }}</pre>
       </div>
     </Collapse>
     <div v-if="step.status === 'waiting'" class="approval" role="group" :aria-label="question">

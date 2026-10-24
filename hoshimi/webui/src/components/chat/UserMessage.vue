@@ -5,7 +5,7 @@ import ActionButton from '@/components/chat/ActionButton.vue';
 import AttachmentPreview from '@/components/chat/AttachmentPreview.vue';
 import VersionSwitcher from '@/components/chat/VersionSwitcher.vue';
 import { useI18n } from '@/i18n';
-import { AppButton, icons } from '@/ui';
+import { AppButton, icons, touchFirst } from '@/ui';
 import { morphHeight } from '@/ui/motion/transitions';
 
 /**
@@ -70,7 +70,8 @@ function submit() {
   if (ready()) emit('edit-submit', draft.value.trim(), kept.value);
 }
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+  // On a phone Enter starts a new line, as the on-screen keyboard has no Shift+Enter: Send sends.
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !touchFirst()) {
     e.preventDefault();
     submit();
   } else if (e.key === 'Escape') {
@@ -96,7 +97,7 @@ function onKeydown(e: KeyboardEvent) {
           @remove="kept = kept.filter((k) => k.id !== a.id)"
         />
       </div>
-      <textarea ref="box" v-model="draft" class="box app-scroll app-scroll-auto type-body-large" rows="1" :aria-label="t('playground.edit')" @input="fit" @keydown="onKeydown" />
+      <textarea ref="box" v-model="draft" class="box app-scroll app-scroll-auto app-scroll-chain type-body-large" rows="1" :aria-label="t('playground.edit')" @input="fit" @keydown="onKeydown" />
       <div class="buttons">
         <AppButton variant="text" @click="emit('edit-cancel')">{{ t('common.cancel') }}</AppButton>
         <AppButton variant="filled" :disabled="busy || !draft.trim() && !kept.length" @click="submit">{{ t('playground.send') }}</AppButton>

@@ -55,6 +55,8 @@ export type { PickerOption } from '@/ui/PickerMenu.vue';
 export { default as ProgressBar } from '@/ui/ProgressBar.vue';
 export { default as ProgressCircle } from '@/ui/ProgressCircle.vue';
 export { placeDropdown, revealDropdown, useRevealWhileOpen } from '@/ui/reveal';
+export { chainWheel, useScrollChain } from '@/ui/scrollChain';
+export { touchFirst } from '@/ui/device';
 export { default as ScrollArea } from '@/ui/ScrollArea.vue';
 export { default as SearchField } from '@/ui/SearchField.vue';
 export { default as SegmentedButton } from '@/ui/SegmentedButton.vue';

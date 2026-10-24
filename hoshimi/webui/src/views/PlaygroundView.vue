@@ -19,7 +19,7 @@ import VersionPanes from '@/components/chat/VersionPanes.vue';
 import { useI18n } from '@/i18n';
 import { isLocal, stepsOf, useChatStore } from '@/stores/chat';
 import { usePreferencesStore } from '@/stores/preferences';
-import { AppButton, AppDialog, AppIcon, AppMenu, ChipButton, Composer, ComposerMenu, ConfirmDialog, EmptyState, FadeSwap, IconButton, ImageViewer, SideSheet, TRANSITIONS, TextField, chipRowHooks, icons, useImageViewer, useMorphWidth, useSnackbar } from '@/ui';
+import { AppButton, AppDialog, AppIcon, AppMenu, ChipButton, Composer, ComposerMenu, ConfirmDialog, EmptyState, FadeSwap, IconButton, ImageViewer, SideSheet, TRANSITIONS, TextField, chipRowHooks, icons, touchFirst, useImageViewer, useMorphWidth, useScrollChain, useSnackbar } from '@/ui';
 import { MARKDOWN_CONTEXT, type MarkdownLabels } from '@/ui/markdownRich';
 import { useElementHeight } from '@/ui/useElementHeight';
 import { useElementWidth } from '@/ui/useElementWidth';
@@ -185,6 +185,8 @@ const viewerLabels = computed(() => ({ close: t('common.close'), ...Object.fromE
 
 // -- the thread ------------------------------------------------------------------
 const scroller = ref<HTMLElement | null>(null);
+// A wheel runs through a tool's output (or a summary) and on to the conversation, without stopping at its end.
+useScrollChain(scroller);
 const composer = ref<InstanceType<typeof Composer> | null>(null);
 const empty = computed(() => !chat.path.length);
 /** Follow the reply down while the reader is at the bottom; leave them where they scrolled to otherwise. */
@@ -809,7 +811,7 @@ onBeforeUnmount(() => {
           @choose="chooseSlash"
           @page="onSlashPage"
         />
-        <p class="hint type-body-small muted">{{ t('playground.hint') }}</p>
+        <p class="hint type-body-small muted">{{ t(touchFirst() ? 'playground.hintTouch' : 'playground.hint') }}</p>
       </div>
       <!-- Takes the room under the composer while there is no conversation, so the composer sits in the middle. -->
       <div class="below settle" aria-hidden="true" />

@@ -64,7 +64,7 @@ const expandable = computed(() => status.value === 'done' && !!props.step.summar
       <span class="line" aria-hidden="true" />
     </div>
     <Collapse :show="open && expandable">
-      <div :id="id" class="summary app-scroll app-scroll-auto">
+      <div :id="id" class="summary app-scroll app-scroll-auto app-scroll-chain">
         <p class="type-label-medium muted">{{ t('playground.compactSummary', { model: step.model }) }}</p>
         <Markdown class="type-body-medium" :source="step.summary" :copy-label="t('playground.copyCode')" :copied-label="t('playground.codeCopied')" />
         <template v-if="step.recent.length">

@@ -190,10 +190,14 @@ html, body {
    header; ``--app-scroll-inset`` keeps the thumb clear of rounded corners.
    A sideways area passes on what it does not scroll: ``overscroll-behavior`` stays ``contain`` across
    (a swipe at a table's end does not go back a page) but not down, or a finger that lands on a table
-   or a code block while scrolling a reply on a touch screen moves nothing at all. */
+   or a code block while scrolling a reply on a touch screen moves nothing at all. An area that scrolls
+   down inside another that does (a tool's output in the conversation) is ``app-scroll-chain``: a swipe
+   past its end goes on to the one around it, as a wheel's does (``useScrollChain``). Menus, dialogs and
+   sheets keep theirs, so the page behind them stays where it is. */
 .app-scroll { overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; overscroll-behavior: contain; }
 .app-scroll.app-scroll-x { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; overscroll-behavior-y: auto; }
 .app-scroll.app-scroll-auto { scrollbar-gutter: auto; }
+.app-scroll.app-scroll-chain { overscroll-behavior-y: auto; }
 @supports selector(::-webkit-scrollbar) {
   .app-scroll::-webkit-scrollbar { width: var(--app-scrollbar-size); height: var(--app-scrollbar-size); background: transparent; }
   .app-scroll::-webkit-scrollbar-track { background: transparent; }

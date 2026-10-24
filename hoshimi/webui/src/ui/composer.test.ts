@@ -19,6 +19,21 @@ describe('Composer', () => {
     expect(wrapper.emitted('send')).toHaveLength(1);
   });
 
+  it('on a phone, leaves Enter to start a new line and sends only with the button', async () => {
+    const touch = vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({ matches: query.includes('pointer: coarse'), media: query }) as MediaQueryList);
+    try {
+      const wrapper = mount(Composer, { props: { ...LABELS, modelValue: 'two\nlines' } });
+      const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+      wrapper.find('textarea').element.dispatchEvent(enter);
+      expect(enter.defaultPrevented).toBe(false);
+      expect(wrapper.emitted('send')).toBeUndefined();
+      await wrapper.find('button.send').trigger('click');
+      expect(wrapper.emitted('send')).toHaveLength(1);
+    } finally {
+      touch.mockRestore();
+    }
+  });
+
   it('keeps Send disabled until it can send, and turns it into Stop while busy', async () => {
     const wrapper = mount(Composer, { props: { ...LABELS, modelValue: 'hello', canSend: false } });
     expect(wrapper.find('button[aria-label="Send"]').attributes('disabled')).toBeDefined();
