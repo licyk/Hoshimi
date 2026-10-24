@@ -135,7 +135,7 @@ The Playground's **Run commands** and **Background commands** tools add these va
 | `TERM` | `dumb` | No terminal control sequences |
 | `GIT_TERMINAL_PROMPT` | `0` | git does not prompt for a user name or password |
 
-Commands run with `bash -c` on Linux and macOS (`/bin/sh -c` when there is no bash) and with PowerShell on Windows. The tools are covered in full in [Playground tools](/docs/guide-agent).
+Commands run in the shell the model names, or else in **Settings › Tools › How tools run › Shell** (`playground.shell`). Its default, **Automatic**, is `bash -c` on Linux and macOS (`sh -c` when there is no bash) and PowerShell on Windows (`cmd` without it). No shell is started as a login shell, and PowerShell reads no profile. The tools are covered in full in [Playground tools](/docs/guide-agent).
 
 ## Variables Hoshimi does not read
 

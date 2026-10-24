@@ -63,7 +63,7 @@ A conversation is a tree of messages. Each message names the one it follows (`pa
 | `temporary` | boolean | Never listed, never titled, deleted when the Web UI leaves it and on the next start |
 | `branched_from` | string | The conversation it was branched from, or empty |
 | `tools_on`, `tools_off` | string list | Tool switches this conversation turns on or off against `playground.tools` |
-| `approval` | `""`, `ask`, `auto`, `full` | Its own approval mode; empty follows `playground.approval` |
+| `approval` | `""`, `ask`, `workspace`, `review`, `full` | Its own approval mode; empty follows `playground.approval`. Never `auto` (the old name of `workspace`) |
 | `created_at`, `updated_at` | number | Unix seconds; `updated_at` is the last message, which orders the list |
 | `current_leaf` | string | Only in a full conversation: the end of the path on screen |
 | `messages` | message list | Only in a full conversation: every message of the tree, oldest first |
@@ -86,7 +86,7 @@ curl -X POST $BASE/conversations \
 | `title` | `""` | A title of your own (`title_state` `user`) |
 | `temporary` | `false` | A temporary conversation |
 | `tools_on`, `tools_off` | `[]` | Tools to turn on or off against Settings |
-| `approval` | `""` | `ask`, `auto`, `full`, or empty for Settings' mode |
+| `approval` | `""` | `ask`, `workspace`, `review`, `full`, or empty for Settings' mode; `auto` is taken as `workspace` |
 
 ### Update
 
@@ -99,7 +99,7 @@ curl -X POST $BASE/conversations \
 | `archived` | Archive (`true`) or restore (`false`). Sending a message also restores |
 | `current_leaf` | Show another version: a message id of this conversation (`400` otherwise) |
 | `tools_on`, `tools_off` | The conversation's tool choices |
-| `approval` | Its approval mode; applies from the next tool call, even in a reply under way |
+| `approval` | Its approval mode (`auto` is taken as `workspace`); applies from the next tool call, even in a reply under way |
 
 An update does not change `updated_at`: only a new message moves a conversation up the list.
 
@@ -134,6 +134,7 @@ An update does not change `updated_at`: only a new message moves a conversation 
 | `image-omitted` | `name` | The image was left out: no model could describe it, or `playground.vision_model` is `off` |
 | `image-refused` | `model` | The station refused the image; the reply was tried again with descriptions |
 | `tools-unsupported` | `model` | The model makes no tool calls, or its station refused the tools; it answered without them |
+| `review-stopped` | `name` (the number of denials, as a string) | The automatic review denied that many of the reply's calls (3 in a row, or 10 in all), so it was stopped |
 | `step-limit` | `name` (the limit) | Only on replies made before rounds of tool calls became unlimited: the reply spent its `name` rounds |
 
 ## Send a message
@@ -185,7 +186,7 @@ data: {"type": "assistant", "message": {"id": "5828…", "parent_id": "94bc…",
 
 data: {"type": "delta", "text": "Let me look."}
 
-data: {"type": "tool", "step": {"type": "tool", "id": "call_1", "name": "read", "arguments": "", "status": "pending", "output": "", "exit_code": null, "ms": 0, "meta": {}, "approval": "", "round": 0}}
+data: {"type": "tool", "step": {"type": "tool", "id": "call_1", "name": "read", "arguments": "", "status": "pending", "output": "", "exit_code": null, "ms": 0, "meta": {}, "approval": "", "review": null, "round": 0}}
 
 data: {"type": "tool", "step": {"type": "tool", "id": "call_1", "name": "read", "arguments": "{\"path\": \".\"}", "status": "running", …}}
 
@@ -221,18 +222,19 @@ A reply that called a tool or was steered keeps its `steps`, in order. Every ste
 | `text` | `text` |
 | `user` | `id`, `text`: a message sent with `/steer`, read at the start of this round |
 | `compaction` | `id`, `status` (`running`, `done`, `failed`, `stopped`), `trigger` (`auto`, `overflow`, `manual`), `phase` (`pre-turn`, `mid-turn`, `manual`), `summary`, `recent` (your messages kept verbatim), `tokens_before`, `tokens_after`, `model` (that wrote it), `ms`, `error`, `at`: the conversation compacted before this round |
-| `tool` | `id`, `name`, `arguments` (the JSON string the model wrote), `status`, `output`, `exit_code`, `ms`, `meta`, `approval` |
+| `tool` | `id`, `name`, `arguments` (the JSON string the model wrote), `status`, `output`, `exit_code`, `ms`, `meta`, `approval`, `review` |
 
 A tool step's `status`:
 
 | `status` | Meaning |
 | --- | --- |
 | `pending` | The model is still writing the call; `arguments` is complete once the round ends |
-| `waiting` | Waiting for approval; `approval` says why: `command`, `edit`, `edit-outside` or `read-outside` |
+| `reviewing` | Being judged by the review model (**Automatic review**); `approval` says why it needs approval, as for `waiting`. Then `running`, `denied`, or `waiting` when the review came to no decision |
+| `waiting` | Waiting for the user's approval; `approval` says why: `command`, `edit`, `edit-outside` or `read-outside` |
 | `running` | Running |
 | `done` | Finished |
 | `error` | Failed (a non-zero exit, bad arguments, an unknown tool); `output` says why |
-| `denied` | The user denied it; it did not run |
+| `denied` | The user or the review model denied it; it did not run. Denied by the review model, `output` is what the model was told; denied by the user, it is empty |
 | `stopped` | The reply was stopped first (or, on replies from before rounds of tool calls became unlimited, it hit its round limit) |
 
 `output` is what the model was sent (at most 32,000 characters). `meta` carries what the page shows beside it:
@@ -241,11 +243,13 @@ A tool step's `status`:
 | --- | --- |
 | `read` | `path`, and `lines`, `from`, `to` for a file or `entries` for a folder |
 | `apply_patch` | `files`: each `path`, `kind` (`add`, `update`, `delete`) and `from` when moved |
-| `shell` | `cwd`, `timed_out` |
-| `exec_command`, `write_stdin` | `session_id`, `running`, `cwd`; `exec_command` also `command` |
+| `shell` | `cwd`, `shell` (the shell it ran in), `timed_out` |
+| `exec_command`, `write_stdin` | `session_id`, `running`, `cwd`, `shell`; `exec_command` also `command` |
 | `kill_session` | `session_id` |
 | `web_search` | `query`, `results` |
 | `web_fetch` | `url` (the final address), `title` |
+
+A tool step's `review` is `null` until the review model has judged it, then `{"outcome", "risk_level", "user_authorization", "rationale", "model", "ms", "failed"}`: `outcome` `allow` or `deny`, `risk_level` `low`, `medium`, `high` or `critical`, `user_authorization` `unknown`, `low`, `medium` or `high`, `model` the reviewer, `ms` how long it took. When the review came to no decision and the call went to the user, `failed` is `true`, `outcome` is empty and `rationale` says why.
 
 A call that was stopped while running also has `"cancelled": true`. When the conversation is sent to a model again, each round becomes its steering messages, an assistant message with its `tool_calls`, and a `tool` message per call; with no tools on, the calls and their results go as text.
 
@@ -265,7 +269,7 @@ curl -X POST $BASE/conversations/$CID/approvals/call_1 \
 | `always` | Run it, and stop asking for this tool switch in this conversation (inside and outside the workspace count separately) until the server restarts |
 | `deny` | Skip it; the model is told the user declined |
 
-The answer is `204`; `404` when no such call waits. A call waits 10 minutes, then counts as denied. The stream then carries the call's next state. Which calls wait depends on the approval mode (see [Playground tools](/docs/guide-agent)).
+Only `waiting` calls take an answer; a `reviewing` one is the review model's. The answer is `204`; `404` when no such call waits. A call waits 10 minutes, then counts as denied. The stream then carries the call's next state. Which calls wait depends on the approval mode (see [Playground tools](/docs/guide-agent)).
 
 ## Steering
 
@@ -285,7 +289,7 @@ A message queued when the reply stops or fails is never read.
 ```json
 {
   "terminals": [
-    {"id": 1, "command": "npm run dev", "cwd": "/home/me/.hoshimi/workspace", "started_at": 1792684330.35, "running": true, "exit_code": null}
+    {"id": 1, "command": "npm run dev", "cwd": "/home/me/.hoshimi/workspace", "shell": "bash", "started_at": 1792684330.35, "running": true, "exit_code": null}
   ]
 }
 ```

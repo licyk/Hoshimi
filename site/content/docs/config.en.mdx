@@ -114,9 +114,11 @@ No other keys are allowed in `network`. Each channel can override this policy in
 | `playground.system_prompt` | string | `""` | Sent first in every Playground conversation; empty sends none |
 | `playground.title_model` | string | `""` | The model that names a new conversation after its first reply; empty uses the conversation's own model |
 | `playground.vision_model` | string | `"auto"` | Describes images for models that cannot read them: `auto` picks the first available model that reads images, `off` leaves images out, anything else is a model id. An empty string counts as `auto` |
-| `playground.tools` | list of strings | `[]` | The built-in tools a new conversation starts with: `read`, `apply_patch`, `shell`, `terminal`, `web_search`, `web_fetch`. Each conversation turns tools on or off from its composer |
+| `playground.tools` | list of strings | all six | The built-in tools a new conversation starts with: `read`, `apply_patch`, `shell`, `terminal`, `web_search`, `web_fetch`. `[]` keeps none. Each conversation turns tools on or off from its composer |
 | `playground.workspace` | string | `""` | Where the tools work; `~` is expanded. Empty means `<data directory>/workspace` |
-| `playground.approval` | `"ask"`, `"auto"` or `"full"` | `"ask"` | When tools ask first: `ask` before commands, file changes and anything outside the workspace; `auto` only before reading or changing files outside the workspace; `full` never. An empty string counts as `ask` |
+| `playground.approval` | `"review"`, `"ask"`, `"workspace"` or `"full"` | `"review"` | When tools ask first, and whom: `review` has a model judge commands, file changes and anything outside the workspace, and asks you when it cannot decide; `ask` asks you before those; `workspace` asks only before reading or changing files outside the workspace; `full` never asks. `"auto"`, the old name of `workspace`, is still accepted. An empty string counts as `review` |
+| `playground.review_model` | string | `""` | The model that judges tool calls under `review`; empty uses the conversation's own model |
+| `playground.shell` | `"auto"`, `"bash"`, `"zsh"`, `"sh"`, `"powershell"` or `"cmd"` | `"auto"` | The shell commands run in when the model names none: `auto` is bash (`sh` without it; PowerShell on Windows, `cmd` without it). `"pwsh"` is accepted for `powershell`. A shell that is not installed falls back to `auto` |
 | `playground.search_url` | string | `""` | A SearXNG instance for `web_search` (with its JSON format on); must start with `http://` or `https://`. Empty searches DuckDuckGo |
 | `playground.auto_compact` | boolean | `true` | Compact a conversation by itself as it nears its model's context window; a request refused as too long is compacted either way |
 | `playground.compact_threshold` | number 0.5–0.95 | `0.85` | The share of the window at which a conversation is compacted; sooner when what is left could not hold a reply |
@@ -124,7 +126,7 @@ No other keys are allowed in `network`. Each channel can override this policy in
 
 <Callout type="warn" title="Tools run on this machine">
 
-`shell`, `terminal` and `apply_patch` run commands and change files on this machine as the user running Hoshimi, with no sandbox. Turn on only what you need and keep approvals on. See [Playground tools](/docs/guide-agent).
+`shell`, `terminal` and `apply_patch` run commands and change files on this machine as the user running Hoshimi, with no sandbox. All tools are on by default, with `review` judging each command and edit first; `ask` leaves every one to you. A config that never set `playground.tools` or `playground.approval` gets these defaults too. See [Playground tools](/docs/guide-agent).
 
 </Callout>
 
@@ -179,7 +181,8 @@ Every save (Web UI, API, `hoshimi config set`) and every start (`hoshimi serve`,
 | `unknown network option` | An extra key inside `network` |
 | `cline client_profile must be sdk or extension` | Misspelt Cline login method |
 | `playground.tools: unknown tool '…'` | Misspelt tool name |
-| `playground.approval must be ask, auto or full.` | Misspelt approval mode |
+| `playground.approval must be ask, workspace, review or full.` | Misspelt approval mode |
+| `playground.shell must be auto, bash, zsh, sh, powershell or cmd.` | Misspelt shell |
 | `playground.search_url must be an http(s) address.` | SearXNG address is not http(s) |
 | `playground.compact_threshold must be between 0.5 and 0.95.` | Compaction threshold out of range |
 | `security.allow_origins requires server.access_token …` | Allowed origins without a tool access key |

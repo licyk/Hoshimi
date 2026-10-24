@@ -1,4 +1,4 @@
-"""The Playground as an agent: tool rounds (as many as a reply takes), approvals, stops, and replies with tools sent again."""
+"""The Playground as an agent: tool rounds (as many as a reply takes), approvals (the user's and the reviewer's), stops, and replies with tools sent again."""
 
 from __future__ import annotations
 
@@ -11,7 +11,8 @@ from typing import Any
 
 import pytest
 
-from hoshimi.api.playground import DENIED_CALL, STOPPED_CALL, PlaygroundRunner
+from hoshimi.api.playground import DENIED_CALL, DENIED_TOO_OFTEN_CALL, STOPPED_CALL, PlaygroundRunner
+from hoshimi.core.agent.review import ACTION_START, REVIEW_POLICY
 from hoshimi.core.catalog import ModelSpec
 from hoshimi.core.context import Services
 from hoshimi.core.providers.base import Account
@@ -25,10 +26,17 @@ class AgentProvider(FakeProvider):
     """``agent`` calls what the question asks for (a JSON list of calls), then says what the last result was.
 
     ``tireless`` calls ``read`` round after round, ``TIRELESS_ROUNDS`` times, then answers; ``plain`` makes no tool calls at all.
+
+    Asked to review a call (by any model), it denies ``rm -rf``, answers nonsense for a command that says ``nonsense``, fails for
+    one that says ``explode``, and allows anything else (in prose around the JSON, which still counts).
     """
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.reviews: list[dict[str, Any]] = []
+
     def fallback_models(self) -> list[str]:
-        return ["agent", "tireless", "plain", "picky"]
+        return ["agent", "tireless", "plain", "picky", "judge"]
 
     def specs(self) -> dict[str, ModelSpec]:
         specs = super().specs()
@@ -36,6 +44,18 @@ class AgentProvider(FakeProvider):
         return specs
 
     def stream_raw(self, account: Account, model: str, body: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        if body["messages"][0] == {"role": "system", "content": REVIEW_POLICY}:
+            self.reviews.append(json.loads(json.dumps(body)))
+            action = body["messages"][1]["content"].split(ACTION_START)[1]
+            if "rm -rf" in action:
+                yield {"type": "text_delta", "text": json.dumps({"risk_level": "high", "user_authorization": "unknown", "outcome": "deny", "rationale": "It deletes files nobody asked to delete."})}
+            elif "nonsense" in action:
+                yield {"type": "text_delta", "text": "Looks fine to me!"}
+            elif "explode" in action:
+                yield {"type": "error", "message": "the reviewer's station is down"}
+            else:
+                yield {"type": "text_delta", "text": 'Sure. {"outcome": "allow"}'}
+            return
         self.seen.append(json.loads(json.dumps(body)))
         last = body["messages"][-1]
         if model == "picky":
@@ -75,7 +95,7 @@ def provider() -> AgentProvider:
 
 @pytest.fixture
 def services(provider: AgentProvider) -> Services:
-    services = make_services(provider, playground_tools=["read", "apply_patch", "shell", "terminal"], playground_approval="auto")
+    services = make_services(provider, playground_tools=["read", "apply_patch", "shell", "terminal"], playground_approval="workspace")
     workspace = PlaygroundRunner(services).workspace()
     workspace.mkdir(parents=True)
     (workspace / "a.txt").write_text("hello\n")
@@ -184,7 +204,7 @@ def test_calls_go_as_text_once_tools_are_off(client: Any, provider: AgentProvide
 
 
 def test_a_reply_calls_tools_for_as_many_rounds_as_it_takes(provider: AgentProvider) -> None:
-    services = make_services(provider, playground_tools=["read"], playground_approval="auto")
+    services = make_services(provider, playground_tools=["read"], playground_approval="workspace")
     PlaygroundRunner(services).workspace().mkdir(parents=True)
     (PlaygroundRunner(services).workspace() / "a.txt").write_text("hello\n")
     conversation = services.conversations.create(model="tireless")
@@ -200,7 +220,7 @@ def test_a_reply_calls_tools_for_as_many_rounds_as_it_takes(provider: AgentProvi
 # -- approvals ------------------------------------------------------------------------- #
 @pytest.fixture
 def asking(provider: AgentProvider) -> Services:
-    services = make_services(provider, playground_tools=["read", "shell"])
+    services = make_services(provider, playground_tools=["read", "shell"], playground_approval="ask")
     PlaygroundRunner(services).workspace().mkdir(parents=True)
     return services
 
@@ -261,8 +281,8 @@ def _patch(name: str) -> list[Any]:
     return ["apply_patch", {"input": f"*** Begin Patch\n*** Add File: {name}\n+hi\n*** End Patch"}]
 
 
-def test_auto_asks_only_before_reaching_outside_the_workspace(provider: AgentProvider, tmp_path: Any) -> None:
-    services = make_services(provider, playground_tools=["apply_patch", "shell"], playground_approval="auto")
+def test_workspace_asks_only_before_reaching_outside_the_workspace(provider: AgentProvider, tmp_path: Any) -> None:
+    services = make_services(provider, playground_tools=["apply_patch", "shell"], playground_approval="workspace")
     workspace = PlaygroundRunner(services).workspace()
     cid, events = _reply(services, [_patch("in.txt"), ["shell", {"command": "true"}], _patch(str(tmp_path / "out.txt"))])
     step = _until_waiting(events)
@@ -311,8 +331,11 @@ def test_a_conversation_keeps_its_own_approval_mode(client: Any, services: Servi
     assert runner.approval_mode(cid) == "ask"
     # Empty follows Settings again.
     assert client.patch(f"/api/v1/playground/conversations/{cid}", json={"approval": ""}).json()["approval"] == ""
-    assert runner.approval_mode(cid) == services.settings.playground_approval == "auto"
+    assert runner.approval_mode(cid) == services.settings.playground_approval == "workspace"
     assert client.patch(f"/api/v1/playground/conversations/{cid}", json={"approval": "never"}).status_code == 422
+    # "auto" is the old name of "workspace".
+    assert client.patch(f"/api/v1/playground/conversations/{cid}", json={"approval": "auto"}).json()["approval"] == "workspace"
+    assert client.patch(f"/api/v1/playground/conversations/{cid}", json={"approval": "review"}).json()["approval"] == "review"
 
 
 def test_full_access_from_before_becomes_the_full_mode(tmp_path: Any) -> None:
@@ -331,10 +354,118 @@ def test_full_access_from_before_becomes_the_full_mode(tmp_path: Any) -> None:
     assert ConversationStore(Database(path)).approval("c1") == "full"
 
 
+def test_the_old_auto_mode_becomes_workspace(tmp_path: Any) -> None:
+    import sqlite3
+
+    from hoshimi.core.conversations import ConversationStore
+    from hoshimi.core.db import MIGRATIONS, Database
+
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    for number, script in enumerate(MIGRATIONS[:9], start=1):
+        conn.executescript(f"BEGIN;\n{script}\nPRAGMA user_version = {number};\nCOMMIT;")
+    conn.execute("INSERT INTO conversations(id, title, model, effort, archived, created_at, updated_at, approval) VALUES ('c1', 't', 'm', '', 0, 1, 1, 'auto')")
+    conn.commit()
+    conn.close()
+    store = ConversationStore(Database(path))
+    assert store.approval("c1") == "workspace"
+    conversation = store.get("c1")
+    assert conversation is not None and conversation.approval == "workspace"
+
+
 def test_an_answer_with_nothing_waiting_is_not_found(client: Any) -> None:
     cid = _new(client)
     assert client.post(f"/api/v1/playground/conversations/{cid}/approvals/call_x", json={"decision": "allow"}).status_code == 404
     assert client.post(f"/api/v1/playground/conversations/{cid}/approvals/call_x", json={"decision": "maybe"}).status_code == 422
+
+
+# -- the reviewer ---------------------------------------------------------------------------- #
+@pytest.fixture
+def reviewing(provider: AgentProvider) -> Services:
+    services = make_services(provider, playground_tools=["read", "apply_patch", "shell"])
+    assert services.settings.playground_approval == "review"
+    PlaygroundRunner(services).workspace().mkdir(parents=True)
+    return services
+
+
+def _calls(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [s for s in events[-1]["message"].steps if s["type"] == "tool"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shell")
+def test_the_reviewer_allows_a_call_and_it_runs_without_asking(reviewing: Services, provider: AgentProvider) -> None:
+    _, stream = _reply(reviewing, [["read", {"path": "."}], ["shell", {"command": "echo reviewed", "shell": "sh"}]])
+    events, statuses = [], []
+    for item in stream:  # a step is sent as it stands, and changes after
+        events.append(item)
+        if item["type"] == "tool" and item["step"]["name"] == "shell":
+            statuses.append((item["step"]["status"], item["step"]["review"] is not None))
+    # Sent for review, then with what the reviewer said, then run.
+    assert statuses == [("pending", False), ("reviewing", False), ("reviewing", True), ("running", True), ("done", True)]
+    read, shell = _calls(events)
+    # A read inside the workspace needs no one's leave; the command was reviewed, by the conversation's own model.
+    assert read["review"] is None and len(provider.reviews) == 1
+    assert shell["review"] == {"outcome": "allow", "risk_level": "low", "user_authorization": "unknown", "rationale": "", "model": "agent", "ms": shell["review"]["ms"], "failed": False}
+    assert "reviewed" in shell["output"] and shell["meta"]["shell"] == "sh"
+    # The reviewer read the user's question, the call, and which shell it runs in.
+    review = provider.reviews[0]
+    assert review["model"] == "agent" and "tools" not in review
+    sent = review["messages"][1]["content"]
+    assert '[user]: [["read"' in sent and '"tool": "shell"' in sent and '"shell": "sh"' in sent and '"needs": "command"' in sent
+
+
+def test_the_reviewer_denies_a_call_and_the_model_is_told_why(reviewing: Services, provider: AgentProvider) -> None:
+    _, events = _reply(reviewing, [["shell", {"command": "rm -rf ./build"}]])
+    events = list(events)
+    (call,) = _calls(events)
+    assert call["status"] == "denied" and (call["review"]["outcome"], call["review"]["risk_level"]) == ("deny", "high")
+    told = provider.seen[-1]["messages"][-1]
+    assert told["role"] == "tool" and told["content"].startswith("The automatic review denied this call; it did not run. It deletes files nobody asked to delete.")
+    assert not any(e["type"] == "tool" and e["step"]["status"] == "waiting" for e in events)
+
+
+def test_a_call_the_reviewer_cannot_judge_asks_the_user(reviewing: Services) -> None:
+    for command in ("echo nonsense", "echo explode"):
+        cid, events = _reply(reviewing, [["shell", {"command": command}]])
+        step = _until_waiting(events)
+        assert step["review"]["failed"] and step["review"]["outcome"] == ""
+        assert ("not valid JSON" if "nonsense" in command else "station is down") in step["review"]["rationale"]
+        threading.Timer(0.1, reviewing.agent.approvals.answer, (cid, step["id"], "deny")).start()
+        (call,) = _calls(list(events))
+        assert (call["status"], call["output"]) == ("denied", "")
+
+
+def test_review_model_reviews_in_the_conversations_place(reviewing: Services, provider: AgentProvider) -> None:
+    reviewing.settings.playground_review_model = "judge"
+    _, events = _reply(reviewing, [["shell", {"command": "true"}]])
+    (call,) = _calls(list(events))
+    assert call["review"]["model"] == "judge" and [r["model"] for r in provider.reviews] == ["judge"]
+
+
+def test_a_reply_whose_calls_keep_being_denied_is_stopped(reviewing: Services, provider: AgentProvider) -> None:
+    cid, events = _reply(reviewing, [["shell", {"command": f"rm -rf ./dir{i}"}] for i in range(4)])
+    events = list(events)
+    assert {"type": "notice", "notice": {"kind": "review-stopped", "name": "3"}} in events
+    reply = events[-1]["message"]
+    assert reply.status == "stopped"
+    assert [c["status"] for c in _calls(events)] == ["denied", "denied", "denied", "stopped"]
+    assert _calls(events)[-1]["output"] == DENIED_TOO_OFTEN_CALL
+    # The model was not asked again after the third denial.
+    assert len(provider.seen) == 1 and len(provider.reviews) == 3
+    # Sent again, every call has its result.
+    conversation = reviewing.conversations.get(cid)
+    assert conversation is not None
+    sent = PlaygroundRunner(reviewing).prepare(conversation, conversation.messages, "agent", describe=False, tools=True).messages
+    assert [m["content"] for m in sent if m["role"] == "tool"][-1] == DENIED_TOO_OFTEN_CALL
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shell")
+def test_always_from_the_user_skips_the_review(reviewing: Services, provider: AgentProvider) -> None:
+    cid, events = _reply(reviewing, [["shell", {"command": "echo nonsense"}], ["shell", {"command": "echo nonsense again"}]])
+    step = _until_waiting(events)
+    threading.Timer(0.1, lambda: reviewing.agent.approvals.answer(cid, step["id"], "always")).start()
+    assert [c["status"] for c in _calls(list(events))] == ["done", "done"]
+    assert len(provider.reviews) == 1
 
 
 # -- background commands ---------------------------------------------------------------- #
@@ -378,15 +509,31 @@ def test_stop_all_background_commands_is_scoped_and_repeatable(client: Any, serv
 
 
 # -- settings ---------------------------------------------------------------------------- #
+def test_every_tool_is_on_and_the_reviewer_approves_by_default(provider: AgentProvider) -> None:
+    from hoshimi.core.agent.tools import GROUPS
+    from hoshimi.core.config import Settings, settings_from_dict, settings_to_dict
+
+    services = make_services(provider)
+    assert (services.settings.playground_tools, services.settings.playground_approval) == (list(GROUPS), "review")
+    assert "playground" not in settings_to_dict(Settings())
+    # A config that turned every tool off keeps them off; the old "auto" reads as "workspace".
+    loaded = settings_from_dict({"playground": {"tools": [], "approval": "auto", "shell": "pwsh"}}, Settings())
+    assert (loaded.playground_tools, loaded.playground_approval, loaded.playground_shell) == ([], "workspace", "powershell")
+
+
 def test_the_tools_are_set_in_settings(client: Any, services: Services) -> None:
     view = client.get("/api/v1/settings").json()["playground"]
-    assert view["tools"] == ["read", "apply_patch", "shell", "terminal"] and view["approval"] == "auto"
+    assert view["tools"] == ["read", "apply_patch", "shell", "terminal"] and view["approval"] == "workspace"
+    assert view["shell"] == "auto" and view["shell_in_effect"] in view["shells"] and view["review_model"] == ""
     assert view["workspace_path"] == str(PlaygroundRunner(services).workspace())
     saved = client.patch("/api/v1/settings", json={"playground": {"tools": ["web_search"], "approval": "ask", "workspace": "/tmp/ws"}}).json()["playground"]
     assert (saved["tools"], saved["approval"], saved["workspace_path"]) == (["web_search"], "ask", "/tmp/ws")
     assert "max_steps" not in saved
     assert client.patch("/api/v1/settings", json={"playground": {"approval": "full"}}).json()["playground"]["approval"] == "full"
-    for bad in ({"tools": ["rm"]}, {"approval": "never"}, {"search_url": "searx.local"}):
+    assert client.patch("/api/v1/settings", json={"playground": {"approval": "auto"}}).json()["playground"]["approval"] == "workspace"
+    saved = client.patch("/api/v1/settings", json={"playground": {"review_model": "judge", "shell": "sh"}}).json()["playground"]
+    assert (saved["review_model"], saved["shell"], saved["shell_in_effect"]) == ("judge", "sh", "sh")
+    for bad in ({"tools": ["rm"]}, {"approval": "never"}, {"search_url": "searx.local"}, {"shell": "fish"}):
         assert client.patch("/api/v1/settings", json={"playground": bad}).status_code == 400, bad
 
 # -- steering ------------------------------------------------------------------------------ #

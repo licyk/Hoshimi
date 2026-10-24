@@ -11,6 +11,9 @@ from pydantic import Field
 from hoshimi.api.deps import ServicesDep
 from hoshimi.api.errors import ERROR_RESPONSES
 from hoshimi.api.playground import PlaygroundRunner
+from hoshimi.core.agent.approval import DEFAULT_APPROVAL, approval_mode
+from hoshimi.core.agent.terminals import available_shells, default_shell
+from hoshimi.core.agent.tools import GROUPS
 from hoshimi.core.config import Settings, save_settings, settings_from_dict, settings_to_dict, validate_settings
 from hoshimi.core.context import Services
 from hoshimi.core.errors import ValidationError
@@ -85,15 +88,24 @@ class PlaygroundSettingsView(Record):
     system_prompt: str = ""
     title_model: str = ""
     vision_model: str = "auto"
-    tools: list[str] = Field(default_factory=list)
-    """The built-in tools turned on: ``read``, ``apply_patch``, ``shell``, ``terminal``, ``web_search``, ``web_fetch``."""
+    tools: list[str] = Field(default_factory=lambda: list(GROUPS))
+    """The built-in tools turned on: ``read``, ``apply_patch``, ``shell``, ``terminal``, ``web_search``, ``web_fetch`` (all of them by default)."""
     workspace: str = ""
     """Where the tools work, as configured; empty for the default."""
     workspace_path: str = ""
     """Where the tools work, in effect."""
-    approval: Literal["ask", "auto", "full"] = "ask"
-    """When tools ask first: ``ask`` before commands, file changes and anything outside the workspace; ``auto`` only before
-    reaching outside the workspace; ``full`` never (a conversation can also be given full access on its own)."""
+    approval: Literal["ask", "workspace", "review", "full"] = "review"
+    """When tools ask first, and whom: ``review`` has the reviewer model judge commands, file changes and anything outside the
+    workspace (asking the user when it cannot); ``ask`` asks the user before those; ``workspace`` asks the user only before
+    reaching outside the workspace; ``full`` never asks. Each conversation can choose its own. ``auto`` is read as ``workspace``."""
+    review_model: str = ""
+    """The model that reviews calls in ``review`` mode; empty: the conversation's own."""
+    shell: str = "auto"
+    """The shell commands run in when a call names none: ``auto``, or ``bash``, ``zsh``, ``sh``, ``powershell`` or ``cmd``."""
+    shell_in_effect: str = ""
+    """The shell they run in, in effect (``auto`` resolved, or the one chosen when it is not installed)."""
+    shells: list[str] = Field(default_factory=list)
+    """The shells installed on this machine."""
     search_url: str = ""
     """A SearXNG instance for ``web_search``; empty searches DuckDuckGo."""
     auto_compact: bool = True
@@ -148,7 +160,8 @@ def _view(services: Services, request: Request | None = None) -> SettingsView:
         playground=PlaygroundSettingsView(
             system_prompt=settings.playground_system_prompt, title_model=settings.playground_title_model, vision_model=settings.playground_vision_model,
             tools=list(settings.playground_tools), workspace=settings.playground_workspace, workspace_path=str(PlaygroundRunner(services).workspace()),
-            approval=settings.playground_approval if settings.playground_approval in ("auto", "full") else "ask",
+            approval=approval_mode(settings.playground_approval) or DEFAULT_APPROVAL, review_model=settings.playground_review_model,
+            shell=settings.playground_shell, shell_in_effect=default_shell(settings.playground_shell).kind, shells=available_shells(),
             search_url=settings.playground_search_url, auto_compact=settings.playground_auto_compact,
             compact_threshold=settings.playground_compact_threshold, compact_model=settings.playground_compact_model,
         ),

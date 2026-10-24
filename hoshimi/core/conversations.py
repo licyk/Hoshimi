@@ -33,6 +33,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from hoshimi.core.agent.approval import approval_mode
 from hoshimi.core.db import Database
 
 Role = Literal["user", "assistant", "checkpoint"]
@@ -120,7 +121,7 @@ class Conversation:
     tools_on: list[str] = field(default_factory=list)
     """The tools this conversation uses, though Settings leaves them off."""
     approval: str = ""
-    """When its tools ask first (``ask``, ``auto`` or ``full``, as ``playground.approval``); empty: as Settings say."""
+    """When its tools ask first, and whom (``ask``, ``workspace``, ``review`` or ``full``, as ``playground.approval``); empty: as Settings say."""
 
 
 def title_from(text: str) -> str:
@@ -162,7 +163,7 @@ class ConversationStore:
             "INSERT INTO conversations(id, title, title_state, model, effort, archived, temporary, tools_off, tools_on, approval, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)",
             (conversation_id, title_from(title), "user" if title.strip() else "", model, effort, int(temporary), json.dumps(tools_off or []), json.dumps(tools_on or []),
-             approval, now, now),
+             approval_mode(approval), now, now),
         )
         conversation = self.get(conversation_id)
         assert conversation is not None
@@ -205,7 +206,7 @@ class ConversationStore:
         if tools_on is not None:
             changes["tools_on"] = json.dumps(list(dict.fromkeys(tools_on)))
         if approval is not None:
-            changes["approval"] = approval
+            changes["approval"] = approval_mode(approval)
         if current_leaf is not None:
             if self._db.fetchone("SELECT 1 FROM chat_messages WHERE id = ? AND conversation_id = ?", (current_leaf, conversation_id)) is None:
                 raise ValueError(f"No message '{current_leaf}' in this conversation.")
@@ -324,7 +325,7 @@ class ConversationStore:
     def approval(self, conversation_id: str) -> str:
         """A conversation's own approval mode, empty for Settings' (read alone, as each call is about to run)."""
         row = self._db.fetchone("SELECT approval FROM conversations WHERE id = ?", (conversation_id,))
-        return str(row["approval"]) if row else ""
+        return approval_mode(str(row["approval"])) if row else ""
 
     def save_steps(self, message_id: str, steps: list[dict[str, Any]], content: str) -> None:
         """Keep a reply's steps so far, while it goes on: a tool's effects are real before the reply ends."""
@@ -499,5 +500,5 @@ def _conversation(row: sqlite3.Row, messages: list[ChatMessage] | None = None) -
         temporary=bool(row["temporary"]), current_leaf=row["current_leaf"], branched_from=row["branched_from"], branched_at=row["branched_at"],
         created_at=row["created_at"], updated_at=row["updated_at"], messages=messages or [], tools_off=[str(t) for t in _json_list(row["tools_off"])],
         tools_on=[str(t) for t in _json_list(row["tools_on"])],
-        approval=row["approval"],
+        approval=approval_mode(row["approval"]),
     )

@@ -263,6 +263,10 @@ MIGRATIONS: list[str] = [
     ALTER TABLE chat_messages ADD COLUMN waited_ms   INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE chat_messages ADD COLUMN finished_at REAL    NOT NULL DEFAULT 0;
     """,
+    # 10: the approval mode "auto" (ask only outside the workspace) is called "workspace", now that "review" decides on its own.
+    """
+    UPDATE conversations SET approval = 'workspace' WHERE approval = 'auto';
+    """,
 ]
 
 

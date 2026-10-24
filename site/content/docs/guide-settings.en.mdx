@@ -58,11 +58,11 @@ The Playground's built-in tools let models that make tool calls read and edit fi
 
 <Callout type="warn" title="There is no sandbox">
 
-Commands and file edits run on this computer with the permissions of the user running Hoshimi. There is no sandbox: turn on only what you need, and keep approvals on.
+Commands and file edits run on this computer with the permissions of the user running Hoshimi. There is no sandbox: Automatic review has a model judge each command and edit first, and Ask first leaves every one to you.
 
 </Callout>
 
-**Tools for new chats** (`playground.tools`, all off by default):
+**Tools for new chats** (`playground.tools`, all on by default):
 
 | Switch | Config value | What it does |
 | --- | --- | --- |
@@ -77,7 +77,9 @@ Commands and file edits run on this computer with the permissions of the user ru
 
 | Setting | Config key | Default | What it does |
 | --- | --- | --- | --- |
-| **When tools ask first** | `playground.approval` | **Ask first** (`ask`) | **Ask first**: before commands, file changes and anything outside the workspace; **Ask outside the workspace** (`auto`): commands and changes in the workspace run, reads and changes outside it ask; **Full access** (`full`): nothing asks. Calls that ask wait in the chat for your approval; the shield in a chat's composer changes the mode for that chat alone |
+| **When tools ask first** | `playground.approval` | **Automatic review** (`review`) | **Automatic review**: a model judges commands, file changes and anything outside the workspace, and denies what's risky; you're asked when it can't decide; **Ask first** (`ask`): before commands, file changes and anything outside the workspace; **Ask outside the workspace** (`workspace`, formerly `auto`): commands and changes in the workspace run, reads and changes outside it ask; **Full access** (`full`): nothing asks. Calls that need leave are judged by the review model, or wait in the chat for your approval; the shield in a chat's composer changes the mode for that chat alone |
+| **Review model** | `playground.review_model` | **The chat’s own model** | Judges tool calls under **Automatic review**. A fast, careful model is a good choice |
+| **Shell** | `playground.shell` | **Automatic** (`auto`) | Where commands run when the model names no shell. **Automatic** is bash (`sh` without it; PowerShell on Windows, `cmd` without it), and its help text shows the one in effect ("Now bash"). The menu lists only the shells installed here; a model can still ask for any other of them |
 | **Workspace** | `playground.workspace` | `workspace` in the data folder | Where tools start, and the only folder whose files they can edit. The help text shows the path in effect |
 | **SearXNG address** | `playground.search_url` | Empty | Search with your own SearXNG (its JSON format turned on); must be an `http://` or `https://` address. Empty uses DuckDuckGo |
 

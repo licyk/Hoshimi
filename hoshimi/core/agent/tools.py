@@ -8,7 +8,7 @@ from typing import Any
 
 from hoshimi.core.agent.base import Cancelled, Tool, ToolContext, ToolError, ToolResult, clip
 from hoshimi.core.agent.files import APPLY_PATCH, READ
-from hoshimi.core.agent.terminals import EXEC_COMMAND, KILL_SESSION, SHELL, WRITE_STDIN
+from hoshimi.core.agent.terminals import EXEC_COMMAND, KILL_SESSION, SHELL, WRITE_STDIN, with_shells
 from hoshimi.core.agent.web import WEB_FETCH, WEB_SEARCH
 
 logger = logging.getLogger(__name__)
@@ -18,8 +18,9 @@ GROUPS: tuple[str, ...] = ("read", "apply_patch", "shell", "terminal", "web_sear
 """The switches, in the order Settings shows them: ``terminal`` is exec_command, write_stdin and kill_session together."""
 
 
-def tools_for(groups: list[str] | tuple[str, ...] | set[str]) -> list[Tool]:
-    return [t for t in TOOLS.values() if t.group in groups]
+def tools_for(groups: list[str] | tuple[str, ...] | set[str], *, shell: str = "auto") -> list[Tool]:
+    """The tools of ``groups``, the command tools told which shells there are and which is the default (``shell``, as ``playground.shell``)."""
+    return [with_shells(t, shell) for t in TOOLS.values() if t.group in groups]
 
 
 def unsupported(name: str) -> str:

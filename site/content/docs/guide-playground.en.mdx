@@ -203,7 +203,7 @@ A compaction that fails leaves the conversation as it was. Editing a question fr
 
 ## How long a reply works
 
-While a reply runs, a line at its foot says what it is doing (writing, running a tool, compacting the context) and for how long, second by second. The clock stops while a tool call waits for your approval. When the reply ends, **Worked for 1m 23s** (or **Stopped after**, **Failed after**) stays beside its actions; point at it to see when it started and ended.
+While a reply runs, a line at its foot says what it is doing (writing, running or reviewing a tool, compacting the context) and for how long, second by second. The clock stops while a tool call waits for your approval; time the review model takes counts. When the reply ends, **Worked for 1m 23s** (or **Stopped after**, **Failed after**) stays beside its actions; point at it to see when it started and ended.
 
 ## How a reply ended
 
@@ -251,7 +251,7 @@ The tool settings (`playground.tools`, `workspace`, `approval`, `search_url`) ar
 
 Chats, their messages and attachments live in `hoshimi.db` in the data folder (see [Data folder and paths](/docs/config-paths)), and are kept until you delete them. The chat open last is remembered there too, which is how the Playground comes back to it from any browser. A reply cut off by a server stop is kept as stopped.
 
-Every model call the Playground makes is recorded in [Usage](/docs/guide-usage) like any other call, under its own origin: `playground` for replies, `playground-title` for titles, `playground-vision` for image descriptions and `playground-compact` for compaction summaries.
+Every model call the Playground makes is recorded in [Usage](/docs/guide-usage) like any other call, under its own origin: `playground` for replies, `playground-title` for titles, `playground-vision` for image descriptions, `playground-compact` for compaction summaries and `playground-review` for automatic reviews of tool calls.
 
 <Cards>
 <Card title="Playground tools" href="/docs/guide-agent" description="Let a model read and edit files, run commands and search the web, with approvals." />

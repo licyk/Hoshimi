@@ -1,14 +1,14 @@
 ---
 title: "Playground tools"
-description: "Turn the Playground into an agent: give a model built-in tools to read and edit files, run commands and search the web, choose when it asks first, approve its calls, and steer it while it works."
+description: "Turn the Playground into an agent: give a model built-in tools to read and edit files, run commands and search the web, choose when it asks first or has a model review its calls, approve its calls, and steer it while it works."
 icon: Wrench
 ---
 
-With tools on, a Playground reply becomes an agent loop. The model is offered built-in tools; each round it streams its words, the tools it called run one after another (after you approve the ones that need it), their results go back to it, and it goes on until a round calls nothing. The reply shows every call as a card you can open.
+With tools on, a Playground reply becomes an agent loop. The model is offered built-in tools; each round it streams its words, the tools it called run one after another (once the ones that need it are approved, by the review model or by you), their results go back to it, and it goes on until a round calls nothing. The reply shows every call as a card you can open.
 
 <Callout type="warn" title="Tools act on this computer">
 
-Commands and file edits run on the machine that runs Hoshimi, with the permissions of the user running it. There is no sandbox. All tools are off by default: turn on only what you need, and keep approvals on. The Safety section below says what each mode lets through.
+Commands and file edits run on the machine that runs Hoshimi, with the permissions of the user running it. There is no sandbox. All tools are on by default, and new chats start in **Automatic review**: a model judges each command, file change and anything outside the workspace before it runs, and denies what's risky. **Ask first** leaves every one to you. The Safety section below says what each mode lets through.
 
 </Callout>
 
@@ -19,7 +19,9 @@ Commands and file edits run on the machine that runs Hoshimi, with the permissio
 
 ### Choose the tools new chats start with
 
-Open **Settings › Tools**. Under **Tools for new chats**, switch on the tools you want (see [Settings](/docs/guide-settings)). This is the starting set for new chats; it does not force tools on any chat.
+Open **Settings › Tools**. Under **Tools for new chats**, all six are on by default; switch off the ones you don't want (see [Settings](/docs/guide-settings)). This is the starting set for new chats; it does not force tools on any chat.
+
+If your config file never set `playground.tools` or `playground.approval`, it now gets all tools and **Automatic review**. A config that sets `"tools": []` keeps none.
 
 </Step>
 <Step>
@@ -45,13 +47,13 @@ A chat keeps only how it differs from Settings (the tools it turned on, and the 
 | Switch (in Settings and the Tools menu) | Tool names the model sees | What it does | Asks first (never in Full access) |
 | --- | --- | --- | --- |
 | **Read files** | `read` | Read a text file, or list a folder | Only for paths outside the workspace |
-| **Edit files** | `apply_patch` | Create, change, move and delete files with a patch | Always in **Ask first**; in **Ask outside the workspace**, only for files outside it |
-| **Run commands** | `shell` | Run a command and wait for it | Only in **Ask first** |
-| **Background commands** | `exec_command`, `write_stdin`, `kill_session` | Start a command that keeps running, read its output, type into it, stop it | Starting one, only in **Ask first** |
+| **Edit files** | `apply_patch` | Create, change, move and delete files with a patch | Always in **Automatic review** and **Ask first**; in **Ask outside the workspace**, only for files outside it |
+| **Run commands** | `shell` | Run a command and wait for it | Only in **Automatic review** and **Ask first** |
+| **Background commands** | `exec_command`, `write_stdin`, `kill_session` | Start a command that keeps running, read its output, type into it, stop it | Starting one, or typing into one, only in **Automatic review** and **Ask first** |
 | **Search the web** | `web_search` | Search DuckDuckGo, or your own SearXNG | Never |
 | **Read web pages** | `web_fetch` | Read a public web page as Markdown | Never |
 
-Relative paths are taken from the workspace (see Workspace below). Whatever a tool returns, a model is sent at most 32,000 characters of it; the middle of a longer output is cut, keeping the start and the end.
+In **Automatic review**, a call that asks first goes to the review model, and comes to you only when it can't decide (see Automatic review below). Relative paths are taken from the workspace (see Workspace below). Whatever a tool returns, a model is sent at most 32,000 characters of it; the middle of a longer output is cut, keeping the start and the end.
 
 ### Read files (`read`)
 
@@ -84,7 +86,7 @@ Takes a patch in the Codex `apply_patch` format, so a model that knows the tool 
 
 ### Run commands (`shell`)
 
-- Runs the command with `bash -c` (`sh -c` where there is no bash; PowerShell on Windows), in the workspace unless the model gives a `workdir`.
+- Runs the command in the shell the model names, or else in the default shell (see Choose the shell below), in the workspace unless the model gives a `workdir`.
 - Waits for it to finish: 60 seconds by default, at most 10 minutes. A command that runs longer is stopped, with everything it started, and reported as timed out (exit code -1).
 - Returns the exit code, the time taken and the output, standard error included. The command gets no input (standard input is closed), and pagers and colours are turned off (`PAGER=cat`, `NO_COLOR=1`, `TERM=dumb`, `GIT_TERMINAL_PROMPT=0`).
 - For something that keeps running or asks for input, the model is told to use a background command instead.
@@ -97,7 +99,19 @@ Takes a patch in the Codex `apply_patch` format, so a model that knows the tool 
 - A session keeps up to 1,000,000 characters of unread output (the middle of more is dropped); colour codes are stripped.
 - At most 16 background commands run at once on the server. Sessions belong to the chat that started them, and stop when that chat is deleted and when the server stops.
 
-Only `exec_command` can ask first; `write_stdin` and `kill_session` act on a command already approved.
+`exec_command` asks first like `shell`. `write_stdin` asks too when it types something (**Run this command?**), since typing into a shell runs commands; only reading output never asks. `kill_session` never asks.
+
+### Choose the shell
+
+`shell` and `exec_command` take an optional `shell`: `bash`, `zsh`, `sh`, `powershell` (PowerShell 7, `pwsh`, is preferred over Windows PowerShell; `pwsh` is accepted as a name) or `cmd`, by name or by path (such as `/usr/bin/zsh`). A shell that is unknown or not installed is an error the model reads, listing the shells installed.
+
+| Shell | How a command runs |
+| --- | --- |
+| bash, zsh, sh | `<shell> -c <command>`, never as a login shell |
+| PowerShell | `-NoLogo -NoProfile -NonInteractive -Command <command>` |
+| cmd | `/d /s /c <command>` |
+
+A call that names no shell runs in **Settings › Tools › How tools run › Shell** (`playground.shell`). **Automatic**, the default, is bash, or `sh` where there is no bash; on Windows it is PowerShell, or cmd without it. The option shows what it is now ("Now bash"). The menu lists only the shells installed on the machine; a chosen shell that is not installed falls back to automatic. The tool descriptions tell the model the default shell and the ones installed, and a command's result says which shell it ran in.
 
 ### Search the web (`web_search`)
 
@@ -115,27 +129,58 @@ Both web tools go out through the gateway's network settings, including its prox
 
 ## When tools ask first
 
-The approval mode decides which calls wait for you. New chats start with **Settings › Tools › How tools run › When tools ask first**; each chat can choose its own.
+The approval mode decides which calls need approval, and who gives it: the review model or you. New chats start with **Settings › Tools › How tools run › When tools ask first**; each chat can choose its own.
 
 | Mode (`playground.approval`) | Short name | Asks before |
 | --- | --- | --- |
-| **Ask first** (`ask`, default) | **Ask** | Every command (`shell`, `exec_command`), every file change, and reading anything outside the workspace |
-| **Ask outside the workspace** (`auto`) | **Auto** | Only reading or changing files outside the workspace. Commands and changes inside it run without asking |
+| **Automatic review** (`review`, default) | **Auto review** | The calls **Ask first** asks about go to the review model, which allows or denies them; you're asked only when it can't decide |
+| **Ask first** (`ask`) | **Ask** | Every command (`shell`, `exec_command`, and `write_stdin` when it types), every file change, and reading anything outside the workspace |
+| **Ask outside the workspace** (`workspace`) | **Workspace** | Only reading or changing files outside the workspace. Commands and changes inside it run without asking |
 | **Full access** (`full`) | **Full access** | Nothing. Tools do whatever the model calls for |
 
-Searching and reading web pages never ask, and neither do reads inside the workspace.
+Searching and reading web pages never ask, and neither do reads inside the workspace. `auto`, the old name of `workspace`, is still accepted in the config file and the API; chats saved with it are moved to `workspace`.
 
 ### The shield menu in the composer
 
-When a chat has at least one tool on, a shield appears in the composer next to **Tools**. It shows the chat's mode (**Ask**, **Auto**, or **Full access** in red) and opens **When tools ask first** to change it for this chat alone. It works even while a reply is running: the new mode applies from the next tool call. A new chat starts as Settings say again. On a phone the shield shows only its icon.
+When a chat has at least one tool on, a shield appears in the composer next to **Tools**. It shows the chat's mode (**Auto review**, a shield with a check; **Ask**, a shield with a person; **Workspace**, a half shield; or **Full access**, a shield crossed out in red) and opens **When tools ask first** to change it for this chat alone. It works even while a reply is running: the new mode applies from the next tool call. A new chat starts as Settings say again. On a phone the shield shows only its icon.
+
+## Automatic review
+
+In **Automatic review**, the calls that would ask in **Ask first** go to a model instead of to you: every `shell` and `exec_command`, `write_stdin` when it types something, every `apply_patch`, and `read` outside the workspace. The reviewer is **Settings › Tools › How tools run › Review model** (`playground.review_model`); empty, the default, is **The chat’s own model**. A fast, careful model is a good choice.
+
+The reviewer is sent:
+
+- A fixed policy, adapted from the automatic review ("guardian") in OpenAI Codex. It tells the reviewer there is no sandbox.
+- The conversation so far, as a transcript. Only your messages count as trusted; the assistant's text, its tool calls and their output are untrusted, so instructions planted in a file or a web page cannot authorise anything.
+- The planned call as JSON: the tool, its arguments, what it needs approval for, whether it reaches outside the workspace, the workspace, and for commands the shell.
+
+It cannot run anything itself. It answers with a risk level (low, medium, high or critical), how clearly you authorised the call (unknown, low, medium or high), an outcome and a one-sentence rationale:
+
+| Risk | Outcome |
+| --- | --- |
+| Low, medium | Allowed |
+| High | Allowed only when you clearly asked for it (authorisation at least medium) and it is narrowly scoped |
+| Critical | Denied |
+
+High and critical are things like deleting data that can't be recovered, force-pushing shared branches, sending secrets or private data somewhere untrusted, reading credentials from unusual places, or weakening security for good.
+
+- **Allowed**: the call runs. Opening its card shows "Allowed by *model*", with the risk and the rationale when given.
+- **Denied**: the card shows **Denied by review** and opens to show "Denied by *model* · high risk — *rationale*". The model is told the rationale and not to work around it: no workaround, indirect execution or other tool to the same end. It goes on only with a materially safer alternative, or if you explicitly approve after being told the risk; otherwise it stops and asks you.
+- **No decision**: a review takes at most 90 seconds. If the reviewer fails (a station error, too slow, or an answer that isn't a decision), the call is not denied: it waits for you with **Needs approval**, as in **Ask first**, and the card says "The automatic review couldn’t decide, so you’re asked — *reason*".
+
+While a call is reviewed, its card shows **Reviewing…** and the reply's foot line **Reviewing *tool*…**. Review time counts as the reply's own working time; time waiting for you is left out of "Worked for".
+
+If the reviewer denies 3 calls in a row, or 10 in one reply, the reply is stopped: the calls left in that round are marked **Stopped**, and the reply ends with "The automatic review denied *n* of this reply’s calls, so it was stopped. Say how to go on, or choose another approval mode."
+
+**Always allow**, given by you earlier in the chat, still holds: the calls it covers run without asking anyone, the reviewer included.
 
 ## Answer an approval
 
-A call that must ask stops with **Needs approval**, opens, and shows what it would do (the command, or the patch with its added and removed lines) and a question:
+A call that must ask you stops with **Needs approval**, opens, and shows what it would do (the command, or the patch with its added and removed lines) and a question:
 
 | Question | Asked for |
 | --- | --- |
-| **Run this command?** | `shell` or `exec_command` |
+| **Run this command?** | `shell`, `exec_command`, or `write_stdin` typing into a session |
 | **Apply these changes?** | A patch inside the workspace |
 | **Change files outside the workspace?** | A patch that touches a file outside it |
 | **Read this file outside the workspace?** | `read` outside the workspace |
@@ -155,11 +200,13 @@ Each call is a line in the reply: an icon, a verb and what it acted on (**Read**
 | State | Meaning |
 | --- | --- |
 | **Preparing…** | The model is still writing the call |
+| **Reviewing…** | The review model is judging it |
 | **Needs approval** | Waiting for your answer |
 | A spinner with the time | Running |
 | A check with the time | Done |
 | **Exit** *code* or **Failed** | The command exited with an error, or the tool failed; the model reads why |
 | **Declined** | You denied it |
+| **Denied by review** | The review model denied it; the model reads why |
 | **Stopped** | The reply was stopped before it finished |
 
 Click a card to open it: the command, the patch, or the arguments as sent, and what came back. Between rounds the reply shows **Working…**.
@@ -181,30 +228,33 @@ Commands a chat's tools started with `exec_command` and that are still running a
 
 The workspace is where the tools start: relative paths resolve there, and `shell` and background commands run there unless the model names another folder. It is **Settings › Tools › How tools run › Workspace** (`playground.workspace`; `~` is expanded); empty uses `workspace` in the data folder (see [Data folder and paths](/docs/config-paths)). It is created when a reply with tools first runs.
 
-The workspace is the line the approval modes draw: reading or changing files outside it asks in **Ask first** and **Ask outside the workspace**. It is not a boundary for commands: a command can `cd` anywhere and touch anything the user running Hoshimi can.
+The workspace is the line the approval modes draw: reading or changing files outside it asks in **Ask first** and **Ask outside the workspace**, and goes to the review model in **Automatic review**. It is not a boundary for commands: a command can `cd` anywhere and touch anything the user running Hoshimi can.
 
 ## Stopping
 
-A reply calls tools for as many rounds as it takes: there is no limit, and it ends when the model answers without calling one. **Stop** (or <kbd>Esc</kbd>) ends the reply at once. A running `shell` command is stopped with everything it started; a call waiting for approval is dropped; calls not yet run are marked **Stopped**. What the reply said and did so far is kept. Background commands keep running: stop them above the composer.
+A reply calls tools for as many rounds as it takes: there is no limit, and it ends when the model answers without calling one. **Stop** (or <kbd>Esc</kbd>) ends the reply at once. A running `shell` command is stopped with everything it started; a call waiting for approval or being reviewed is dropped; calls not yet run are marked **Stopped**. What the reply said and did so far is kept. Background commands keep running: stop them above the composer.
 
 ## Safety
 
 There is no sandbox. Tools run as the user running Hoshimi, on that machine, with its files, credentials and network.
 
 - **Ask first** is the only mode where you see every command and every file change before it happens. Read each one before you allow it.
+- **Automatic review** is a model's judgement. It can be wrong both ways, allowing what it should not and denying what is fine, and it can be fooled. It is a safeguard, not a sandbox.
 - **Ask outside the workspace** runs any command without asking. A command is not confined to the workspace, so in this mode a model can change or delete files anywhere the user can, and reach your network. Use it only with a model and a task you trust.
 - **Full access** runs every call without asking, including edits outside the workspace.
-- **Always allow** removes the question for the rest of the chat (until the server restarts). Prefer **Allow** for anything you want to check each time.
+- **Always allow** removes the question for the rest of the chat (until the server restarts), and in **Automatic review** skips the reviewer too. Prefer **Allow** for anything you want to check each time.
 - `web_fetch` refuses local and private addresses, but `shell` and background commands do not: a command can reach anything the machine can, including the gateway's own API.
-- What a model reads (web pages, files, command output) can contain instructions meant to steer it. Keep approvals on when tools read untrusted content.
+- What a model reads (web pages, files, command output) can contain instructions meant to steer it. Use **Ask first** when tools read untrusted content.
 - If the server is reachable from other machines, anyone who can sign in to the Web UI can use these tools. Set an access key and limit who can connect (see [Access and security](/docs/config-security)).
 
 ## Settings reference
 
 | Setting (**Settings › Tools**) | Key | Default |
 | --- | --- | --- |
-| **Tools for new chats** | `playground.tools`: any of `read`, `apply_patch`, `shell`, `terminal`, `web_search`, `web_fetch` | `[]` (none) |
-| **When tools ask first** | `playground.approval`: `ask`, `auto` or `full` | `ask` |
+| **Tools for new chats** | `playground.tools`: any of `read`, `apply_patch`, `shell`, `terminal`, `web_search`, `web_fetch` | All six (`[]` keeps none) |
+| **When tools ask first** | `playground.approval`: `review`, `ask`, `workspace` (`auto` is its old name) or `full` | `review` |
+| **Review model** | `playground.review_model` | empty: the chat's own model |
+| **Shell** | `playground.shell`: `auto`, `bash`, `zsh`, `sh`, `powershell` or `cmd` | `auto` |
 | **Workspace** | `playground.workspace` | empty: `workspace` in the data folder |
 | **SearXNG address** | `playground.search_url` (an `http(s)` address) | empty: DuckDuckGo |
 
@@ -214,7 +264,9 @@ There is no sandbox. Tools run as the user running Hoshimi, on that machine, wit
 {
   "playground": {
     "tools": ["read", "apply_patch", "shell", "web_search", "web_fetch"],
-    "approval": "ask",
+    "approval": "review",
+    "review_model": "",
+    "shell": "auto",
     "workspace": "~/hoshimi-work",
     "search_url": ""
   }

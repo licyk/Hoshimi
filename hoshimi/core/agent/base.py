@@ -40,6 +40,8 @@ class ToolContext:
     network: NetworkPolicy = field(default_factory=NetworkPolicy)
     search_url: str = ""
     """A SearXNG instance to search with; empty searches DuckDuckGo."""
+    shell: str = "auto"
+    """The shell a command runs in when its call names none (``playground.shell``)."""
     transport: Any = None
     """An httpx transport for the web tools (tests)."""
 
@@ -76,10 +78,10 @@ class ToolResult:
 
 @dataclass(frozen=True)
 class Permission:
-    """What a call needs the user's leave for: ``reason`` (``command``, ``edit`` or ``read``), and whether it reaches outside the workspace.
+    """What a call needs leave for: ``reason`` (``command``, ``edit`` or ``read``), and whether it reaches outside the workspace.
 
-    ``ask`` mode asks for every permission, ``auto`` only for one that reaches
-    outside the workspace, ``full`` for none.
+    Whether it is asked, and who answers (the user or the reviewer), depends on
+    the approval mode: see :mod:`hoshimi.core.agent.approval`.
     """
 
     reason: str
@@ -91,15 +93,6 @@ class Permission:
         return f"{self.reason}-outside" if self.outside else self.reason
 
 
-APPROVAL_MODES = ("ask", "auto", "full")
-
-
-def needs_approval(permission: Permission | None, mode: str) -> bool:
-    if permission is None or mode == "full":
-        return False
-    return mode != "auto" or permission.outside
-
-
 @dataclass(frozen=True)
 class Tool:
     name: str
@@ -109,7 +102,7 @@ class Tool:
     parameters: dict[str, Any]
     run: Callable[[dict[str, Any], ToolContext], ToolResult]
     permission: Callable[[dict[str, Any], ToolContext], Permission | None] = lambda args, ctx: None
-    """What this call needs the user's leave for (whether it is asked depends on the approval mode), or None."""
+    """What this call needs leave for (whether it is asked, and of whom, depends on the approval mode), or None."""
 
     def definition(self) -> dict[str, Any]:
         """The tool as a Chat Completions ``tools`` entry."""

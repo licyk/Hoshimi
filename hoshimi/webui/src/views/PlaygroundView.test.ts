@@ -473,15 +473,15 @@ describe('Playground chat', () => {
     state.tools = ['shell'];
     const { wrapper } = await openPlayground();
     const chip = () => wrapper.find('.approval-menu button');
-    // A new chat starts as Settings say.
-    expect(chip().text()).toBe('Ask');
+    // A new chat starts as Settings say: the reviewer decides, unless Settings say otherwise.
+    expect(chip().text()).toBe('Auto review');
     await chip().trigger('click');
     await flushPromises();
     const options = () => [...document.body.querySelectorAll<HTMLElement>('.menu [role="option"]')];
     expect(options().map((o) => [o.querySelector('.name')!.textContent, o.getAttribute('aria-selected')])).toEqual([
-      ['Ask first', 'true'], ['Ask outside the workspace', 'false'], ['Full access', 'false'],
+      ['Automatic review', 'true'], ['Ask first', 'false'], ['Ask outside the workspace', 'false'], ['Full access', 'false'],
     ]);
-    options()[2].click();
+    options()[3].click();
     await flushPromises();
     expect(chip().text()).toBe('Full access');
     expect(chip().classes()).toContain('danger');
@@ -491,13 +491,42 @@ describe('Playground chat', () => {
     expect((calls('POST', /^\/conversations$/)[0].body as { approval: string }).approval).toBe('full');
     await chip().trigger('click');
     await flushPromises();
-    options()[1].click();
+    options()[2].click();
     await flushPromises();
-    expect(calls('PATCH', /^\/conversations\/c\d+$/).map((c) => c.body)).toContainEqual({ approval: 'auto' });
-    expect(chip().text()).toBe('Auto');
+    expect(calls('PATCH', /^\/conversations\/c\d+$/).map((c) => c.body)).toContainEqual({ approval: 'workspace' });
+    expect(chip().text()).toBe('Workspace');
     // The next new chat starts as Settings say again.
     await wrapper.find('.chat-header .corner').trigger('click');
-    expect(chip().text()).toBe('Ask');
+    expect(chip().text()).toBe('Auto review');
+    state.tools = [];
+    wrapper.unmount();
+  });
+
+  it('shows a call the reviewer is judging, what it decided, and why it asks when it cannot', async () => {
+    state.tools = ['shell'];
+    const { wrapper } = await openPlayground();
+    await ask(wrapper, 'clean up');
+    const stream = streams[0];
+    const call = { type: 'tool', id: 'call_1', name: 'shell', arguments: '{"command": "rm -rf build"}', status: 'reviewing', output: '', exit_code: null, ms: 0, meta: {}, approval: 'command', review: null, round: 0 };
+    stream.send({ type: 'tool', step: call });
+    await flushPromises();
+    const tool = () => wrapper.find('.assistant-message .tool-call');
+    expect(tool().find('.state').text()).toBe('Reviewing…');
+    expect(wrapper.find('.assistant-message .run-status .label').text()).toBe('Reviewing shell…');
+    const review = { outcome: 'deny', risk_level: 'high', user_authorization: 'unknown', rationale: 'It deletes the build.', model: 'judge', ms: 900, failed: false };
+    stream.send({ type: 'tool', step: { ...call, status: 'denied', review, output: 'The automatic review denied this call; it did not run. It deletes the build.' } });
+    await flushPromises();
+    expect(tool().find('.state').text()).toBe('Denied by review');
+    // It opens to say why; the words the model is told are not shown as its output.
+    expect(tool().find('.review').text()).toBe('Denied by judge · high risk — It deletes the build.');
+    expect(tool().find('.output').exists()).toBe(false);
+    const failed = { ...review, outcome: '', risk_level: '', user_authorization: '', rationale: 'The reviewer (judge) failed: down', failed: true };
+    stream.send({ type: 'tool', step: { ...call, id: 'call_2', status: 'waiting', review: failed } });
+    await flushPromises();
+    const second = wrapper.findAll('.assistant-message .tool-call').at(-1)!;
+    expect(second.find('.approval').text()).toContain('Run this command?');
+    expect(second.find('.approval .why').text()).toBe('The automatic review couldn’t decide, so you’re asked — The reviewer (judge) failed: down');
+    await answer('Stopped there.');
     state.tools = [];
     wrapper.unmount();
   });

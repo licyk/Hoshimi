@@ -15,9 +15,12 @@ sent is put together here, from the conversation's path:
 With tools turned on (``playground.tools``, less the ones a conversation
 turned off), a reply is an agent loop: the model is offered the built-in
 tools (:mod:`hoshimi.core.agent`); each round it streams, the tools it called
-run one after another (after the user approves the ones the approval mode
-asks about: see :func:`PlaygroundRunner.approval_mode`), their results go back to it, and it goes
-on until a round calls nothing.
+run one after another (after the ones the approval mode asks about are
+approved, by the user or by the reviewer model: see
+:mod:`hoshimi.core.agent.approval` and :func:`PlaygroundRunner.approval_mode`),
+their results go back to it, and it goes on until a round calls nothing. A
+reply whose calls the reviewer keeps denying is stopped (see
+:class:`~hoshimi.core.agent.approval.DenialBreaker`).
 Such a reply keeps its *steps*, in order:
 
 - ``{"type": "reasoning", "text", "ms", "round"}``;
@@ -25,9 +28,11 @@ Such a reply keeps its *steps*, in order:
 - ``{"type": "user", "id", "text", "round"}``: a message the user sent while
   the reply ran (it *steered* it), read by the model at the start of its round;
 - ``{"type": "tool", "id", "name", "arguments", "status", "output", "exit_code",
-  "ms", "meta", "approval", "round"}``, where ``status`` is ``pending`` (being
-  written), ``waiting`` (for approval, ``approval`` saying why), ``running``,
-  ``done``, ``error``, ``denied`` or ``stopped``.
+  "ms", "meta", "approval", "review", "round"}``, where ``status`` is ``pending``
+  (being written), ``reviewing`` (by the reviewer) or ``waiting`` (for the
+  user), ``approval`` saying why, ``running``, ``done``, ``error``, ``denied``
+  or ``stopped``; ``review`` is what the reviewer said of it (see
+  :meth:`hoshimi.core.agent.review.Review.view`), or None.
 
 Its ``content`` is its text steps together. Sent to a model again, each round
 becomes its steering messages (as user messages), an assistant message with its
@@ -71,8 +76,11 @@ from typing import Any
 
 from hoshimi.api import compaction
 from hoshimi.api.inference import tracked_chunks
-from hoshimi.core.agent.base import Tool, ToolContext, ToolError, needs_approval
+from hoshimi.core.agent.approval import DEFAULT_APPROVAL, ApprovalRequest, ApprovalRouter, Approver, DenialBreaker, Verdict
+from hoshimi.core.agent.approval import approval_mode as named_mode
+from hoshimi.core.agent.base import Cancelled, Tool, ToolContext, ToolError
 from hoshimi.core.agent.context_window import Budget, budget, estimate, text_tokens
+from hoshimi.core.agent.review import REVIEW_POLICY, REVIEW_TIMEOUT, Review, ReviewFailed, parse_review, review_messages
 from hoshimi.core.agent.runtime import Steer
 from hoshimi.core.agent.tools import GROUPS, parse_arguments, run_tool, tools_for, unsupported
 from hoshimi.core.context import Services
@@ -107,6 +115,16 @@ _TOOLS_REFUSAL = re.compile(r"\btools?\b|tool_choice|function[ _-]?call", re.IGN
 TOO_LONG = "The conversation no longer fits in {model}'s context window, even compacted. Start a new chat, or branch it from an earlier message."
 SUMMARY_SHARE = 0.75
 """The most of the summarising model's window the conversation it summarises may take."""
+REVIEW_SHARE = 0.5
+"""The most of the reviewer's window the transcript it reads may take."""
+
+
+class DeniedTooOften(Exception):
+    """The reviewer denied so many of a reply's calls that it is stopped."""
+
+    def __init__(self, denials: int) -> None:
+        super().__init__(f"The automatic review denied {denials} calls.")
+        self.denials = denials
 
 
 class Stopped(Exception):
@@ -203,6 +221,7 @@ class Run:
     started: float = field(default_factory=time.monotonic)
     waited: float = 0.0
     """Seconds it waited for the user to approve calls."""
+    denials: DenialBreaker = field(default_factory=DenialBreaker)
     _reasoning_since: float | None = None
 
     def _last(self, kind: str) -> dict[str, Any] | None:
@@ -277,7 +296,7 @@ class Run:
         if not call_id or any(s.get("id") == call_id for s in self.steps):
             call_id = f"call_{uuid.uuid4().hex[:24]}"
         step = {"type": "tool", "id": call_id, "name": name, "arguments": "", "status": "pending", "output": "", "exit_code": None, "ms": 0,
-                "meta": {}, "approval": "", "round": self.round}
+                "meta": {}, "approval": "", "review": None, "round": self.round}
         self.steps.append(step)
         return step
 
@@ -304,7 +323,7 @@ class Run:
     def stop_calls(self) -> None:
         """Calls (and a compaction) the stop cut short before they ran."""
         for step in self.steps:
-            if step["type"] == "tool" and step["status"] in ("pending", "waiting", "running"):
+            if step["type"] == "tool" and step["status"] in ("pending", "reviewing", "waiting", "running"):
                 step["status"] = "stopped"
                 step["output"] = step["output"] or STOPPED_CALL
             elif step["type"] == "compaction" and step["status"] == "running":
@@ -313,6 +332,7 @@ class Run:
 
 STOPPED_CALL = "The user stopped the reply before this call finished."
 DENIED_CALL = "The user declined this call; it did not run. Do not try it again unless they ask."
+DENIED_TOO_OFTEN_CALL = "The reply was stopped before this call ran: the automatic review had denied too many of its calls."
 
 
 def call_result(step: dict[str, Any]) -> str:
@@ -320,7 +340,8 @@ def call_result(step: dict[str, Any]) -> str:
     if step["status"] == "stopped":
         return step["output"] or STOPPED_CALL
     if step["status"] == "denied":
-        return DENIED_CALL
+        # The reviewer's denial says why; the user's is the usual words.
+        return step["output"] or DENIED_CALL
     return step["output"] or "(no output)"
 
 
@@ -533,20 +554,20 @@ class PlaygroundRunner:
         spec = self.services.registry.spec(model)
         if not groups or (spec is not None and spec.tools is False):
             return []
-        return tools_for(groups)
+        return tools_for(groups, shell=self.services.settings.playground_shell)
 
     def workspace(self) -> Path:
         configured = self.services.settings.playground_workspace
         return Path(os.path.expanduser(configured)) if configured else self.services.data_dir / "workspace"
 
     def approval_mode(self, conversation_id: str) -> str:
-        """A conversation's own approval mode (``ask``, ``auto`` or ``full``), or ``playground.approval`` for one that chose none."""
-        return self.store.approval(conversation_id) or self.services.settings.playground_approval
+        """A conversation's own approval mode (``ask``, ``workspace``, ``review`` or ``full``), or ``playground.approval`` for one that chose none."""
+        return self.store.approval(conversation_id) or named_mode(self.services.settings.playground_approval) or DEFAULT_APPROVAL
 
     def context(self, conversation_id: str, cancel: threading.Event) -> ToolContext:
         return ToolContext(
             workspace=self.workspace(), conversation_id=conversation_id, cancel=cancel, terminals=self.services.agent.terminals,
-            network=self.services.settings.network, search_url=self.services.settings.playground_search_url,
+            network=self.services.settings.network, search_url=self.services.settings.playground_search_url, shell=self.services.settings.playground_shell,
         )
 
     def request(self, conversation_id: str, message_id: str) -> dict[str, Any]:
@@ -652,6 +673,9 @@ class PlaygroundRunner:
                 raise
             except Stopped:
                 status = "stopped"
+            except DeniedTooOften as exc:
+                status = "stopped"
+                yield from notice({"kind": "review-stopped", "name": str(exc.denials)})
             except HoshimiError as exc:
                 status, error = "error", exc.message or str(exc)
             except Exception as exc:  # the reply must still be settled
@@ -683,6 +707,7 @@ class PlaygroundRunner:
         once with a summary, once more with long tool outputs cut.
         """
         ctx = self.context(conversation_id, cancel)
+        router = ApprovalRouter(self.services.agent.approvals, review=lambda request: self._review(model, request))
         steering = self.services.agent.steering
         if tools:
             try:
@@ -764,9 +789,15 @@ class PlaygroundRunner:
                     yield from self._steer(run, message_id, waiting, live.messages)
                     continue
                 live.messages = answered
-                for step in calls:
-                    yield from self._call(run, step, offered.get(step["name"]), ctx)
+                for index, step in enumerate(calls):
+                    verdict = yield from self._call(run, step, offered.get(step["name"]), ctx, router, live.messages)
                     live.messages.append({"role": "tool", "tool_call_id": step["id"], "content": call_result(step)})
+                    if run.denials.record(verdict):
+                        for rest in calls[index + 1:]:
+                            rest.update(status="stopped", output=DENIED_TOO_OFTEN_CALL)
+                            yield event("tool", step=rest)
+                        self.store.save_steps(message_id, run.steps, run.text)
+                        raise DeniedTooOften(run.denials.total)
                     self.store.save_steps(message_id, run.steps, run.text)
                 yield from follow_up(run.round + 1)
                 run.round += 1
@@ -790,37 +821,39 @@ class PlaygroundRunner:
         if steers:
             self.store.save_steps(message_id, run.steps, run.text)
 
-    def _call(self, run: Run, step: dict[str, Any], tool: Tool | None, ctx: ToolContext) -> Iterator[dict[str, Any]]:
-        """Run one call (asking first, when it must) and keep how it went on its step; the time spent asking is not the reply's."""
+    def _call(
+        self, run: Run, step: dict[str, Any], tool: Tool | None, ctx: ToolContext, router: ApprovalRouter, messages: list[dict[str, Any]],
+    ) -> Generator[dict[str, Any], None, Verdict | None]:
+        """Run one call (approved first, when it must be) and keep how it went on its step; returns how it was approved (None: it needed no one's leave).
+
+        The time spent waiting for the user is not the reply's; the time the reviewer takes is.
+        """
         try:
             args = parse_arguments(step["arguments"]) if tool is not None else {}
         except ToolError as exc:
             step.update(status="error", output=str(exc))
             yield event("tool", step=step)
-            return
+            return None
         if tool is None:
             step.update(status="error", output=unsupported(step["name"]))
             yield event("tool", step=step)
-            return
-        approvals = self.services.agent.approvals
+            return None
         permission = tool.permission(args, ctx)
-        # "Always" covers one tool, inside the workspace or outside it: leave for the one is not leave for the other.
-        scope = f"{tool.group}:outside" if permission is not None and permission.outside else tool.group
-        if needs_approval(permission, self.approval_mode(ctx.conversation_id)) and not approvals.allowed(ctx.conversation_id, scope):
-            assert permission is not None
-            step.update(status="waiting", approval=permission.code)
-            yield event("tool", step=step)
-            asked = time.monotonic()
-            decision = approvals.ask(ctx.conversation_id, step["id"], scope, ctx.cancel)
-            run.waited += time.monotonic() - asked
-            if decision is None:
-                step.update(status="stopped", output=STOPPED_CALL)
-                yield event("tool", step=step)
-                return
-            if decision == "deny":
-                step.update(status="denied", output="")
-                yield event("tool", step=step)
-                return
+        verdict: Verdict | None = None
+        if permission is not None:
+            request = ApprovalRequest(step["id"], tool, args, permission, ctx, transcript=messages)
+            approver = router.route(self.approval_mode(ctx.conversation_id), request)
+            if approver is not None:
+                verdict = yield from self._approve(approver, request, step)
+                run.waited += verdict.waited
+                if verdict.decision == "stopped":
+                    step.update(status="stopped", output=STOPPED_CALL)
+                    yield event("tool", step=step)
+                    return verdict
+                if verdict.decision == "deny":
+                    step.update(status="denied", output=verdict.message)
+                    yield event("tool", step=step)
+                    return verdict
         step.update(status="running")
         yield event("tool", step=step)
         started = time.monotonic()
@@ -830,6 +863,48 @@ class PlaygroundRunner:
             output=result.output, exit_code=result.exit_code, ms=round((time.monotonic() - started) * 1000), meta=result.meta,
         )
         yield event("tool", step=step)
+        return verdict
+
+    @staticmethod
+    def _approve(approver: Approver, request: ApprovalRequest, step: dict[str, Any]) -> Generator[dict[str, Any], None, Verdict]:
+        """What ``approver`` decides of a call, its step brought up to date (and sent to the page) as it goes."""
+        deciding = approver.decide(request)
+        while True:
+            try:
+                update = next(deciding)
+            except StopIteration as done:
+                return done.value
+            step.update(update)
+            yield event("tool", step=step)
+
+    def _review(self, model: str, request: ApprovalRequest) -> Review:
+        """What the reviewer (``playground.review_model``, or ``model``) makes of one call.
+
+        :class:`ReviewFailed` when it comes to no decision: the station failed,
+        it took longer than :data:`REVIEW_TIMEOUT`, or its answer is not one;
+        :class:`Cancelled` when the reply is stopped first. The transcript is
+        fitted to the reviewer's window, and cut once more if it still refuses
+        it as too long.
+        """
+        reviewer = self.services.settings.playground_review_model or model
+        entries = compaction.transcript_entries(request.transcript)
+        action = request.action_json()
+        room = int(self.budget(reviewer).window * REVIEW_SHARE) - text_tokens(REVIEW_POLICY) - text_tokens(action) - 500
+        started = time.monotonic()
+        for attempt in range(2):
+            body = {"model": reviewer, "stream": True, "messages": review_messages(compaction.fit(entries, max(2_000, room)), action)}
+            try:
+                text = self._collect(reviewer, body, request.ctx.cancel, origin="playground-review", deadline=started + REVIEW_TIMEOUT)
+            except Stopped:
+                raise Cancelled() from None
+            except HoshimiError as exc:
+                if attempt == 0 and overflowed(exc):
+                    self._learn(reviewer, exc)
+                    room = int(room * 0.5)
+                    continue
+                raise ReviewFailed(f"The reviewer ({reviewer}) failed: {exc.message or exc}", model=reviewer) from None
+            return parse_review(text, model=reviewer, ms=round((time.monotonic() - started) * 1000))
+        raise ReviewFailed(f"The conversation does not fit in the reviewer's ({reviewer}) context window.", model=reviewer)
 
     def _stream(self, model: str, body: dict[str, Any], run: Run) -> Generator[dict[str, Any], None, list[dict[str, Any]]]:
         """One round: the reply's words and reasoning as events; returns the calls it made, their arguments complete."""
@@ -946,14 +1021,16 @@ class PlaygroundRunner:
             return summary, writer
         raise HoshimiError(TOO_LONG.format(model=writer))  # pragma: no cover - the last attempt returns or raises
 
-    def _collect(self, model: str, body: dict[str, Any], cancel: threading.Event, *, origin: str) -> str:
-        """A streamed answer's text, whole; :class:`Stopped` as soon as ``cancel`` is set."""
+    def _collect(self, model: str, body: dict[str, Any], cancel: threading.Event, *, origin: str, deadline: float | None = None) -> str:
+        """A streamed answer's text, whole; :class:`Stopped` as soon as ``cancel`` is set, an error past ``deadline`` (a :func:`time.monotonic`)."""
         chunks = tracked_chunks(self.services, model, body, origin=origin, stream=True)
         text: list[str] = []
         try:
             for chunk in chunks:
                 if cancel.is_set():
                     raise Stopped
+                if deadline is not None and time.monotonic() > deadline:
+                    raise HoshimiError("It took too long to answer.")
                 kind = chunk.get("type")
                 if kind == "text_delta":
                     text.append(str(chunk.get("text") or ""))

@@ -135,7 +135,7 @@ Playground 的 **运行命令** 和 **后台命令** 工具在服务器进程的
 | `TERM` | `dumb` | 不使用终端控制序列 |
 | `GIT_TERMINAL_PROMPT` | `0` | git 不在终端里询问用户名和密码 |
 
-命令在 Linux 和 macOS 上用 `bash -c`（没有 bash 时用 `/bin/sh -c`）运行，在 Windows 上用 PowerShell 运行。工具的完整说明见 [Playground 工具](/docs/guide-agent)。
+命令在模型指定的 shell 中运行，未指定时使用 **设置 › 工具 › 工具如何运行 › Shell**（`playground.shell`）。默认的 **自动** 在 Linux 和 macOS 上用 `bash -c`（没有 bash 时用 `sh -c`），在 Windows 上用 PowerShell（没有时用 `cmd`）。任何 shell 都不会作为登录 shell 启动，PowerShell 也不读取配置文件（profile）。工具的完整说明见 [Playground 工具](/docs/guide-agent)。
 
 ## 不会读取的变量
 

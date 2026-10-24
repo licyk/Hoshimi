@@ -7,10 +7,12 @@ import { AppButton, AppIcon, Collapse, icons } from '@/ui';
 
 /**
  * One tool call in a reply, as a line that opens: what it did in a few words ("Ran `npm test`",
- * "Edited app.py"), how it is going (preparing, waiting for approval, running with the time so far,
- * done, failed, declined, stopped) and how long it took. Opened, it shows what was asked (the command,
- * the patch with its added and removed lines, or the arguments) and what came back. A call that waits
- * for approval stands open with the question and the answers under it.
+ * "Edited app.py"), how it is going (preparing, being reviewed, waiting for approval, running with the
+ * time so far, done, failed, declined, stopped) and how long it took. Opened, it shows what was asked
+ * (the command, the patch with its added and removed lines, or the arguments), what the reviewer said
+ * of it, and what came back. A call that waits for approval stands open with the question and the
+ * answers under it (and why the reviewer could not decide, when it was asked first); one the reviewer
+ * denied opens to say why.
  */
 const props = defineProps<{ step: ToolStep }>();
 const emit = defineEmits<{ approve: [ApprovalDecision] }>();
@@ -96,6 +98,7 @@ watch(
       timer = setInterval(() => (now.value = Date.now()), 1000);
     }
     if (status === 'waiting' && !open.value) open.value = openedToAsk = true;
+    if (status === 'denied' && before === 'reviewing' && !open.value) open.value = true;
     if (before === 'waiting' && status !== 'waiting') answering.value = false;
     if (openedToAsk && status !== 'waiting' && status !== 'running') open.value = openedToAsk = false;
   },
@@ -108,6 +111,8 @@ const state = computed(() => {
   switch (s.status) {
     case 'pending':
       return { icon: icons.Loader2, text: t('playground.toolPreparing'), tone: 'busy' };
+    case 'reviewing':
+      return { icon: icons.Loader2, text: t('playground.toolReviewing'), tone: 'busy' };
     case 'waiting':
       return { icon: icons.ShieldAlert, text: t('playground.toolWaiting'), tone: 'ask' };
     case 'running':
@@ -115,13 +120,28 @@ const state = computed(() => {
     case 'done':
       return { icon: icons.Check, text: s.ms >= 100 ? duration(s.ms) : '', tone: 'done' };
     case 'denied':
-      return { icon: icons.Ban, text: t('playground.toolDenied'), tone: 'off' };
+      return s.review?.outcome === 'deny'
+        ? { icon: icons.ShieldX, text: t('playground.toolDeniedByReview'), tone: 'failed' }
+        : { icon: icons.Ban, text: t('playground.toolDenied'), tone: 'off' };
     case 'stopped':
       return { icon: icons.CircleStop, text: t('playground.toolStopped'), tone: 'off' };
     default:
       return { icon: icons.X, text: s.exit_code !== null && s.exit_code !== undefined ? t('playground.toolExit', { code: String(s.exit_code) }) : t('playground.toolFailed'), tone: 'failed' };
   }
 });
+
+/** What the reviewer said: allowed or denied (with the risk it saw and why), or that it could not decide. */
+const review = computed(() => {
+  const r = props.step.review;
+  if (!r) return null;
+  if (r.failed) return { icon: icons.ShieldAlert, tone: 'ask', text: t('playground.reviewFailed'), why: r.rationale, risk: '' };
+  const risk = r.risk_level ? t(`playground.reviewRisk.${r.risk_level}`) : '';
+  return r.outcome === 'allow'
+    ? { icon: icons.ShieldCheck, tone: 'done', text: t('playground.reviewAllowed', { model: r.model }), why: r.rationale, risk }
+    : { icon: icons.ShieldX, tone: 'failed', text: t('playground.reviewDenied', { model: r.model }), why: r.rationale, risk };
+});
+/** The words a model is told of a denial are the reviewer's: shown as its verdict, not as output. */
+const output = computed(() => (props.step.status === 'denied' && props.step.review?.outcome === 'deny' ? '' : props.step.output));
 
 /** What was asked: the command, the patch, or the arguments as they were sent. */
 const command = computed(() => str('command') || str('cmd'));
@@ -175,11 +195,15 @@ function answer(decision: ApprovalDecision) {
         <pre v-else-if="step.name === 'apply_patch' && str('input')" class="block patch type-body-small"><span v-for="(l, i) in patchLines" :key="i" :class="l.kind">{{ l.line }}
 </span></pre>
         <pre v-else-if="argumentsText && step.status !== 'pending'" class="block type-body-small">{{ argumentsText }}</pre>
-        <pre v-if="step.output" class="block output app-scroll type-body-small" :class="{ failed: step.status === 'error' }">{{ step.output }}</pre>
+        <p v-if="review && step.status !== 'waiting'" class="review type-body-small" :class="review.tone">
+          <AppIcon :icon="review.icon" :size="18" /><span><strong>{{ review.text }}</strong><span v-if="review.risk"> · {{ review.risk }}</span><span v-if="review.why"> — {{ review.why }}</span></span>
+        </p>
+        <pre v-if="output" class="block output app-scroll type-body-small" :class="{ failed: step.status === 'error' }">{{ output }}</pre>
       </div>
     </Collapse>
     <div v-if="step.status === 'waiting'" class="approval" role="group" :aria-label="question">
       <span class="type-body-medium question"><AppIcon :icon="icons.ShieldAlert" :size="18" />{{ question }}</span>
+      <span v-if="review" class="type-body-small muted why">{{ review.text }}<template v-if="review.why"> — {{ review.why }}</template></span>
       <div class="answers">
         <AppButton variant="text" :disabled="answering" @click="answer('deny')">{{ t('playground.deny') }}</AppButton>
         <AppButton variant="tonal" :disabled="answering" :title="t('playground.allowAlwaysHelp')" @click="answer('always')">{{ t('playground.allowAlways') }}</AppButton>
@@ -232,6 +256,14 @@ code.detail { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-
 }
 .question { display: inline-flex; align-items: center; gap: var(--app-space-2); color: var(--md-sys-color-on-surface); }
 .question :deep(svg) { flex: none; color: var(--md-sys-color-tertiary); }
+.why { flex-basis: 100%; order: 1; color: var(--md-sys-color-on-surface-variant); }
+.answers { order: 2; }
+.review { display: flex; align-items: flex-start; gap: var(--app-space-2); margin: 0; color: var(--md-sys-color-on-surface-variant); }
+.review :deep(svg) { flex: none; }
+.review.done :deep(svg) { color: var(--md-sys-color-primary); }
+.review.failed :deep(svg) { color: var(--md-sys-color-error); }
+.review.ask :deep(svg) { color: var(--md-sys-color-tertiary); }
+.review strong { color: var(--md-sys-color-on-surface); font-weight: 500; }
 .answers { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--app-space-1); margin-inline-start: auto; }
 @media (prefers-reduced-motion: reduce) {
   .spin { animation: none; }

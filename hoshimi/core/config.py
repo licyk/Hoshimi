@@ -11,6 +11,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from hoshimi.core.agent.approval import APPROVAL_MODES, DEFAULT_APPROVAL, LEGACY_MODES
+from hoshimi.core.agent.terminals import SHELL_KINDS, shell_kind
+from hoshimi.core.agent.tools import GROUPS
 from hoshimi.core.net.policy import NetworkPolicy, parse_policy
 from hoshimi.core.paths import config_file_path
 
@@ -70,14 +73,21 @@ class Settings:
     # "auto" picks one from the catalogue, "off" never asks, anything else is that model.
     playground_vision_model: str = "auto"
     # The Playground's built-in tools new conversations start with (playground.tools): read, apply_patch,
-    # shell, terminal, web_search, web_fetch; each conversation turns them on or off for itself. None by
-    # default: shell and apply_patch act on this machine.
-    playground_tools: list[str] = field(default_factory=list)
+    # shell, terminal, web_search, web_fetch; each conversation turns them on or off for itself. All of
+    # them by default; the reviewer (playground.approval "review") judges what they do first.
+    playground_tools: list[str] = field(default_factory=lambda: list(GROUPS))
     # Where the tools work (playground.workspace); empty: <data dir>/workspace.
     playground_workspace: str = ""
-    # When tools ask first (playground.approval): "ask" before commands, file changes and anything outside
-    # the workspace; "auto" only before reaching outside the workspace; "full" never.
-    playground_approval: str = "ask"
+    # When tools ask first, and whom (playground.approval): "review" has a model judge commands, file
+    # changes and anything outside the workspace (and asks the user when it cannot); "ask" asks the user
+    # for those; "workspace" ("auto" before) asks the user only before reaching outside the workspace;
+    # "full" never asks.
+    playground_approval: str = DEFAULT_APPROVAL
+    # The model that reviews calls in "review" mode (playground.review_model); empty: the conversation's own.
+    playground_review_model: str = ""
+    # The shell commands run in when a call names none (playground.shell): "auto" (bash, sh without it,
+    # PowerShell on Windows), or bash, zsh, sh, powershell or cmd.
+    playground_shell: str = "auto"
     # A SearXNG instance for web_search (playground.search_url); empty searches DuckDuckGo.
     playground_search_url: str = ""
     # Compact a conversation by itself as it nears its model's context window (playground.auto_compact).
@@ -106,13 +116,13 @@ def validate_settings(settings: Settings) -> str | None:
         return "server.max_account_retries must be at least 1."
     if settings.stats_keep_days < 1:
         return "server.stats_keep_days must be at least 1."
-    from hoshimi.core.agent.tools import GROUPS
-
     unknown = [t for t in settings.playground_tools if t not in GROUPS]
     if unknown:
         return f"playground.tools: unknown tool {unknown[0]!r} (known: {', '.join(GROUPS)})."
-    if settings.playground_approval not in ("ask", "auto", "full"):
-        return "playground.approval must be ask, auto or full."
+    if settings.playground_approval not in APPROVAL_MODES:
+        return f"playground.approval must be {', '.join(APPROVAL_MODES[:-1])} or {APPROVAL_MODES[-1]}."
+    if settings.playground_shell != "auto" and settings.playground_shell not in SHELL_KINDS:
+        return f"playground.shell must be auto, {', '.join(SHELL_KINDS[:-1])} or {SHELL_KINDS[-1]}."
     if settings.playground_search_url and not settings.playground_search_url.startswith(("http://", "https://")):
         return "playground.search_url must be an http(s) address."
     if not 0.5 <= settings.playground_compact_threshold <= 0.95:
@@ -185,6 +195,7 @@ def settings_from_dict(data: dict[str, Any], settings: Settings | None = None) -
             ("title_model", "playground_title_model", ""),
             ("vision_model", "playground_vision_model", "auto"),
             ("compact_model", "playground_compact_model", ""),
+            ("review_model", "playground_review_model", ""),
         ):
             if key not in playground:
                 continue
@@ -194,8 +205,9 @@ def settings_from_dict(data: dict[str, Any], settings: Settings | None = None) -
             setattr(settings, attribute, (value or "").strip() or default)
         for key, attribute, default in (
             ("workspace", "playground_workspace", ""),
-            ("approval", "playground_approval", "ask"),
+            ("approval", "playground_approval", DEFAULT_APPROVAL),
             ("search_url", "playground_search_url", ""),
+            ("shell", "playground_shell", "auto"),
         ):
             if key not in playground:
                 continue
@@ -203,6 +215,10 @@ def settings_from_dict(data: dict[str, Any], settings: Settings | None = None) -
             if value is not None and not isinstance(value, str):
                 raise ValueError(f"playground.{key} must be a string")
             setattr(settings, attribute, (value or "").strip() or default)
+        # Old names: approval "auto" is "workspace"; shell "pwsh" is "powershell".
+        settings.playground_approval = LEGACY_MODES.get(settings.playground_approval, settings.playground_approval)
+        if settings.playground_shell != "auto":
+            settings.playground_shell = shell_kind(settings.playground_shell) or settings.playground_shell
         if "tools" in playground:
             tools = playground["tools"]
             if tools is None:
@@ -326,9 +342,11 @@ def settings_to_dict(settings: Settings) -> dict[str, Any]:
             ("system_prompt", settings.playground_system_prompt, ""),
             ("title_model", settings.playground_title_model, ""),
             ("vision_model", settings.playground_vision_model, "auto"),
-            ("tools", settings.playground_tools, []),
+            ("tools", settings.playground_tools, list(GROUPS)),
             ("workspace", settings.playground_workspace, ""),
-            ("approval", settings.playground_approval, "ask"),
+            ("approval", settings.playground_approval, DEFAULT_APPROVAL),
+            ("review_model", settings.playground_review_model, ""),
+            ("shell", settings.playground_shell, "auto"),
             ("search_url", settings.playground_search_url, ""),
             ("auto_compact", settings.playground_auto_compact, True),
             ("compact_threshold", settings.playground_compact_threshold, 0.85),

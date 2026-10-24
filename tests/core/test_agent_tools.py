@@ -1,4 +1,4 @@
-"""The Playground agent's built-in tools: read, apply_patch, shell, background commands, web search and fetch."""
+"""The Playground agent's built-in tools (read, apply_patch, shell, background commands, web search and fetch), the shells they run in, and approvals."""
 
 from __future__ import annotations
 
@@ -11,10 +11,13 @@ from typing import Any
 import httpx
 import pytest
 
-from hoshimi.core.agent.base import Permission, ToolContext, clip, needs_approval
+from hoshimi.core.agent import terminals
+from hoshimi.core.agent.approval import ApprovalRequest, ApprovalRouter, DenialBreaker, ReviewApprover, UserApprover, Verdict, approval_mode, needs_approval
+from hoshimi.core.agent.base import Cancelled, Permission, ToolContext, ToolError, clip
+from hoshimi.core.agent.review import Review, ReviewFailed, parse_review, review_messages
 from hoshimi.core.agent.runtime import Approvals
-from hoshimi.core.agent.terminals import TerminalManager
-from hoshimi.core.agent.tools import TOOLS, parse_arguments, run_tool
+from hoshimi.core.agent.terminals import Shell, TerminalManager, default_shell, find_shell, pick_shell, shell_kind
+from hoshimi.core.agent.tools import TOOLS, parse_arguments, run_tool, tools_for
 from hoshimi.core.agent.web import check_url, html_to_markdown
 
 posix = pytest.mark.skipif(os.name == "nt", reason="POSIX shell")
@@ -60,9 +63,12 @@ def test_read_outside_the_workspace_needs_leave(ctx: ToolContext, tmp_path: Path
 def test_each_mode_asks_for_what_it_says() -> None:
     inside, outside = Permission("edit"), Permission("edit", outside=True)
     assert [needs_approval(p, "ask") for p in (None, inside, outside)] == [False, True, True]
-    assert [needs_approval(p, "auto") for p in (None, inside, outside)] == [False, False, True]
+    assert [needs_approval(p, "workspace") for p in (None, inside, outside)] == [False, False, True]
+    assert [needs_approval(p, "review") for p in (None, inside, outside)] == [False, True, True]
     assert [needs_approval(p, "full") for p in (None, inside, outside)] == [False, False, False]
     assert (inside.code, outside.code) == ("edit", "edit-outside")
+    # "auto" is the old name of "workspace"; an unknown mode is none at all.
+    assert [approval_mode(m) for m in ("auto", "workspace", "review", " ask ", "never", "")] == ["workspace", "workspace", "review", "ask", "", ""]
 
 
 def test_a_long_line_is_cut(ctx: ToolContext) -> None:
@@ -177,6 +183,158 @@ def test_too_many_background_commands_are_refused(ctx: ToolContext) -> None:
     assert call("exec_command", ctx, cmd="sleep 30", yield_time_ms=250).meta["running"]
     assert "running already" in call("exec_command", ctx, cmd="sleep 30", yield_time_ms=250).output
     ctx.terminals.close()
+
+
+# -- shells ------------------------------------------------------------------------------ #
+def test_a_shell_is_known_by_its_name_or_its_path() -> None:
+    assert [shell_kind(n) for n in ("bash", "/bin/zsh", "sh", "pwsh", "/usr/bin/pwsh", "powershell.exe", r"C:\Windows\System32\cmd.exe", "CMD", "fish", "")] == [
+        "bash", "zsh", "sh", "powershell", "powershell", "powershell", "cmd", "cmd", None, None,
+    ]
+
+
+def test_each_shell_runs_a_command_its_own_way() -> None:
+    assert Shell("bash", "/bin/bash").argv("ls") == ["/bin/bash", "-c", "ls"]
+    assert Shell("zsh", "/bin/zsh").argv("ls") == ["/bin/zsh", "-c", "ls"]
+    assert Shell("powershell", "pwsh").argv("Get-ChildItem") == ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "Get-ChildItem"]
+    assert Shell("cmd", "cmd.exe").argv("dir") == ["cmd.exe", "/d", "/s", "/c", "dir"]
+
+
+@pytest.fixture
+def fake_shells(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """A machine with bash and PowerShell 7 on its PATH, and nothing else (no fallback paths either)."""
+    installed = {"bash": "/opt/bin/bash", "pwsh": "/opt/bin/pwsh"}
+    monkeypatch.setattr(terminals.shutil, "which", lambda name: installed.get(name))
+    monkeypatch.setattr(terminals.os.path, "isfile", lambda path: False)
+    monkeypatch.setattr(terminals.os, "name", "posix")
+    find_shell.cache_clear()
+    yield installed
+    find_shell.cache_clear()
+
+
+def test_the_shells_installed_are_found_and_the_default_follows_settings(fake_shells: Any, ctx: ToolContext) -> None:
+    assert terminals.available_shells() == ["bash", "powershell"]
+    assert find_shell("powershell") == Shell("powershell", "/opt/bin/pwsh") and find_shell("zsh") is None
+    assert default_shell() == Shell("bash", "/opt/bin/bash")
+    assert default_shell("powershell").kind == "powershell"
+    assert default_shell("zsh").kind == "bash"  # chosen but not installed: as auto
+    ctx.shell = "powershell"
+    assert pick_shell({}, ctx).kind == "powershell"
+    assert pick_shell({"shell": "bash"}, ctx) == Shell("bash", "/opt/bin/bash")
+    with pytest.raises(ToolError, match=r"zsh is not installed here; use one of: bash, powershell\."):
+        pick_shell({"shell": "zsh"}, ctx)
+    with pytest.raises(ToolError, match="Unknown shell 'fish'"):
+        pick_shell({"shell": "fish"}, ctx)
+    with pytest.raises(ToolError, match="no shell at /nowhere/bash"):
+        pick_shell({"shell": "/nowhere/bash"}, ctx)
+
+
+def test_the_command_tools_say_which_shells_there_are(fake_shells: Any) -> None:
+    offered = {t.name: t for t in tools_for(["shell", "terminal"], shell="powershell")}
+    assert "Runs in powershell" in offered["shell"].description and "in powershell unless" in offered["exec_command"].description
+    for name in ("shell", "exec_command"):
+        assert offered[name].parameters["properties"]["shell"]["description"].startswith("The shell to run it in, by name or by path: one of bash, powershell (installed here). Default: powershell.")
+    assert "shell" not in offered["write_stdin"].parameters["properties"] and offered["write_stdin"] is TOOLS["write_stdin"]
+    assert "{default}" in TOOLS["shell"].description  # the registry keeps the template
+
+
+@posix
+def test_a_command_runs_in_the_shell_it_names(ctx: ToolContext) -> None:
+    result = call("shell", ctx, command="echo $0", shell="sh")
+    assert result.ok and result.meta["shell"] == "sh" and "sh" in result.output
+    unknown = call("shell", ctx, command="echo hi", shell="fish")
+    assert not unknown.ok and "Unknown shell 'fish'" in unknown.output
+    started = call("exec_command", ctx, cmd="echo hi", shell="sh", yield_time_ms=2000)
+    assert started.meta["shell"] == "sh"
+
+
+def test_typing_into_a_command_needs_leave_and_reading_it_does_not(ctx: ToolContext) -> None:
+    write = TOOLS["write_stdin"]
+    assert write.permission({"session_id": 1, "chars": "rm -rf ~\n"}, ctx) == Permission("command")
+    assert write.permission({"session_id": 1, "chars": ""}, ctx) is None and write.permission({"session_id": 1}, ctx) is None
+
+
+# -- the reviewer ---------------------------------------------------------------------------- #
+def test_a_review_is_read_from_json_alone_or_wrapped_in_prose() -> None:
+    assert parse_review('{"outcome": "allow"}', model="m", ms=5) == Review("allow", "low", "unknown", "", "m", 5)
+    wrapped = parse_review('```json\n{"outcome":"deny","risk_level":"critical","user_authorization":"low","rationale":" Sends ~/.ssh away. "}\n```')
+    assert (wrapped.outcome, wrapped.risk_level, wrapped.user_authorization, wrapped.rationale) == ("deny", "critical", "low", "Sends ~/.ssh away.")
+    assert parse_review('My verdict: {"outcome": "DENY", "risk_level": "huge"} - final').risk_level == "high"
+    assert "Sends ~/.ssh away." in wrapped.denial() and "workaround" in wrapped.denial()
+
+
+@pytest.mark.parametrize("text", ["", "allow", '{"risk_level": "low"}', '{"outcome": "maybe"}', "[1, 2]", "{not json}"])
+def test_an_answer_that_is_no_decision_is_a_failed_review(text: str) -> None:
+    with pytest.raises(ReviewFailed):
+        parse_review(text, model="m")
+
+
+def test_the_review_request_marks_out_the_transcript_and_the_action() -> None:
+    system, user = review_messages("[user]: tidy up", '{"tool": "shell"}')
+    assert system["role"] == "system" and "THERE IS NO SANDBOX" in system["content"]
+    assert user["content"].index("[user]: tidy up") < user["content"].index('{"tool": "shell"}')
+
+
+COMMAND = Permission("command")
+
+
+def _request(ctx: ToolContext, permission: Permission = COMMAND) -> ApprovalRequest:
+    return ApprovalRequest("call-1", TOOLS["shell"], {"command": "ls"}, permission, ctx)
+
+
+def _drive(approver: Any, request: ApprovalRequest) -> tuple[list[dict[str, Any]], Verdict]:
+    updates, deciding = [], approver.decide(request)
+    while True:
+        try:
+            updates.append(next(deciding))
+        except StopIteration as done:
+            return updates, done.value
+
+
+def test_the_router_sends_a_call_to_whoever_its_mode_says(ctx: ToolContext) -> None:
+    approvals = Approvals()
+    router = ApprovalRouter(approvals, review=lambda request: Review("allow"))
+    inside, outside = _request(ctx), _request(ctx, Permission("edit", outside=True))
+    assert isinstance(router.route("ask", inside), UserApprover)
+    assert router.route("workspace", inside) is None and isinstance(router.route("workspace", outside), UserApprover)
+    assert isinstance(router.route("review", inside), ReviewApprover) and router.route("full", outside) is None
+    # Without a reviewer, review asks the user; an "always" lets the call run in any mode.
+    assert isinstance(ApprovalRouter(approvals).route("review", inside), UserApprover)
+    approvals.always["c1"] = {"shell"}
+    assert router.route("review", inside) is None and router.route("ask", inside) is None
+    assert isinstance(router.route("ask", _request(ctx, Permission("command", outside=True))), UserApprover)
+
+
+def test_the_reviewer_decides_and_hands_what_it_cannot_judge_to_the_user(ctx: ToolContext) -> None:
+    approvals = Approvals()
+    allowed = _drive(ReviewApprover(lambda r: Review("allow", "low", model="m"), UserApprover(approvals)), _request(ctx))
+    assert [u.get("status") for u in allowed[0]] == ["reviewing", None] and (allowed[1].decision, allowed[1].by) == ("allow", "reviewer")
+    denied = _drive(ReviewApprover(lambda r: Review("deny", "high", rationale="No."), UserApprover(approvals)), _request(ctx))[1]
+    assert (denied.decision, denied.by) == ("deny", "reviewer") and "No." in denied.message
+
+    def cancelled(request: ApprovalRequest) -> Review:
+        raise Cancelled()
+
+    assert _drive(ReviewApprover(cancelled, UserApprover(approvals)), _request(ctx))[1].decision == "stopped"
+
+    def broken(request: ApprovalRequest) -> Review:
+        raise ReviewFailed("down", model="m")
+
+    threading.Timer(0.2, lambda: approvals.answer("c1", "call-1", "allow")).start()
+    updates, verdict = _drive(ReviewApprover(broken, UserApprover(approvals)), _request(ctx))
+    assert [u.get("status") for u in updates] == ["reviewing", None, "waiting"] and updates[1]["review"]["failed"]
+    assert (verdict.decision, verdict.by) == ("allow", "user") and verdict.waited > 0
+
+
+def test_the_breaker_trips_on_denials_in_a_row_or_in_all() -> None:
+    deny, allow, asked_user = Verdict("deny", "reviewer"), Verdict("allow", "reviewer"), Verdict("deny", "user")
+    breaker = DenialBreaker()
+    assert [breaker.record(v) for v in (deny, deny, asked_user, deny)] == [False, False, False, True]
+    breaker = DenialBreaker()
+    results = [breaker.record(v) for _ in range(5) for v in (deny, deny, None)]
+    # Never three in a row, but the tenth denial (the fourteenth call) stops the reply.
+    assert results.index(True) == 13 and breaker.total == 10
+    breaker = DenialBreaker()
+    assert not any(breaker.record(v) for v in (deny, deny, allow, deny, deny))
 
 
 # -- approvals ------------------------------------------------------------------------- #

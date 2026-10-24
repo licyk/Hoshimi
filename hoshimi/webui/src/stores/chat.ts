@@ -23,7 +23,7 @@ function addTo(m: MessageView, type: 'text' | 'reasoning', text: string) {
   if (last?.type === type) last.text += text;
   else steps.push(type === 'text' ? { type, text, round: 0 } : { type, text, ms: 0, round: 0 });
 }
-const UNSETTLED = new Set(['pending', 'waiting', 'running']);
+const UNSETTLED = new Set(['pending', 'reviewing', 'waiting', 'running']);
 
 /**
  * The Playground's open conversation: its message tree, the path on screen, and what can be done to

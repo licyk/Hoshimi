@@ -83,6 +83,7 @@ curl -H "Authorization: Bearer $ACCESS_KEY" $API/app/meta
 `GET /settings` 返回当前设置：`data_dir`、`config_path`、`server`（地址、端口、`strict_port`、`access_token_configured`、`model_api_key_configured`、允许的 CIDR/主机/来源、`max_body_bytes`、`max_account_retries`、`default_model`、`auto_refresh`、`auto_checkin`、`check_updates`、`stats_keep_days`）、`providers`（每个渠道的 `id`、`enabled`、账号数、已设置的选项名、网络设置）、`network`、`playground`，以及：
 
 - `restart_required`：保存的 `server.host` / `server.port` 与本次启动时不同，需要重启才生效。
+- `playground.workspace_path`、`playground.shell_in_effect` 和 `playground.shells`（只读）：工具实际的工作目录、调用未指定 shell 时命令运行所用的 shell（`auto` 已解析），以及本机已安装的 shell。
 - `listening`：实际监听的套接字，`port` 为绑定的端口，`requested_port` 为开始尝试的端口，`fallback` 表示请求的端口被占用而改用了其他端口（这不是需要重启的原因）。
 
 密钥本身永远不会返回。
@@ -99,6 +100,7 @@ curl -X PATCH $API/settings \
 - `server.access_token` 或 `server.model_api_key` 设为 `null`（或空字符串）表示清除。
 - 无效的值返回 `400` 并说明原因，例如绑定非回环地址却没有同时设置 `security.allow_cidrs` 和 `server.access_token`。
 - 改了监听地址或端口时，`restart_required` 变为 `true`。
+- `{"playground": {"approval": "auto"}}` 会保存为 `workspace`，即该模式的新名称。
 
 配置项的含义见[配置文件](/docs/config)。
 

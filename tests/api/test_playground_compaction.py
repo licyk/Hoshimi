@@ -69,7 +69,7 @@ def provider() -> LongProvider:
 
 @pytest.fixture
 def services(provider: LongProvider) -> Services:
-    services = make_services(provider, playground_tools=["read"], playground_approval="auto")
+    services = make_services(provider, playground_tools=["read"], playground_approval="workspace")
     PlaygroundRunner(services).workspace().mkdir(parents=True)
     return services
 

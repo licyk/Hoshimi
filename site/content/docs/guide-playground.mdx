@@ -203,7 +203,7 @@ JSON
 
 ## 回复用时
 
-回复进行时，底部一行会显示它正在做什么（撰写、运行工具、压缩上下文）以及已用时间，每秒更新。工具调用等待你批准时计时暂停。回复结束后，操作按钮旁会保留 **用时 1m 23s**（或 **… 后停止**、**… 后失败**）；鼠标悬停可查看开始和结束时间。
+回复进行时，底部一行会显示它正在做什么（撰写、运行或审查工具、压缩上下文）以及已用时间，每秒更新。工具调用等待你批准时计时暂停；审查模型花费的时间照常计入。回复结束后，操作按钮旁会保留 **用时 1m 23s**（或 **… 后停止**、**… 后失败**）；鼠标悬停可查看开始和结束时间。
 
 ## 回复的结束状态
 
@@ -251,7 +251,7 @@ Playground 自身的设置位于 **设置 › 常规 › Playground**（见[设�
 
 对话、消息和附件保存在数据目录的 `hoshimi.db` 中（见[数据目录与路径](/docs/config-paths)），直到你删除为止。上次打开的对话也记录在这里，因此在任何浏览器中打开 Playground 都能回到它。服务停止时被中断的回复会保存为已停止。
 
-Playground 发起的每次模型调用都会像其他调用一样记录在[用量](/docs/guide-usage)中，并带有各自的来源：回复为 `playground`，命名标题为 `playground-title`，描述图片为 `playground-vision`，压缩总结为 `playground-compact`。
+Playground 发起的每次模型调用都会像其他调用一样记录在[用量](/docs/guide-usage)中，并带有各自的来源：回复为 `playground`，命名标题为 `playground-title`，描述图片为 `playground-vision`，压缩总结为 `playground-compact`，自动审查工具调用为 `playground-review`。
 
 <Cards>
 <Card title="Playground 工具" href="/docs/guide-agent" description="让模型读取和编辑文件、运行命令、搜索网页，并由你批准。" />

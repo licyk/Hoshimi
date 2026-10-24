@@ -1823,7 +1823,7 @@ export interface components {
              * @default
              * @enum {string}
              */
-            approval: "" | "ask" | "auto" | "full";
+            approval: "" | "ask" | "workspace" | "review" | "full" | "auto";
             /**
              * Effort
              * @default
@@ -1860,7 +1860,7 @@ export interface components {
          */
         ConversationPatch: {
             /** Approval */
-            approval?: ("" | "ask" | "auto" | "full") | null;
+            approval?: ("" | "ask" | "workspace" | "review" | "full" | "auto") | null;
             /** Archived */
             archived?: boolean | null;
             /** Current Leaf */
@@ -1883,7 +1883,7 @@ export interface components {
              * @default
              * @enum {string}
              */
-            approval: "" | "ask" | "auto" | "full";
+            approval: "" | "ask" | "workspace" | "review" | "full";
             /** Archived */
             archived: boolean;
             /** Branched From */
@@ -1919,7 +1919,7 @@ export interface components {
              * @default
              * @enum {string}
              */
-            approval: "" | "ask" | "auto" | "full";
+            approval: "" | "ask" | "workspace" | "review" | "full";
             /** Archived */
             archived: boolean;
             /** Branched From */
@@ -2539,8 +2539,8 @@ export interface components {
         /**
          * Notice
          * @description Something about how a reply was made: ``image-described`` (by ``model``), ``image-omitted``, ``image-refused`` (by ``model``),
-         *     ``tools-unsupported`` (``model`` makes no tool calls), or ``step-limit`` (kept on replies from before rounds of tool calls were
-         *     unlimited: the reply spent its ``name`` rounds).
+         *     ``tools-unsupported`` (``model`` makes no tool calls), ``review-stopped`` (the reviewer denied ``name`` of its calls, and it was
+         *     stopped), or ``step-limit`` (kept on replies from before rounds of tool calls were unlimited: the reply spent its ``name`` rounds).
          */
         Notice: {
             /** Kind */
@@ -2634,10 +2634,10 @@ export interface components {
         PlaygroundSettingsView: {
             /**
              * Approval
-             * @default ask
+             * @default review
              * @enum {string}
              */
-            approval: "ask" | "auto" | "full";
+            approval: "ask" | "workspace" | "review" | "full";
             /**
              * Auto Compact
              * @default true
@@ -2654,10 +2654,27 @@ export interface components {
              */
             compact_threshold: number;
             /**
+             * Review Model
+             * @default
+             */
+            review_model: string;
+            /**
              * Search Url
              * @default
              */
             search_url: string;
+            /**
+             * Shell
+             * @default auto
+             */
+            shell: string;
+            /**
+             * Shell In Effect
+             * @default
+             */
+            shell_in_effect: string;
+            /** Shells */
+            shells: string[];
             /**
              * System Prompt
              * @default
@@ -2983,6 +3000,11 @@ export interface components {
             id: number;
             /** Running */
             running: boolean;
+            /**
+             * Shell
+             * @default
+             */
+            shell: string;
             /** Started At */
             started_at: number;
         };

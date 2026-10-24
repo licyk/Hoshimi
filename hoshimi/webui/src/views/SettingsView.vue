@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { BASE_URL } from '@/api/baseUrl';
 import { useMeta, useModelSpecs, useModels, useSettings, useUpdateSettings, useVersion } from '@/api/queries/app';
 import { useChannels } from '@/api/queries/channels';
-import { TOOL_GROUPS, type ToolGroup } from '@/api/types';
+import { APPROVAL_MODES, TOOL_GROUPS, type ToolGroup } from '@/api/types';
 import NetworkSettings from '@/components/NetworkSettings.vue';
 import { useI18n } from '@/i18n';
 import { usePreferencesStore } from '@/stores/preferences';
@@ -82,17 +82,30 @@ const compactModel = computed({
   get: () => s.value?.playground.compact_model ?? '',
   set: (value: string | null) => save({ playground: { compact_model: value ?? '' } }),
 });
+const reviewModel = computed({
+  get: () => s.value?.playground.review_model ?? '',
+  set: (value: string | null) => save({ playground: { review_model: value ?? '' } }),
+});
 const visionModel = computed({
   get: () => s.value?.playground.vision_model || 'auto',
   set: (value: string | null) => save({ playground: { vision_model: value || 'auto' } }),
 });
-// Tools: when they ask first.
+// Tools: when they ask first, and whom.
 const approvalOptions = computed(() =>
-  (['ask', 'auto', 'full'] as const).map((value) => ({ value, label: t(`settings.approvalModes.${value}`), description: t(`settings.approvalModesHelp.${value}`) })),
+  APPROVAL_MODES.map((value) => ({ value, label: t(`settings.approvalModes.${value}`), description: t(`settings.approvalModesHelp.${value}`) })),
 );
 const approval = computed({
-  get: () => s.value?.playground.approval ?? 'ask',
-  set: (value: string | null) => save({ playground: { approval: value || 'ask' } }),
+  get: () => s.value?.playground.approval ?? 'review',
+  set: (value: string | null) => save({ playground: { approval: value || 'review' } }),
+});
+// Tools: the shell commands run in when a call names none; the ones installed here, and auto as what it comes to.
+const shellOptions = computed(() => [
+  { value: 'auto', label: t('settings.shellAuto'), description: s.value?.playground.shell === 'auto' ? t('settings.shellAutoHelp', { shell: s.value.playground.shell_in_effect }) : '' },
+  ...(s.value?.playground.shells ?? []).map((value) => ({ value, label: value })),
+]);
+const shell = computed({
+  get: () => s.value?.playground.shell || 'auto',
+  set: (value: string | null) => save({ playground: { shell: value || 'auto' } }),
 });
 // Tools: each switch saves the whole list.
 function setTool(group: ToolGroup, on: boolean) {
@@ -231,6 +244,14 @@ async function copy(text: string) {
           <div class="field">
             <PickerMenu v-model="approval" :label="t('settings.approval')" :options="approvalOptions" />
             <p class="type-body-small muted">{{ t('settings.approvalHelp') }}</p>
+          </div>
+          <div class="field">
+            <PickerMenu v-model="reviewModel" :label="t('settings.reviewModel')" :options="titleModelOptions" :loading="models.isPending.value" :search-label="t('settings.searchModels')" :search-from="8" :no-matches="t('models.none')" />
+            <p class="type-body-small muted">{{ t('settings.reviewModelHelp') }}</p>
+          </div>
+          <div class="field">
+            <PickerMenu v-model="shell" :label="t('settings.shell')" :options="shellOptions" />
+            <p class="type-body-small muted">{{ t('settings.shellHelp') }}</p>
           </div>
           <TextField
             :model-value="s.playground.workspace"

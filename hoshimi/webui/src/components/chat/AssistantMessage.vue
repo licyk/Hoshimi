@@ -57,6 +57,8 @@ const doing = computed(() => {
   const last = steps.value[steps.value.length - 1];
   if (!last && props.stage?.kind === 'describing') return t('playground.describing', { model: props.stage.model });
   if (waitingForApproval.value) return t('playground.waitingApproval');
+  const reviewing = steps.value.find((s) => s.type === 'tool' && s.status === 'reviewing');
+  if (reviewing?.type === 'tool') return t('playground.reviewingTool', { name: reviewing.name });
   if (last?.type === 'compaction' && last.status === 'running') return t('playground.compacting');
   const running = steps.value.find((s) => s.type === 'tool' && s.status === 'running');
   if (running?.type === 'tool') return t('playground.runningTool', { name: running.name });
@@ -86,9 +88,10 @@ const noticeText = (n: Notice) =>
   : n.kind === 'image-refused' ? t('playground.noticeRefused', { model: n.model })
   : n.kind === 'tools-unsupported' ? t('playground.noticeNoTools', { model: n.model })
   : n.kind === 'step-limit' ? t('playground.noticeStepLimit', { n: n.name })
+  : n.kind === 'review-stopped' ? t('playground.noticeReviewStopped', { n: n.name })
   : t('playground.noticeOmitted', { name: n.name });
 const noticeIcon = (n: Notice) =>
-  n.kind === 'image-described' ? icons.Image : n.kind === 'tools-unsupported' ? icons.Wrench : n.kind === 'step-limit' ? icons.AlertTriangle : icons.ImageOff;
+  n.kind === 'image-described' ? icons.Image : n.kind === 'tools-unsupported' ? icons.Wrench : n.kind === 'step-limit' ? icons.AlertTriangle : n.kind === 'review-stopped' ? icons.ShieldX : icons.ImageOff;
 const more = computed(() => [{ id: 'request', label: t('playground.copyRequest'), icon: icons.FileText }]);
 const failure = computed(() => [t('playground.replyFailed'), props.message.error].filter(Boolean).join(' '));
 </script>

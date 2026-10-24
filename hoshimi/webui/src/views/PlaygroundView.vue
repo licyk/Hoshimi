@@ -87,10 +87,10 @@ const toolOptions = computed(() => TOOL_GROUPS.map((g) => ({ value: g, label: t(
 const toolsOn = computed(() => TOOL_GROUPS.filter((g) => (defaultTools.value.includes(g) || chat.toolsOn.includes(g)) && !chat.toolsOff.includes(g)));
 const chooseTools = (on: string[]) => chat.chooseTools(on as ToolGroup[], defaultTools.value);
 // When this chat's tools ask first: as Settings say until the chat chooses for itself.
-const defaultApproval = computed<ApprovalMode>(() => settings.data.value?.playground.approval ?? 'ask');
+const defaultApproval = computed<ApprovalMode>(() => settings.data.value?.playground.approval ?? 'review');
 const approval = computed<ApprovalMode>(() => chat.approval || defaultApproval.value);
 const approvalOptions = computed(() => APPROVAL_MODES.map((m) => ({ value: m, label: t(`settings.approvalModes.${m}`), description: t(`settings.approvalModesHelp.${m}`) })));
-const APPROVAL_ICONS = { ask: icons.Shield, auto: icons.ShieldCheck, full: icons.ShieldOff };
+const APPROVAL_ICONS = { review: icons.ShieldCheck, ask: icons.ShieldUser, workspace: icons.ShieldHalf, full: icons.ShieldOff };
 // Steering: while a reply with tools runs, what is written goes to it, read at its next round.
 const steerable = computed(() => chat.busy && !!chat.conversation && toolsOn.value.length > 0);
 async function steerNow() {

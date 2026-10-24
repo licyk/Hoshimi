@@ -22,6 +22,7 @@ from hoshimi.api.errors import ERROR_RESPONSES
 from hoshimi.api.playground import PlaygroundRunner, event, sse
 from hoshimi.api.routers.chat import chat_completion
 from hoshimi.api.routers.models import ModelList, list_models
+from hoshimi.core.agent.approval import approval_mode
 from hoshimi.core.agent.tools import GROUPS
 from hoshimi.core.context import Services
 from hoshimi.core.conversations import AttachmentInfo, ChatMessage, Conversation
@@ -57,8 +58,8 @@ def create_playground_chat_completion(
 # -- views ---------------------------------------------------------------------- #
 class Notice(Record):
     """Something about how a reply was made: ``image-described`` (by ``model``), ``image-omitted``, ``image-refused`` (by ``model``),
-    ``tools-unsupported`` (``model`` makes no tool calls), or ``step-limit`` (kept on replies from before rounds of tool calls were
-    unlimited: the reply spent its ``name`` rounds)."""
+    ``tools-unsupported`` (``model`` makes no tool calls), ``review-stopped`` (the reviewer denied ``name`` of its calls, and it was
+    stopped), or ``step-limit`` (kept on replies from before rounds of tool calls were unlimited: the reply spent its ``name`` rounds)."""
 
     kind: str
     name: str = ""
@@ -122,8 +123,8 @@ class ConversationSummary(Record):
     """The tools (by their Settings switch) this conversation does without, though Settings turns them on for new ones."""
     tools_on: list[str] = Field(default_factory=list)
     """The tools this conversation uses, though Settings leaves them off for new ones."""
-    approval: Literal["", "ask", "auto", "full"] = ""
-    """When its tools ask first, as ``playground.approval``; empty: as Settings say."""
+    approval: Literal["", "ask", "workspace", "review", "full"] = ""
+    """When its tools ask first, and whom, as ``playground.approval``; empty: as Settings say."""
     created_at: float
     updated_at: float
     """Unix seconds of the last message, which orders the list."""
@@ -147,7 +148,8 @@ class ConversationCreate(Record):
     temporary: bool = False
     tools_off: list[str] = Field(default_factory=list)
     tools_on: list[str] = Field(default_factory=list)
-    approval: Literal["", "ask", "auto", "full"] = ""
+    approval: Literal["", "ask", "workspace", "review", "full", "auto"] = ""
+    """As ``playground.approval``; ``auto`` is the old name of ``workspace``."""
 
 
 class ConversationPatch(Record):
@@ -160,8 +162,8 @@ class ConversationPatch(Record):
     current_leaf: str | None = None
     tools_off: list[str] | None = None
     tools_on: list[str] | None = None
-    approval: Literal["", "ask", "auto", "full"] | None = None
-    """When its tools ask first (from the next call on, even in a reply under way); empty: as Settings say."""
+    approval: Literal["", "ask", "workspace", "review", "full", "auto"] | None = None
+    """When its tools ask first, and whom (from the next call on, even in a reply under way); empty: as Settings say. ``auto`` is the old name of ``workspace``."""
 
 
 class MessageSend(Record):
@@ -207,6 +209,8 @@ class TerminalView(Record):
     id: int
     command: str
     cwd: str
+    shell: str = ""
+    """The shell it runs in (``bash``, ``powershell``…)."""
     started_at: float
     running: bool
     exit_code: int | None = None
@@ -294,7 +298,7 @@ def _message(m: ChatMessage) -> MessageView:
 def _summary(c: Conversation) -> ConversationSummary:
     return ConversationSummary(
         id=c.id, title=c.title, title_state=c.title_state, model=c.model, effort=c.effort, archived=c.archived, temporary=c.temporary,
-        branched_from=c.branched_from, tools_off=c.tools_off, tools_on=c.tools_on, approval=c.approval if c.approval in ("ask", "auto", "full") else "",
+        branched_from=c.branched_from, tools_off=c.tools_off, tools_on=c.tools_on, approval=approval_mode(c.approval),
         created_at=c.created_at, updated_at=c.updated_at,
     )
 

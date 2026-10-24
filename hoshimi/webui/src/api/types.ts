@@ -24,7 +24,17 @@ export type ReasoningStep = { type: 'reasoning'; text: string; ms: number; round
 export type TextStep = { type: 'text'; text: string; round: number };
 /** A message the user sent while the reply ran, where the model read it. */
 export type UserStep = { type: 'user'; id: string; text: string; round: number };
-export type ToolStatus = 'pending' | 'waiting' | 'running' | 'done' | 'error' | 'denied' | 'stopped';
+export type ToolStatus = 'pending' | 'reviewing' | 'waiting' | 'running' | 'done' | 'error' | 'denied' | 'stopped';
+/** What the reviewer said of a call (``review`` approval mode); ``failed`` when it came to no decision (``rationale`` says why). */
+export type ToolReview = {
+  outcome: 'allow' | 'deny' | '';
+  risk_level: 'low' | 'medium' | 'high' | 'critical' | '';
+  user_authorization: 'unknown' | 'low' | 'medium' | 'high' | '';
+  rationale: string;
+  model: string;
+  ms: number;
+  failed: boolean;
+};
 export type ToolStep = {
   type: 'tool';
   id: string;
@@ -37,8 +47,10 @@ export type ToolStep = {
   ms: number;
   /** What the tool says beside its output: ``path``, ``files``, ``session_id``, ``url``, ``query``… */
   meta: Record<string, unknown>;
-  /** Why it waits for approval (``waiting``). */
+  /** Why it needs approval (``reviewing``, ``waiting``). */
   approval: string;
+  /** What the reviewer said of it; none for a call that was not reviewed (or kept before there was a reviewer). */
+  review?: ToolReview | null;
   round: number;
 };
 /**
@@ -72,9 +84,13 @@ export type TokenCounts = { input: number; cached: number; output: number; reaso
 export type ReplyUsage = { last?: TokenCounts; total?: TokenCounts; rounds?: number; context?: number; source?: 'usage' | 'estimate' };
 export type ContextView = S['ContextView'];
 export type ApprovalDecision = 'allow' | 'always' | 'deny';
-/** When tools ask first: before commands, edits and anything outside the workspace; only outside it; never. */
-export type ApprovalMode = 'ask' | 'auto' | 'full';
-export const APPROVAL_MODES: ApprovalMode[] = ['ask', 'auto', 'full'];
+/**
+ * When tools ask first, and whom: the reviewer model judges commands, edits and anything outside the workspace
+ * (``review``, asking the user when it cannot); the user does, for those (``ask``) or only outside the workspace
+ * (``workspace``); nobody (``full``).
+ */
+export type ApprovalMode = 'review' | 'ask' | 'workspace' | 'full';
+export const APPROVAL_MODES: ApprovalMode[] = ['review', 'ask', 'workspace', 'full'];
 export type ProviderSummary = S['ProviderSummary'];
 export type ModelList = S['ModelList'];
 export type ModelObject = S['ModelObject'];

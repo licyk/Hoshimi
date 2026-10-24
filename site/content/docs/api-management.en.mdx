@@ -83,6 +83,7 @@ curl -H "Authorization: Bearer $ACCESS_KEY" $API/app/meta
 `GET /settings` returns the current settings: `data_dir`, `config_path`, `server` (host, port, `strict_port`, `access_token_configured`, `model_api_key_configured`, allowed CIDRs/hosts/origins, `max_body_bytes`, `max_account_retries`, `default_model`, `auto_refresh`, `auto_checkin`, `check_updates`, `stats_keep_days`), `providers` (each provider's `id`, `enabled`, account count, the names of its options, its network settings), `network`, `playground`, and:
 
 - `restart_required`: a saved `server.host` / `server.port` differs from what this process started with and needs a restart.
+- `playground.workspace_path`, `playground.shell_in_effect` and `playground.shells` (read-only): where the tools work, the shell commands run in when a call names none (`auto` resolved), and the shells installed on this machine.
 - `listening`: the socket actually in use; `port` is the bound port, `requested_port` the one the search started from, and `fallback` means the requested port was taken and another was used (never a reason to restart).
 
 The keys themselves are never returned.
@@ -99,6 +100,7 @@ curl -X PATCH $API/settings \
 - Setting `server.access_token` or `server.model_api_key` to `null` (or an empty string) clears it.
 - Invalid values answer `400` with the reason, for example binding a non-loopback address without both `security.allow_cidrs` and `server.access_token`.
 - Changing the listening host or port turns `restart_required` to `true`.
+- `{"playground": {"approval": "auto"}}` is saved as `workspace`, the mode's new name.
 
 What each setting means is in [Configuration file](/docs/config).
 

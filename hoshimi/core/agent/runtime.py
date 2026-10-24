@@ -27,7 +27,8 @@ class _Pending:
 class Approvals:
     """Calls that wait for the user's yes or no, and the tools a conversation was told to run without asking.
 
-    Kept in memory: an "always" lasts as long as the process does.
+    The user's side of the approvals (:class:`~hoshimi.core.agent.approval.UserApprover`
+    asks here). Kept in memory: an "always" lasts as long as the process does.
     """
 
     def __init__(self) -> None:

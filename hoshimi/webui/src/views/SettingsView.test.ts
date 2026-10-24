@@ -10,7 +10,7 @@ const settings = ref({
   data_dir: '/data', config_path: '/data/config.json', restart_required: false, network: { mode: 'auto', proxy_configured: false, system_proxy: false }, providers: [],
   server: { host: '127.0.0.1', port: 10600, allow_cidrs: ['10.0.0.0/8'], allow_hosts: [], allow_origins: [], auto_checkin: true, auto_refresh: true, default_model: null, max_account_retries: 3, max_body_bytes: 1000, access_token_configured: false, model_api_key_configured: false, strict_port: false, stats_keep_days: 90 },
   listening: { host: '127.0.0.1', port: 10601, requested_port: 10600, fallback: true },
-  playground: { system_prompt: '', title_model: '', vision_model: 'auto', tools: ['read'], workspace: '', workspace_path: '/data/workspace', approval: 'ask', search_url: '', auto_compact: true, compact_threshold: 0.85, compact_model: '' },
+  playground: { system_prompt: '', title_model: '', vision_model: 'auto', tools: ['read'], workspace: '', workspace_path: '/data/workspace', approval: 'review', review_model: '', shell: 'auto', shell_in_effect: 'bash', shells: ['bash', 'sh'], search_url: '', auto_compact: true, compact_threshold: 0.85, compact_model: '' },
 });
 
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ replace: ({ query }: { query: Record<string, string> }) => (route.query = query), push: vi.fn() }) }));
@@ -71,12 +71,17 @@ describe('settings', () => {
     await toggle('Run commands');
     await toggle('Read files');
     const mode = w.find('select[aria-label="When tools ask first"]');
-    expect(mode.findAll('option').map((o) => o.text())).toEqual(['Ask first', 'Ask outside the workspace', 'Full access']);
+    expect(mode.findAll('option').map((o) => o.text())).toEqual(['Automatic review', 'Ask first', 'Ask outside the workspace', 'Full access']);
     await mode.setValue('full');
+    // The shell commands run in: automatic (and what it comes to here), or one of those installed.
+    const shell = w.find('select[aria-label="Shell"]');
+    expect(shell.findAll('option').map((o) => o.text())).toEqual(['Automatic', 'bash', 'sh']);
+    await shell.setValue('sh');
     expect(state.update.mock.calls.map((c) => c[0])).toEqual([
       { playground: { tools: ['read', 'shell'] } },
       { playground: { tools: [] } },
       { playground: { approval: 'full' } },
+      { playground: { shell: 'sh' } },
     ]);
     const workspace = w.find('input[aria-label="Workspace"]');
     await workspace.setValue('~/agent');

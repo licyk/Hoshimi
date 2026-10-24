@@ -63,7 +63,7 @@ BASE=http://127.0.0.1:10600/api/v1/playground
 | `temporary` | 布尔 | 临时对话：不会列出、不会命名，网页界面离开它时以及服务下次启动时删除 |
 | `branched_from` | 字符串 | 分支来源的对话，没有则为空 |
 | `tools_on`、`tools_off` | 字符串列表 | 该对话相对 `playground.tools` 开启或关闭的工具开关 |
-| `approval` | `""`、`ask`、`auto`、`full` | 该对话自己的审批模式；为空则使用 `playground.approval` |
+| `approval` | `""`、`ask`、`workspace`、`review`、`full` | 该对话自己的审批模式；为空则使用 `playground.approval`。不会返回 `auto`（`workspace` 的旧名称） |
 | `created_at`、`updated_at` | 数字 | Unix 秒；`updated_at` 为最后一条消息的时间，列表按它排序 |
 | `current_leaf` | 字符串 | 仅完整对话中有：当前显示路径的末端 |
 | `messages` | 消息列表 | 仅完整对话中有：消息树中的全部消息，按时间先后排列 |
@@ -86,7 +86,7 @@ curl -X POST $BASE/conversations \
 | `title` | `""` | 你自己的标题（`title_state` 为 `user`） |
 | `temporary` | `false` | 是否为临时对话 |
 | `tools_on`、`tools_off` | `[]` | 相对设置开启或关闭的工具 |
-| `approval` | `""` | `ask`、`auto`、`full`，为空则使用设置中的模式 |
+| `approval` | `""` | `ask`、`workspace`、`review`、`full`，为空则使用设置中的模式；`auto` 按 `workspace` 处理 |
 
 ### 修改
 
@@ -99,7 +99,7 @@ curl -X POST $BASE/conversations \
 | `archived` | 归档（`true`）或恢复（`false`）。发送消息也会恢复 |
 | `current_leaf` | 切换显示的版本：必须是该对话中的消息 ID（否则返回 `400`） |
 | `tools_on`、`tools_off` | 该对话的工具选择 |
-| `approval` | 该对话的审批模式；从下一次工具调用起生效，正在进行的回复也一样 |
+| `approval` | 该对话的审批模式（`auto` 按 `workspace` 处理）；从下一次工具调用起生效，正在进行的回复也一样 |
 
 修改不会改变 `updated_at`：只有新消息会让对话在列表中上移。
 
@@ -134,6 +134,7 @@ curl -X POST $BASE/conversations \
 | `image-omitted` | `name` | 图片被略去：没有模型能描述它，或 `playground.vision_model` 为 `off` |
 | `image-refused` | `model` | 站点拒绝了图片，回复已改用描述重试 |
 | `tools-unsupported` | `model` | 模型不支持工具调用，或其站点拒绝了工具；它在没有工具的情况下作答 |
+| `review-stopped` | `name`（拒绝次数，字符串） | 自动审查拒绝了该回复这么多次调用（连续 3 次，或共 10 次），因此回复被停止 |
 | `step-limit` | `name`（上限值） | 只出现在工具调用轮数取消上限之前的回复中：该回复用完了 `name` 轮工具调用 |
 
 ## 发送消息
@@ -185,7 +186,7 @@ data: {"type": "assistant", "message": {"id": "5828…", "parent_id": "94bc…",
 
 data: {"type": "delta", "text": "Let me look."}
 
-data: {"type": "tool", "step": {"type": "tool", "id": "call_1", "name": "read", "arguments": "", "status": "pending", "output": "", "exit_code": null, "ms": 0, "meta": {}, "approval": "", "round": 0}}
+data: {"type": "tool", "step": {"type": "tool", "id": "call_1", "name": "read", "arguments": "", "status": "pending", "output": "", "exit_code": null, "ms": 0, "meta": {}, "approval": "", "review": null, "round": 0}}
 
 data: {"type": "tool", "step": {"type": "tool", "id": "call_1", "name": "read", "arguments": "{\"path\": \".\"}", "status": "running", …}}
 
@@ -221,18 +222,19 @@ data: {"type": "done", "message": {"id": "5828…", "content": "Let me look.\n\n
 | `text` | `text` |
 | `user` | `id`、`text`：通过 `/steer` 发送、在本轮开始时读取的消息 |
 | `compaction` | `id`、`status`（`running`、`done`、`failed`、`stopped`）、`trigger`（`auto`、`overflow`、`manual`）、`phase`（`pre-turn`、`mid-turn`、`manual`）、`summary`、`recent`（逐字保留的你的消息）、`tokens_before`、`tokens_after`、`model`（撰写总结的模型）、`ms`、`error`、`at`：在本轮之前压缩了对话 |
-| `tool` | `id`、`name`、`arguments`（模型写出的 JSON 字符串）、`status`、`output`、`exit_code`、`ms`、`meta`、`approval` |
+| `tool` | `id`、`name`、`arguments`（模型写出的 JSON 字符串）、`status`、`output`、`exit_code`、`ms`、`meta`、`approval`、`review` |
 
 工具步骤的 `status`：
 
 | `status` | 含义 |
 | --- | --- |
 | `pending` | 模型还在写这次调用；本轮结束时 `arguments` 才完整 |
-| `waiting` | 等待批准；`approval` 说明原因：`command`、`edit`、`edit-outside` 或 `read-outside` |
+| `reviewing` | 审查模型正在判断（**自动审查**）；`approval` 和 `waiting` 时一样说明需要批准的原因。之后变为 `running`、`denied`，审查无法判断时变为 `waiting` |
+| `waiting` | 等待用户批准；`approval` 说明原因：`command`、`edit`、`edit-outside` 或 `read-outside` |
 | `running` | 正在运行 |
 | `done` | 已完成 |
 | `error` | 失败（非零退出码、参数错误、未知工具）；`output` 说明原因 |
-| `denied` | 用户拒绝，未运行 |
+| `denied` | 用户或审查模型拒绝，未运行。被审查模型拒绝时，`output` 是告诉模型的内容；被用户拒绝时为空 |
 | `stopped` | 回复先被停止（或在轮数取消上限之前的回复中，因达到轮数上限而未运行） |
 
 `output` 是发给模型的内容（最多 32,000 个字符）。`meta` 是页面在旁边显示的信息：
@@ -241,11 +243,13 @@ data: {"type": "done", "message": {"id": "5828…", "content": "Let me look.\n\n
 | --- | --- |
 | `read` | `path`；文件另有 `lines`、`from`、`to`，文件夹另有 `entries` |
 | `apply_patch` | `files`：每项含 `path`、`kind`（`add`、`update`、`delete`），移动的文件另有 `from` |
-| `shell` | `cwd`、`timed_out` |
-| `exec_command`、`write_stdin` | `session_id`、`running`、`cwd`；`exec_command` 另有 `command` |
+| `shell` | `cwd`、`shell`（运行它的 shell）、`timed_out` |
+| `exec_command`、`write_stdin` | `session_id`、`running`、`cwd`、`shell`；`exec_command` 另有 `command` |
 | `kill_session` | `session_id` |
 | `web_search` | `query`、`results` |
 | `web_fetch` | `url`（最终地址）、`title` |
+
+工具步骤的 `review` 在审查模型判断之前为 `null`，之后为 `{"outcome", "risk_level", "user_authorization", "rationale", "model", "ms", "failed"}`：`outcome` 为 `allow` 或 `deny`，`risk_level` 为 `low`、`medium`、`high` 或 `critical`，`user_authorization` 为 `unknown`、`low`、`medium` 或 `high`，`model` 是审查模型，`ms` 是审查用时。审查无法判断、调用转交给用户时，`failed` 为 `true`，`outcome` 为空，`rationale` 说明原因。
 
 运行中被停止的调用还会带有 `"cancelled": true`。对话再次发给模型时，每一轮会还原为：该轮的补充消息、一条带 `tool_calls` 的 assistant 消息，以及每次调用对应的 `tool` 消息；没有开启工具时，调用及其结果以文字形式发送。
 
@@ -265,7 +269,7 @@ curl -X POST $BASE/conversations/$CID/approvals/call_1 \
 | `always` | 运行它，并在服务重启前，此对话中同一工具开关的调用不再询问（工作区内和工作区外分开计算） |
 | `deny` | 跳过它；模型会被告知用户拒绝了 |
 
-成功返回 `204`；没有等待中的对应调用时返回 `404`。调用最多等待 10 分钟，之后视为拒绝。随后流中会发送该调用的下一个状态。哪些调用需要等待取决于审批模式（见 [Playground 工具](/docs/guide-agent)）。
+只有 `waiting` 状态的调用接受答复；`reviewing` 状态的调用由审查模型决定。成功返回 `204`；没有等待中的对应调用时返回 `404`。调用最多等待 10 分钟，之后视为拒绝。随后流中会发送该调用的下一个状态。哪些调用需要等待取决于审批模式（见 [Playground 工具](/docs/guide-agent)）。
 
 ## 补充说明
 
@@ -285,7 +289,7 @@ curl -X POST $BASE/conversations/$CID/approvals/call_1 \
 ```json
 {
   "terminals": [
-    {"id": 1, "command": "npm run dev", "cwd": "/home/me/.hoshimi/workspace", "started_at": 1792684330.35, "running": true, "exit_code": null}
+    {"id": 1, "command": "npm run dev", "cwd": "/home/me/.hoshimi/workspace", "shell": "bash", "started_at": 1792684330.35, "running": true, "exit_code": null}
   ]
 }
 ```
