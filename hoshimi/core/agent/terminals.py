@@ -27,6 +27,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field, replace
@@ -34,13 +35,22 @@ from typing import Any
 
 from hoshimi.core.agent.base import Cancelled, Permission, Tool, ToolContext, ToolError, ToolResult, clip, integer, string
 
-SHELL_TIMEOUT_MS = 60_000
-SHELL_TIMEOUT_MAX_MS = 600_000
+# Codex's time limits (``exec.rs``, ``unified_exec/mod.rs``): a ``shell`` command runs as long as
+# its call says (10 s unless told otherwise); a background one runs until it exits or is stopped,
+# and each call only waits a while for its output.
+SHELL_TIMEOUT_MS = 10_000
+TIMEOUT_EXIT_CODE = 124
+"""The exit code of a command stopped for running too long, as ``timeout`` gives it."""
 YIELD_MS = 10_000
+YIELD_MIN_MS = 250
 YIELD_MAX_MS = 30_000
+WINDOWS_YIELD_FLOOR_MS = 10_000
+"""How long ``exec_command`` waits at least on Windows, where a shell takes a while to start."""
 WRITE_YIELD_MS = 250
 POLL_YIELD_MS = 5_000
-POLL_YIELD_MAX_MS = 120_000
+POLL_YIELD_MAX_MS = 300_000
+DRAIN_TIMEOUT = 2.0
+"""Seconds to wait for a finished command's output, which something it left running may hold open."""
 MAX_SESSIONS = 16
 CAPTURE_LIMIT = 1_000_000
 """Characters of unread output a command keeps; the middle of more is dropped."""
@@ -228,7 +238,7 @@ class Capture:
             self.head, self.tail, self.dropped = "", "", 0
         return _ANSI.sub("", text)
 
-    def finish(self, timeout: float = 1.0) -> None:
+    def finish(self, timeout: float = DRAIN_TIMEOUT) -> None:
         self.thread.join(timeout)
 
 
@@ -257,7 +267,7 @@ def run_shell(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     command = string(args, "command")
     cwd = workdir(args, ctx)
     shell = pick_shell(args, ctx)
-    timeout_ms = integer(args, "timeout_ms", SHELL_TIMEOUT_MS, low=1000, high=SHELL_TIMEOUT_MAX_MS)
+    timeout_ms = integer(args, "timeout_ms", SHELL_TIMEOUT_MS, low=1000, high=sys.maxsize)
     start = time.monotonic()
     proc = spawn(shell.argv(command), cwd, stdin=False)
     assert proc.stdout is not None
@@ -271,7 +281,7 @@ def run_shell(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     output = capture.take()
     if ctx.cancel.is_set() and timed_out:
         raise Cancelled()
-    code = proc.returncode if not timed_out else -1
+    code = proc.returncode if not timed_out else TIMEOUT_EXIT_CODE
     note = f"command timed out after {timeout_ms} milliseconds\n" if timed_out else ""
     text = f"Exit code: {code}\nWall time: {_seconds(start)} seconds\nOutput:\n{note}{clip(output)}"
     return ToolResult(text, ok=code == 0, exit_code=code, meta={"cwd": cwd, "shell": shell.kind, "timed_out": timed_out})
@@ -413,11 +423,15 @@ def _session_id(args: dict[str, Any]) -> int:
     return int(value)
 
 
+def _yield_floor() -> int:
+    return WINDOWS_YIELD_FLOOR_MS if os.name == "nt" else YIELD_MIN_MS
+
+
 def run_exec_command(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     command = string(args, "cmd")
     cwd = workdir(args, ctx)
     shell = pick_shell(args, ctx)
-    yield_ms = integer(args, "yield_time_ms", YIELD_MS, low=250, high=YIELD_MAX_MS)
+    yield_ms = integer(args, "yield_time_ms", YIELD_MS, low=_yield_floor(), high=YIELD_MAX_MS)
     result = _terminals(ctx).start(ctx.conversation_id, command, cwd, yield_ms, ctx.cancel, shell)
     result.meta["command"] = command
     return result
@@ -426,7 +440,7 @@ def run_exec_command(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
 def run_write_stdin(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     chars = string(args, "chars", required=False)
     default, high = (WRITE_YIELD_MS, YIELD_MAX_MS) if chars else (POLL_YIELD_MS, POLL_YIELD_MAX_MS)
-    yield_ms = integer(args, "yield_time_ms", default, low=250 if chars else 1000, high=high)
+    yield_ms = integer(args, "yield_time_ms", default, low=YIELD_MIN_MS if chars else POLL_YIELD_MS, high=high)
     return _terminals(ctx).write(ctx.conversation_id, _session_id(args), chars, yield_ms, ctx.cancel)
 
 
@@ -457,7 +471,10 @@ SHELL = Tool(
             "command": {"type": "string", "description": "The command line to run."},
             "shell": _SHELL,
             "workdir": _WORKDIR,
-            "timeout_ms": {"type": "integer", "description": f"Stop it after this long. Default {SHELL_TIMEOUT_MS}, at most {SHELL_TIMEOUT_MAX_MS}."},
+            "timeout_ms": {
+                "type": "integer",
+                "description": f"How long it may run before it is stopped, in milliseconds. Default {SHELL_TIMEOUT_MS}; give more for a long build or test run.",
+            },
         },
         "required": ["command"],
         "additionalProperties": False,
@@ -480,7 +497,10 @@ EXEC_COMMAND = Tool(
             "cmd": {"type": "string", "description": "The command line to run."},
             "shell": _SHELL,
             "workdir": _WORKDIR,
-            "yield_time_ms": {"type": "integer", "description": f"How long to wait before returning. Default {YIELD_MS}, from 250 to {YIELD_MAX_MS}."},
+            "yield_time_ms": {
+                "type": "integer",
+                "description": f"How long to wait before returning. Default {YIELD_MS}, from {_yield_floor()} to {YIELD_MAX_MS}.",
+            },
         },
         "required": ["cmd"],
         "additionalProperties": False,
@@ -501,7 +521,12 @@ WRITE_STDIN = Tool(
         "properties": {
             "session_id": {"type": "integer", "description": "The session ID exec_command returned."},
             "chars": {"type": "string", "description": "What to type, with \\n for Enter. Empty to only read new output."},
-            "yield_time_ms": {"type": "integer", "description": f"How long to wait for output. Default {WRITE_YIELD_MS} after writing, {POLL_YIELD_MS} when only reading (at most {POLL_YIELD_MAX_MS})."},
+            "yield_time_ms": {
+                "type": "integer",
+                "description": (
+                    f"How long to wait for output. After writing: default {WRITE_YIELD_MS}, at most {YIELD_MAX_MS}. When only reading: from {POLL_YIELD_MS} to {POLL_YIELD_MAX_MS}."
+                ),
+            },
         },
         "required": ["session_id"],
         "additionalProperties": False,

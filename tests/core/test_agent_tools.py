@@ -139,7 +139,7 @@ def test_shell_stops_a_command_that_runs_too_long_with_what_it_started(ctx: Tool
     started = time.monotonic()
     result = call("shell", ctx, command=f"(sleep 3; touch {marker}) & echo started; sleep 30", timeout_ms=1000)
     assert time.monotonic() - started < 6
-    assert result.exit_code == -1 and "command timed out after 1000 milliseconds" in result.output and "started" in result.output
+    assert result.exit_code == 124 and "command timed out after 1000 milliseconds" in result.output and "started" in result.output
     time.sleep(3.5)
     assert not marker.exists()
 
@@ -151,6 +151,22 @@ def test_a_stop_ends_a_running_command(ctx: ToolContext) -> None:
     result = call("shell", ctx, command="sleep 30")
     assert time.monotonic() - started < 5
     assert not result.ok and result.meta.get("cancelled")
+
+
+@posix
+def test_shell_takes_a_timeout_as_long_as_it_is_given(ctx: ToolContext) -> None:
+    result = call("shell", ctx, command="echo done", timeout_ms=10**12)
+    assert result.ok and "done" in result.output
+
+
+@posix
+def test_a_poll_waits_at_least_five_seconds_for_a_running_command(ctx: ToolContext) -> None:
+    call("exec_command", ctx, cmd="sleep 30", yield_time_ms=250)
+    started = time.monotonic()
+    polled = call("write_stdin", ctx, session_id=1, yield_time_ms=1)
+    assert 4.9 <= time.monotonic() - started < 8
+    assert "Process running with session ID 1" in polled.output
+    call("kill_session", ctx, session_id=1)
 
 
 @posix

@@ -78,14 +78,14 @@ Takes a patch in the Codex `apply_patch` format, so a model that knows the tool 
 ### Run commands (`shell`)
 
 - Runs the command in the shell the model names, or else in the default shell (see Choose the shell below), in the workspace unless the model gives a `workdir`.
-- Waits for it to finish: 60 seconds by default, at most 10 minutes. A command that runs longer is stopped, with everything it started, and reported as timed out (exit code -1).
+- Waits for it to finish: 10 seconds by default, as with Codex; the model asks for more (`timeout_ms`) for a long build or test run, with no upper limit. A command that runs longer is stopped, with everything it started, and reported as timed out (exit code 124).
 - Returns the exit code, the time taken and the output, standard error included. The command gets no input (standard input is closed), and pagers and colours are turned off (`PAGER=cat`, `NO_COLOR=1`, `TERM=dumb`, `GIT_TERMINAL_PROMPT=0`).
 - For something that keeps running or asks for input, the model is told to use a background command instead.
 
 ### Background commands (`exec_command`, `write_stdin`, `kill_session`)
 
-- `exec_command` starts a command and waits a little (10 seconds by default, from 0.25 to 30). If it finishes, it returns its exit code and output; if not, it keeps running as a *session* and returns what it printed so far and a session ID.
-- `write_stdin` types into a session (with `\n` for Enter) and returns its new output, waiting 0.25 seconds by default after writing; with nothing to type it just waits for new output (5 seconds by default, up to 2 minutes). It says whether the command still runs, or its exit code.
+- `exec_command` starts a command and waits a little (10 seconds by default, from 0.25 to 30; at least 10 on Windows). If it finishes, it returns its exit code and output; if not, it keeps running as a *session* and returns what it printed so far and a session ID.
+- `write_stdin` types into a session (with `\n` for Enter) and returns its new output, waiting 0.25 seconds by default after writing (at most 30); with nothing to type it just waits for new output (from 5 seconds, the default, to 5 minutes). A session itself has no time limit: it runs until it exits or is stopped. It says whether the command still runs, or its exit code.
 - `kill_session` stops a session and everything it started, and returns its last output.
 - A session keeps up to 1,000,000 characters of unread output (the middle of more is dropped); colour codes are stripped.
 - At most 16 background commands run at once on the server. Sessions belong to the chat that started them, and stop when that chat is deleted and when the server stops.
