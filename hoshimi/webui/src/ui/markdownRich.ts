@@ -27,6 +27,8 @@ export interface MarkdownLabels {
   zoomIn: string;
   zoomOut: string;
   resetZoom: string;
+  /** A diagram's zoom level, as a button that shows it at its own size. */
+  actualSize: string;
   /** A code block's language when it names none. */
   plainText: string;
 }
@@ -46,6 +48,7 @@ export const DEFAULT_LABELS: MarkdownLabels = {
   zoomIn: 'Zoom in',
   zoomOut: 'Zoom out',
   resetZoom: 'Fit to window',
+  actualSize: 'Actual size',
   plainText: 'Text',
 };
 

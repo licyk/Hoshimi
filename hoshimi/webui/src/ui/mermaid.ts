@@ -7,10 +7,34 @@ import { themeKey } from '@/ui/markdownRich';
  * could not) under the block's key, which names its source and the theme. It runs in its strictest
  * mode: no scripts, no clicks bound to code, its labels plain SVG text rather than HTML. Its colours
  * are the theme's own roles, read when it draws.
+ *
+ * Mermaid sizes a drawing as a share of its box (``width="100%"`` and its own width as a
+ * ``max-width``), so a wide one shrinks to the column until its words cannot be read. A drawing is
+ * kept at its own size instead (its ``viewBox``'s), which the page lays it out at a scale of.
  */
 export interface Drawing {
   svg?: string;
+  /** The drawing's own size, in CSS pixels; 0 when it states none. */
+  width?: number;
+  height?: number;
   error?: string;
+}
+
+/** ``svg`` sized as its ``viewBox`` (or the size it states in pixels), with Mermaid's share of the box taken off. */
+export function naturalSize(svg: string): Required<Pick<Drawing, 'svg' | 'width' | 'height'>> {
+  const open = /<svg\b[^>]*>/i.exec(svg);
+  if (!open) return { svg, width: 0, height: 0 };
+  const box = /\bviewBox\s*=\s*["']\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)\s*["']/i.exec(open[0]);
+  const pixels = (name: string) => Number(new RegExp(String.raw`\s${name}\s*=\s*["']\s*([\d.]+)(px)?\s*["']`, 'i').exec(open[0])?.[1] ?? 0);
+  const width = box ? Number(box[1]) : pixels('width');
+  const height = box ? Number(box[2]) : pixels('height');
+  if (!(width > 0 && height > 0)) return { svg, width: 0, height: 0 };
+  const tag = open[0]
+    .replace(/\s(width|height)\s*=\s*("[^"]*"|'[^']*')/gi, '')
+    .replace(/max-width:\s*[^;"']*;?\s*/i, '')
+    .replace(/\sstyle\s*=\s*(""|'')/i, '')
+    .replace(/^<svg\b/i, `<svg width="${width}" height="${height}"`);
+  return { svg: svg.slice(0, open.index) + tag + svg.slice(open.index + open[0].length), width, height };
 }
 export const drawings = shallowReactive(new Map<string, Drawing>());
 const pending = new Set<string>();
@@ -67,7 +91,7 @@ export function draw(key: string, source: string): void {
       const id = `hoshimi-mermaid-${++count}`;
       try {
         const { svg } = await mermaid.render(id, source);
-        drawings.set(key, { svg });
+        drawings.set(key, naturalSize(svg));
       } finally {
         // A failed drawing can leave its scratch element behind.
         document.getElementById(id)?.remove();

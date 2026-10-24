@@ -22,24 +22,28 @@
 .code-sub { flex: 0 12 auto; min-width: 0; overflow: hidden; font-weight: 400; white-space: nowrap; text-overflow: ellipsis; }
 .code-sub::before { content: '·'; margin-inline-end: var(--app-space-2); }
 .code-tools { display: inline-flex; align-items: center; gap: 2px; flex: none; }
+.code-sep { width: 1px; height: 20px; margin: 0 var(--app-space-1); background: var(--md-sys-color-outline-variant); }
 
-/* The head's buttons: copy, and a switch between a drawing and its code. */
-.code-copy {
+/* The head's buttons: icons (copy, zoom, open), a switch between a drawing and its code, the zoom level. */
+.code-tool, .code-copy {
   display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--md-sys-shape-corner-full);
   background: transparent; color: inherit; cursor: pointer;
   transition: background-color var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
 }
-.code-toggle {
+.code-toggle, .code-zoom-level {
   height: 28px; padding: 0 var(--app-space-2); border: 0; border-radius: var(--md-sys-shape-corner-full); background: transparent; color: inherit;
   font: inherit; cursor: pointer;
 }
-.code-copy:hover, .code-toggle:hover {
+.code-zoom-level { min-width: 52px; font-variant-numeric: tabular-nums; }
+.code-zoom { display: inline-flex; align-items: center; gap: 2px; }
+.code-tool:hover, .code-copy:hover, .code-toggle:hover, .code-zoom-level:hover {
   background: color-mix(in srgb, currentColor calc(var(--md-sys-state-hover-state-layer-opacity) * 100%), transparent);
 }
-.code-copy:active, .code-toggle:active {
+.code-tool:active, .code-copy:active, .code-toggle:active, .code-zoom-level:active {
   background: color-mix(in srgb, currentColor calc(var(--md-sys-state-pressed-state-layer-opacity) * 100%), transparent);
 }
-.code-copy:focus-visible, .code-toggle:focus-visible {
+.code-tool:disabled { opacity: 0.38; cursor: default; background: transparent; }
+.code-tool:focus-visible, .code-copy:focus-visible, .code-toggle:focus-visible, .code-zoom-level:focus-visible {
   outline: 2px solid var(--md-sys-color-primary); outline-offset: -2px;
 }
 .code-copy .icon-check, .code-copy.copied .icon-copy { display: none; }

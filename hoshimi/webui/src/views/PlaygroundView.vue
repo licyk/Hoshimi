@@ -169,7 +169,7 @@ onMounted(() => requestAnimationFrame(() => (laidOut.value = true)));
 // for a press unless Settings say to always load it. Any image here (an attachment, an image in a
 // reply, a drawn diagram) opens in the viewer, with the others to move between.
 const prefs = usePreferencesStore();
-const MEDIA_KEYS = ['loadImage', 'loadVideo', 'loadAudio', 'code', 'diagram', 'image', 'preview', 'drawing', 'diagramFailed', 'previewTitle', 'plainText'] as const;
+const MEDIA_KEYS = ['loadImage', 'loadVideo', 'loadAudio', 'code', 'diagram', 'image', 'preview', 'drawing', 'diagramFailed', 'previewTitle', 'actualSize', 'plainText'] as const;
 const markdownLabels = computed(
   () =>
     ({

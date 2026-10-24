@@ -35,8 +35,10 @@ import { drawings } from '@/ui/mermaid';
  * - **Diagrams**: a ``mermaid`` block is drawn once it is closed (``mermaid.ts``), an ``svg`` block is
  *   shown as an image (its scripts never run), and an ``html`` block offers a preview in a frame with
  *   no origin and no network. Each keeps its code a press away, and its copy button. A drawn diagram
- *   zooms in place (Ctrl or ⌘ with the wheel, a pinch on a trackpad or a screen, or its buttons) and is
- *   dragged about while zoomed; a plain wheel still scrolls the conversation, and a press that did not
+ *   opens at its own size, or smaller to fit the column but never too small to read, in a frame at
+ *   most ``DIAGRAM_HEIGHT`` tall; larger than its frame, it fades at the edges where there is more and
+ *   is dragged about. It zooms with Ctrl or ⌘ and the wheel, a pinch, or the buttons in its head (out,
+ *   its scale, in, fit, open); a plain wheel still scrolls the conversation, and a press that did not
  *   drag opens it in the viewer.
  *
  * The reply renders block by block: as it streams, only the block being written changes, so a
@@ -61,8 +63,9 @@ const PLAY_ICON = ICON('icon-media', '<polygon points="6 3 20 12 6 21 6 3"/>');
 const ZOOM_ICONS = {
   in: ICON('', '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/>'),
   out: ICON('', '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M8 11h6"/>'),
-  reset: ICON('', '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>'),
+  fit: ICON('', '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>'),
 };
+const OPEN_ICON = ICON('', '<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" x2="14" y1="3" y2="10"/><line x1="3" x2="10" y1="21" y2="14"/>');
 /** What the head's icon says a block holds: code, a command, a diff, a diagram, an image, a page. */
 const KIND_ICONS = {
   code: '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>',
@@ -109,6 +112,8 @@ export const diagramSources = new Map<string, string>();
 interface BlockParts {
   /** Buttons in the head, before the copy button. */
   tools?: string;
+  /** Words after the language in the head (the kind of diagram). */
+  subtitle?: string;
   /** What shows above the code (a diagram, an image, a preview). */
   body?: string;
   hideCode?: boolean;
@@ -125,7 +130,8 @@ function codeBlock(code: string, info: string, env: Env, parts: BlockParts = {})
   const name = languageName(language) || env.labels.plainText;
   return (
     '<div class="code-block">' +
-    `<div class="code-head"><span class="code-title">${ICON('code-icon', KIND_ICONS[kindOf(language)])}<span class="code-lang">${escape(name)}</span></span><span class="code-tools">${parts.tools ?? ''}` +
+    `<div class="code-head"><span class="code-title">${ICON('code-icon', KIND_ICONS[kindOf(language)])}<span class="code-lang">${escape(name)}</span>` +
+    `${parts.subtitle ? `<span class="code-sub">${escape(parts.subtitle)}</span>` : ''}</span><span class="code-tools">${parts.tools ?? ''}` +
     `<button type="button" class="code-copy" data-copy aria-label="${label}" title="${label}">${COPY_ICONS}</button></span></div>` +
     (parts.body ?? '') +
     `<pre class="app-scroll app-scroll-x app-scroll-auto"${parts.hideCode ? ' hidden' : ''}><code class="hljs${highlighted === null ? '' : ` language-${escape(language)}`}">${highlighted ?? escape(code)}</code></pre>` +
@@ -159,7 +165,29 @@ function svgUrl(svg: string): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
-function diagram(source: string, env: Env): Pick<BlockParts, 'body' | 'hideCode'> {
+/** The kinds of diagram, by the word a Mermaid source starts with, as its head names them. */
+const DIAGRAM_TYPES: Record<string, string> = {
+  graph: 'flowchart', flowchart: 'flowchart', 'flowchart-elk': 'flowchart', sequencediagram: 'sequence', classdiagram: 'class', 'classdiagram-v2': 'class',
+  statediagram: 'state', 'statediagram-v2': 'state', erdiagram: 'entity relationship', gantt: 'gantt', pie: 'pie', journey: 'user journey',
+  mindmap: 'mindmap', timeline: 'timeline', gitgraph: 'git graph', quadrantchart: 'quadrant', 'xychart-beta': 'xy chart', xychart: 'xy chart',
+  'sankey-beta': 'sankey', sankey: 'sankey', 'block-beta': 'block', block: 'block', requirementdiagram: 'requirement', 'architecture-beta': 'architecture',
+  'packet-beta': 'packet', packet: 'packet', kanban: 'kanban', 'radar-beta': 'radar', c4context: 'C4', c4container: 'C4', c4component: 'C4',
+  c4dynamic: 'C4', c4deployment: 'C4', zenuml: 'sequence', treemap: 'treemap', 'treemap-beta': 'treemap',
+};
+/** What kind of diagram ``source`` is: its first word past any front matter and comments. */
+export function diagramType(source: string): string {
+  const body = source.replace(/^\s*---\n[\s\S]*?\n---\s*\n/, '');
+  const line = body.split('\n').map((l) => l.trim()).find((l) => l && !l.startsWith('%%')) ?? '';
+  const word = /^[\w-]+/.exec(line)?.[0] ?? '';
+  return DIAGRAM_TYPES[word.toLowerCase()] ?? word;
+}
+
+/**
+ * A drawn diagram, at its own size (``data-width``, ``data-height``) in a frame the component lays it
+ * out in (``layoutDiagram``), with its zoom in the block's head: out, the scale (a press shows it at
+ * its own size), in, fit, and open in the viewer.
+ */
+function diagram(source: string, env: Env): Pick<BlockParts, 'body' | 'hideCode' | 'tools'> {
   const key = hash(`${env.theme}\n${source}`);
   const drawing = drawings.get(key);
   if (!drawing) {
@@ -168,27 +196,38 @@ function diagram(source: string, env: Env): Pick<BlockParts, 'body' | 'hideCode'
   }
   if (drawing.error !== undefined) return { body: `<p class="diagram-error" role="note">${escape(fill(env.labels.diagramFailed, { reason: drawing.error }))}</p>` };
   const tool = (zoom: keyof typeof ZOOM_ICONS, label: string) =>
-    `<button type="button" class="diagram-tool${zoom === 'reset' ? ' diagram-reset' : ''}" data-zoom="${zoom}" aria-label="${escape(label)}" title="${escape(label)}">${ZOOM_ICONS[zoom]}</button>`;
+    `<button type="button" class="code-tool" data-zoom="${zoom}" aria-label="${escape(label)}" title="${escape(label)}">${ZOOM_ICONS[zoom]}</button>`;
+  const actual = escape(env.labels.actualSize);
+  const tools =
+    `<span class="code-zoom">${tool('out', env.labels.zoomOut)}` +
+    `<button type="button" class="code-zoom-level" data-zoom="actual" aria-label="${actual}" title="${actual}">100%</button>` +
+    `${tool('in', env.labels.zoomIn)}${tool('fit', env.labels.resetZoom)}</span>` +
+    `<button type="button" class="code-tool" data-open aria-label="${escape(env.labels.openImage)}" title="${escape(env.labels.openImage)}">${OPEN_ICON}</button>` +
+    '<span class="code-sep" aria-hidden="true"></span>';
   return {
     body:
-      '<div class="diagram-frame">' +
-      `<div class="diagram-tools">${tool('out', env.labels.zoomOut)}${tool('in', env.labels.zoomIn)}${tool('reset', env.labels.resetZoom)}</div>` +
+      `<div class="diagram-frame" data-diagram="${key}" data-width="${drawing.width ?? 0}" data-height="${drawing.height ?? 0}">` +
       `<div class="diagram app-scroll app-scroll-x app-scroll-auto">${viewButton(svgUrl(drawing.svg!), env.labels.diagram, env, drawing.svg!, 'diagram-view')}</div>` +
       '</div>',
     hideCode: true,
+    tools,
   };
 }
 
 function richBlock(kind: Rich, token: Token, env: Env): string {
   const source = token.content;
   const key = hash(`${kind}\n${source}`);
-  if (!closed(token, env)) return codeBlock(source, token.info, env);
+  const subtitle = kind === 'mermaid' ? diagramType(source) : undefined;
+  if (!closed(token, env)) return codeBlock(source, token.info, env, { subtitle });
   const mode: BlockMode = blockModes.get(key) ?? (kind === 'html' ? 'code' : 'rendered');
   const other: BlockMode = mode === 'rendered' ? 'code' : 'rendered';
   const label = mode === 'rendered' ? env.labels.code : { mermaid: env.labels.diagram, svg: env.labels.image, html: env.labels.preview }[kind];
   const tools = `<button type="button" class="code-toggle" data-toggle="${key}" data-mode="${other}">${escape(label)}</button>`;
-  if (mode === 'code') return codeBlock(source, token.info, env, { tools });
-  if (kind === 'mermaid') return codeBlock(source, token.info, env, { tools, ...diagram(source, env) });
+  if (mode === 'code') return codeBlock(source, token.info, env, { tools, subtitle });
+  if (kind === 'mermaid') {
+    const drawn = diagram(source, env);
+    return codeBlock(source, token.info, env, { ...drawn, tools: (drawn.tools ?? '') + tools, subtitle });
+  }
   if (kind === 'svg') {
     const url = svgUrl(source);
     return codeBlock(source, token.info, env, { tools, hideCode: true, body: `<div class="svg-figure">${viewButton(url, env.labels.image, env, `<img src="${escape(url)}" alt="${escape(env.labels.image)}">`)}</div>` });
@@ -258,7 +297,7 @@ export const renderMarkdown = (source: string, copyLabel = 'Copy', options: Rend
 </script>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUpdated, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref } from 'vue';
 import { listenToFrames, sizeFrames, themeKey, useMarkdownContext, watchThemeKey } from '@/ui/markdownRich';
 import { draw } from '@/ui/mermaid';
 
@@ -270,7 +309,7 @@ listenToFrames();
 const blocks = computed(() => renderBlocks(props.source, { copyLabel: props.copyLabel, labels: labels.value, remote: remoteMedia.value, theme: themeKey.value }));
 const root = ref<HTMLElement | null>(null);
 
-// After each render: draw the diagrams it left a place for, and give previews their height back.
+// After each render: draw the diagrams it left a place for, lay out the ones drawn, and give previews their height back.
 function settle() {
   const el = root.value;
   if (!el) return;
@@ -278,6 +317,13 @@ function settle() {
     const key = holder.dataset.mermaid!;
     const source = diagramSources.get(key);
     if (source !== undefined) draw(key, source);
+  }
+  // A frame the render put in anew is laid out once; the observer sees to it when its column changes.
+  for (const frame of el.querySelectorAll<HTMLElement>('.diagram-frame:not(.laid-out)')) {
+    frame.classList.add('laid-out');
+    layoutDiagram(frame);
+    const viewport = parts(frame).viewport;
+    if (viewport) resizes?.observe(viewport);
   }
   sizeFrames(el);
 }
@@ -303,34 +349,142 @@ async function refocus(selector: string) {
   root.value?.querySelector<HTMLElement>(selector)?.focus();
 }
 
-// -- a drawn diagram, zoomed and dragged in place ------------------------------------------------ #
-/** How far each diagram is zoomed and moved, by its frame: a frame a render replaces starts afresh. */
+// -- a drawn diagram, laid out at a scale and moved about in its frame --------------------------- #
+/**
+ * How each diagram shows, by its key (its source and theme), so a render that replaces its frame
+ * keeps it: at the scale it opens at (``auto``: its own size, or smaller to fit the column but never
+ * so small its words cannot be read), fitted whole (``fit``), or as the reader zoomed it (``manual``).
+ * The frame is as tall as the drawing up to ``DIAGRAM_HEIGHT``; a drawing larger than its frame is
+ * dragged about in it (or scrolled sideways). It is laid out at its scale, not scaled, so it stays sharp.
+ */
 interface Zoom {
+  mode: 'auto' | 'fit' | 'manual';
   scale: number;
-  x: number;
-  y: number;
+  /** The frame's height: it grows as the reader zooms in (up to the most), and is worked out again on fit. */
+  height: number;
 }
-const zooms = new WeakMap<Element, Zoom>();
-const DIAGRAM_MAX = 6;
-const zoomOf = (frame: Element): Zoom => zooms.get(frame) ?? (zooms.set(frame, { scale: 1, x: 0, y: 0 }), zooms.get(frame)!);
+const zooms = new Map<string, Zoom>();
+const DIAGRAM_MAX = 4;
+const ZOOM_STEP = 1.25;
+const DIAGRAM_HEIGHT = 480;
+/** The smallest scale a diagram opens at: below it, its words are too small to read. */
+const READABLE = 0.6;
+const parts = (frame: HTMLElement) => ({
+  viewport: frame.querySelector<HTMLElement>('.diagram'),
+  svg: frame.querySelector<SVGElement>('.diagram-view svg'),
+  width: Number(frame.dataset.width) || 0,
+  height: Number(frame.dataset.height) || 0,
+});
+/** The scale that shows all of a diagram in its column and at most ``DIAGRAM_HEIGHT`` tall, never above its own size. */
+function fitScale(frame: HTMLElement): number {
+  const { viewport, width, height } = parts(frame);
+  const room = viewport?.clientWidth ?? 0;
+  return Math.min(1, room > 0 ? room / width : 1, DIAGRAM_HEIGHT / height);
+}
+function opening(frame: HTMLElement, mode: 'auto' | 'fit'): Zoom {
+  const fit = fitScale(frame);
+  const scale = mode === 'fit' ? fit : Math.min(1, Math.max(fit, READABLE));
+  return { mode, scale, height: Math.min(DIAGRAM_HEIGHT, parts(frame).height * scale) };
+}
+
 function paint(frame: HTMLElement, z: Zoom) {
-  const svg = frame.querySelector<SVGElement>('.diagram-view svg');
-  if (svg) svg.style.transform = z.scale === 1 && !z.x && !z.y ? '' : `translate(${z.x}px, ${z.y}px) scale(${z.scale})`;
-  frame.classList.toggle('zoomed', z.scale > 1.01);
+  const { viewport, svg, width, height } = parts(frame);
+  if (!viewport || !svg) return;
+  svg.style.width = `${width * z.scale}px`;
+  svg.style.height = `${height * z.scale}px`;
+  viewport.style.height = `${Math.max(24, z.height)}px`;
+  // A scrollbar along the foot takes its height from the drawing's: the frame gives it back.
+  const bar = viewport.offsetHeight - viewport.clientHeight;
+  if (bar > 0) viewport.style.height = `${Math.max(24, z.height) + bar}px`;
+  const room = viewport.clientWidth;
+  frame.classList.toggle('pannable', (room > 0 && width * z.scale > room + 1) || height * z.scale > z.height + 1);
+  frame.classList.toggle('zoomed', z.mode === 'manual');
+  const head = frame.closest('.code-block')?.querySelector('.code-head');
+  const level = head?.querySelector('[data-zoom="actual"]');
+  if (level) level.textContent = `${Math.round(z.scale * 100)}%`;
+  const fit = fitScale(frame);
+  head?.querySelector<HTMLButtonElement>('[data-zoom="out"]')?.toggleAttribute('disabled', z.scale <= Math.min(fit, 1) + 1e-3);
+  head?.querySelector<HTMLButtonElement>('[data-zoom="in"]')?.toggleAttribute('disabled', z.scale >= DIAGRAM_MAX - 1e-3);
+  fade(frame);
 }
-/** Zoom a diagram to ``scale`` about a point of the window (its centre by default), which stays where it is. */
-function zoomDiagram(frame: HTMLElement, scale: number, at?: { x: number; y: number }) {
-  const z = zoomOf(frame);
-  const next = Math.min(DIAGRAM_MAX, Math.max(1, scale));
-  const box = frame.querySelector('.diagram-view svg')?.getBoundingClientRect();
-  // The drawing scales about its centre, so its box's centre less the move is where that centre sits unzoomed.
-  const px = at && box ? at.x - (box.left + box.width / 2 - z.x) : 0;
-  const py = at && box ? at.y - (box.top + box.height / 2 - z.y) : 0;
-  const ratio = next / z.scale;
-  Object.assign(z, next === 1 ? { scale: 1, x: 0, y: 0 } : { scale: next, x: px - (px - z.x) * ratio, y: py - (py - z.y) * ratio });
+/** Lays a diagram out as it last showed, or as it opens; one that was only opened or fitted is fitted to the column it has now. */
+function layoutDiagram(frame: HTMLElement) {
+  const key = frame.dataset.diagram!;
+  if (!parts(frame).width || !parts(frame).height) return;
+  const kept = zooms.get(key);
+  const z = kept?.mode === 'manual' ? kept : opening(frame, kept?.mode ?? 'auto');
+  zooms.set(key, z);
   paint(frame, z);
 }
+const zoomOf = (frame: HTMLElement): Zoom => zooms.get(frame.dataset.diagram!) ?? opening(frame, 'auto');
+
+/** Zoom a diagram to ``scale`` about a point of the window (its frame's middle by default), which stays where it is. */
+function zoomDiagram(frame: HTMLElement, scale: number, at?: { x: number; y: number }) {
+  const { viewport, svg, height } = parts(frame);
+  if (!viewport || !svg) return;
+  const z = zoomOf(frame);
+  const next = Math.min(DIAGRAM_MAX, Math.max(Math.min(fitScale(frame), 1), scale));
+  const box = viewport.getBoundingClientRect();
+  const point = at ?? { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+  const before = svg.getBoundingClientRect();
+  const zoom: Zoom = { mode: 'manual', scale: next, height: Math.min(DIAGRAM_HEIGHT, Math.max(z.height, height * next)) };
+  zooms.set(frame.dataset.diagram!, zoom);
+  paint(frame, zoom);
+  if (!before.width || !before.height) return;
+  // The share of the drawing under the point before is put back under it.
+  const after = svg.getBoundingClientRect();
+  viewport.scrollLeft += after.left + ((point.x - before.left) / before.width) * after.width - point.x;
+  viewport.scrollTop += after.top + ((point.y - before.top) / before.height) * after.height - point.y;
+}
+function fitDiagram(frame: HTMLElement) {
+  const z = opening(frame, 'fit');
+  zooms.set(frame.dataset.diagram!, z);
+  paint(frame, z);
+}
+/** A drawing that goes on past its frame's edge fades out at that edge, so the reader sees there is more of it. */
+const FADE = 28;
+function fade(frame: HTMLElement) {
+  const viewport = parts(frame).viewport;
+  if (!viewport) return;
+  const { scrollLeft: left, scrollTop: top, clientWidth: width, clientHeight: height, scrollWidth, scrollHeight } = viewport;
+  const edges = [
+    left > 1 && 'to right',
+    left + width < scrollWidth - 1 && 'to left',
+    top > 1 && 'to bottom',
+    top + height < scrollHeight - 1 && 'to top',
+  ].filter(Boolean);
+  const mask = edges.map((side) => `linear-gradient(${side}, transparent, #000 ${FADE}px)`).join(', ');
+  viewport.style.setProperty('mask-image', mask);
+  viewport.style.setProperty('-webkit-mask-image', mask);
+  viewport.style.setProperty('mask-composite', edges.length > 1 ? 'intersect' : '');
+  viewport.style.setProperty('-webkit-mask-composite', edges.length > 1 ? 'source-in' : '');
+}
+function onScroll(event: Event) {
+  const target = event.target as Element;
+  if (target.classList?.contains('diagram')) {
+    const frame = frameAt(target);
+    if (frame) fade(frame);
+  }
+}
 const frameAt = (target: EventTarget | null) => (target as Element | null)?.closest?.<HTMLElement>('.diagram-frame') ?? null;
+/** The diagram a button in a block's head is for. */
+const frameOf = (button: Element) => button.closest('.code-block')?.querySelector<HTMLElement>('.diagram-frame') ?? null;
+
+/** A frame whose column changes width fits its diagram to it again (unless the reader zoomed it). */
+const widths = new WeakMap<Element, number>();
+const resizes =
+  typeof ResizeObserver === 'undefined'
+    ? null
+    : new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const width = Math.round(entry.contentRect.width);
+          if (widths.get(entry.target) === width) continue;
+          widths.set(entry.target, width);
+          const frame = frameAt(entry.target);
+          if (frame) layoutDiagram(frame);
+        }
+      });
+onBeforeUnmount(() => resizes?.disconnect());
 
 /** With Ctrl or ⌘ (a trackpad's pinch sends that too) the wheel zooms a diagram; alone it scrolls the page. */
 function onWheel(event: WheelEvent) {
@@ -341,7 +495,11 @@ function onWheel(event: WheelEvent) {
   zoomDiagram(frame, zoomOf(frame).scale * Math.exp(-delta * 0.006), { x: event.clientX, y: event.clientY });
 }
 
-// Pointers on a diagram: two pinch it; one drags it while it is zoomed. A press that moved is not a click.
+/*
+ * Pointers on a diagram: two pinch it; one drags it about when it is larger than its frame (a finger
+ * only once the reader zoomed it: before that a finger scrolls the page, or the frame sideways). A
+ * press that moved is not a click.
+ */
 const pointers = new Map<number, { x: number; y: number }>();
 let gesture: { frame: HTMLElement; start: { x: number; y: number }; moved: boolean; pinch: { distance: number; scale: number } | null } | null = null;
 let swallowClick = false;
@@ -351,31 +509,34 @@ const spread = () => {
 };
 function onPointerDown(event: PointerEvent) {
   const frame = frameAt(event.target);
-  if (!frame || (event.target as Element).closest('.diagram-tools') || (gesture && gesture.frame !== frame)) return;
+  if (!frame || (gesture && gesture.frame !== frame)) return;
   pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
   gesture ??= { frame, start: { x: event.clientX, y: event.clientY }, moved: false, pinch: null };
   if (pointers.size === 2) gesture.pinch = { distance: spread(), scale: zoomOf(frame).scale };
-  if (pointers.size === 2 || zoomOf(frame).scale > 1.01) frame.setPointerCapture?.(event.pointerId);
+  const drags = frame.classList.contains('pannable') && (event.pointerType !== 'touch' || frame.classList.contains('zoomed'));
+  if (pointers.size === 2 || drags) frame.setPointerCapture?.(event.pointerId);
 }
 function onPointerMove(event: PointerEvent) {
   const last = pointers.get(event.pointerId);
   if (!last || !gesture) return;
   pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
   if (Math.hypot(event.clientX - gesture.start.x, event.clientY - gesture.start.y) > 4) gesture.moved = true;
-  const z = zoomOf(gesture.frame);
+  const frame = gesture.frame;
   if (gesture.pinch && pointers.size === 2) {
     const [a, b] = [...pointers.values()];
-    zoomDiagram(gesture.frame, (gesture.pinch.scale * spread()) / gesture.pinch.distance, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
-  } else if (z.scale > 1.01 && pointers.size === 1) {
-    z.x += event.clientX - last.x;
-    z.y += event.clientY - last.y;
-    paint(gesture.frame, z);
+    zoomDiagram(frame, (gesture.pinch.scale * spread()) / gesture.pinch.distance, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  } else if (pointers.size === 1 && frame.classList.contains('pannable') && (event.pointerType !== 'touch' || frame.classList.contains('zoomed'))) {
+    const viewport = parts(frame).viewport!;
+    viewport.scrollLeft -= event.clientX - last.x;
+    viewport.scrollTop -= event.clientY - last.y;
+    frame.classList.toggle('dragging', gesture.moved);
   }
 }
 function onPointerUp(event: PointerEvent) {
   if (!pointers.delete(event.pointerId) || !gesture) return;
   if (pointers.size < 2) gesture.pinch = null;
   if (pointers.size) return;
+  gesture.frame.classList.remove('dragging');
   // The click that follows a drag or a pinch must not open the viewer; one that never comes is forgotten.
   if (gesture.moved) {
     swallowClick = true;
@@ -393,10 +554,18 @@ async function onClick(event: MouseEvent) {
     return;
   }
   const zoom = target.closest<HTMLElement>('[data-zoom]');
-  const frame = frameAt(zoom);
+  const frame = zoom && frameOf(zoom);
   if (zoom && frame) {
     const scale = zoomOf(frame).scale;
-    zoomDiagram(frame, zoom.dataset.zoom === 'in' ? scale * 1.5 : zoom.dataset.zoom === 'out' ? scale / 1.5 : 1);
+    const step = zoom.dataset.zoom;
+    if (step === 'fit') fitDiagram(frame);
+    else zoomDiagram(frame, step === 'in' ? scale * ZOOM_STEP : step === 'out' ? scale / ZOOM_STEP : 1);
+    return;
+  }
+  const open = target.closest('[data-open]');
+  if (open) {
+    // The drawing itself opens the viewer: the page's own listener takes the click from there.
+    frameOf(open)?.querySelector<HTMLElement>('.diagram-view')?.click();
     return;
   }
   const load = target.closest<HTMLElement>('[data-load]');
@@ -440,6 +609,7 @@ function onError(event: Event) {
     @click="onClick"
     @error.capture="onError"
     @wheel="onWheel"
+    @scroll.capture="onScroll"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
@@ -476,36 +646,25 @@ function onError(event: Event) {
 .markdown :deep(.math-block .katex-display) { margin: 0; }
 .markdown :deep(.katex) { font-size: 1.1em; }
 .markdown :deep(.math-error) { color: var(--md-sys-color-error); }
-/* Diagrams and SVG drawn in the block, on the block's own surface; a press opens them in the viewer. */
-.markdown :deep(.diagram), .markdown :deep(.svg-figure) { padding: var(--app-space-2) var(--app-space-3) var(--app-space-3); --app-scroll-inset: var(--app-space-2); }
-.markdown :deep(.diagram.pending) { color: var(--md-sys-color-on-surface-variant); font-size: var(--md-sys-typescale-body-small-size); }
+/* SVG drawn in the block, on the block's own surface; a press opens it in the viewer. */
+.markdown :deep(.svg-figure) { padding: var(--app-space-2) var(--app-space-3) var(--app-space-3); }
+.markdown :deep(.diagram.pending) { padding: var(--app-space-2) var(--app-space-3) var(--app-space-3); color: var(--md-sys-color-on-surface-variant); font-size: var(--md-sys-typescale-body-small-size); }
 .markdown :deep(.diagram-view), .markdown :deep(.media-view) {
   display: inline-block; max-width: 100%; padding: 0; border: 0; border-radius: var(--md-sys-shape-corner-small); background: none; color: inherit; cursor: zoom-in;
 }
-/* The drawing takes the column's width (Mermaid sizes it as a share of its box), up to its own. */
-.markdown :deep(.diagram-view) { display: block; width: 100%; margin: 0 auto; }
-.markdown :deep(.diagram-view svg) { display: block; height: auto; margin: 0 auto; transform-origin: center; }
-/* Zoomed in place: the drawing is clipped to its box (not scrolled) and dragged about; a finger on it
-   scrolls the page until two of them pinch it, or it is zoomed. */
-.markdown :deep(.diagram-frame) { position: relative; }
-.markdown :deep(.diagram-frame .diagram) { touch-action: pan-x pan-y; }
-.markdown :deep(.diagram-frame.zoomed .diagram) { overflow: hidden; touch-action: none; }
-.markdown :deep(.diagram-frame.zoomed .diagram-view) { cursor: grab; }
-.markdown :deep(.diagram-frame.zoomed .diagram-view:active) { cursor: grabbing; }
-.markdown :deep(.diagram-tools) {
-  position: absolute; top: var(--app-space-2); right: var(--app-space-2); z-index: 1; display: flex; gap: 2px; padding: 2px;
-  border-radius: var(--md-sys-shape-corner-full); background: var(--md-sys-color-surface-container-high); box-shadow: var(--app-elevation-1);
-  opacity: 0; transition: opacity var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
-}
-.markdown :deep(.diagram-frame:hover .diagram-tools), .markdown :deep(.diagram-tools:focus-within), .markdown :deep(.diagram-frame.zoomed .diagram-tools) { opacity: 1; }
-@media (hover: none) { .markdown :deep(.diagram-tools) { opacity: 1; } }
-.markdown :deep(.diagram-tool) {
-  display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--md-sys-shape-corner-full);
-  background: transparent; color: var(--md-sys-color-on-surface-variant); cursor: pointer;
-}
-.markdown :deep(.diagram-tool:hover) { background: color-mix(in srgb, currentColor calc(var(--md-sys-state-hover-state-layer-opacity) * 100%), transparent); }
-.markdown :deep(.diagram-tool:active) { background: color-mix(in srgb, currentColor calc(var(--md-sys-state-pressed-state-layer-opacity) * 100%), transparent); }
-.markdown :deep(.diagram-frame:not(.zoomed) .diagram-reset) { display: none; }
+/*
+ * A drawn diagram: laid out at its scale (the component sets its size and its frame's height) and
+ * centred in its frame while it is smaller; larger, it is clipped to the frame and dragged about in it,
+ * or scrolled sideways. A finger on it scrolls the page (or the frame sideways) until two of them pinch
+ * it, or the reader zoomed it.
+ */
+.markdown :deep(.diagram-frame) { padding: var(--app-space-2) var(--app-space-3) var(--app-space-3); }
+.markdown :deep(.diagram-frame .diagram) { display: flex; touch-action: pan-x pan-y; --app-scroll-inset: var(--app-space-1); }
+.markdown :deep(.diagram-frame .diagram-view) { flex: none; display: block; max-width: none; margin: auto; }
+.markdown :deep(.diagram-view svg) { display: block; max-width: none; }
+.markdown :deep(.diagram-frame.pannable .diagram-view) { cursor: grab; }
+.markdown :deep(.diagram-frame.dragging .diagram-view) { cursor: grabbing; }
+.markdown :deep(.diagram-frame.zoomed .diagram) { touch-action: none; }
 .markdown :deep(.diagram-error) { margin: 0; padding: var(--app-space-2) var(--app-space-3); color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small-size); }
 .markdown :deep(.html-preview) {
   display: block; width: 100%; height: 200px; border: 0; border-radius: 0 0 var(--md-sys-shape-corner-small) var(--md-sys-shape-corner-small);

@@ -1,7 +1,8 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, h } from 'vue';
-import Markdown, { COPIED_MS, renderMarkdown } from '@/ui/Markdown.vue';
+import Markdown, { COPIED_MS, diagramType, renderMarkdown } from '@/ui/Markdown.vue';
+import { naturalSize } from '@/ui/mermaid';
 import { MARKDOWN_CONTEXT, allowedMedia, blockModes, type RemoteMedia } from '@/ui/markdownRich';
 
 // Mermaid itself is large and draws with a real layout engine: here it answers with a fixed drawing.
@@ -9,6 +10,8 @@ const mermaid = vi.hoisted(() => ({
   initialize: vi.fn(),
   render: vi.fn(async (_id: string, source: string) => {
     if (source.includes('broken')) throw new Error('Parse error on line 1\nmore');
+    // As Mermaid sizes a drawing: a share of its box, its own width the most.
+    if (source.includes('wide')) return { svg: '<svg width="100%" style="max-width: 1000px;" viewBox="0 0 1000 200"><text>wide</text></svg>' };
     return { svg: `<svg viewBox="0 0 10 10"><text>${source.length}</text></svg>` };
   }),
 }));
@@ -224,38 +227,114 @@ describe('Markdown diagrams and previews', () => {
     expect(writing.find('pre').attributes('hidden')).toBeUndefined();
   });
 
-  it('zooms a drawn diagram in place with its buttons or Ctrl and the wheel, and leaves a plain wheel to the page', async () => {
+  it('heads a diagram with its kind and its zoom, and keeps the drawing at its own size', async () => {
+    const w = render('```mermaid\n%% a comment\nsequenceDiagram\n  A->>B: hi\n```');
+    expect(w.find('.code-lang').text()).toBe('Mermaid');
+    expect(w.find('.code-sub').text()).toBe('sequence');
+    await flushPromises();
+    await flushPromises();
+    const tools = w.find('.code-head .code-tools');
+    expect(tools.findAll('[data-zoom]').map((b) => b.attributes('aria-label'))).toEqual(['Zoom out', 'Actual size', 'Zoom in', 'Fit to window']);
+    expect(tools.find('[data-open]').exists()).toBe(true);
+    expect(tools.findAll('button').map((b) => b.classes()[0]).slice(-2)).toEqual(['code-toggle', 'code-copy']);
+    expect(w.find('.diagram-frame').attributes()).toMatchObject({ 'data-width': '10', 'data-height': '10' });
+    // Code shows no zoom: there is nothing to zoom.
+    await w.find('.code-toggle').trigger('click');
+    expect(w.find('[data-zoom]').exists()).toBe(false);
+    expect(w.find('.code-sub').text()).toBe('sequence');
+  });
+
+  it('names the kind of a diagram by its first word, past front matter and comments', () => {
+    expect(diagramType('graph TD; A-->B')).toBe('flowchart');
+    expect(diagramType('---\ntitle: x\n---\n%% note\nstateDiagram-v2\n  [*] --> A')).toBe('state');
+    expect(diagramType('somethingNew\n  a')).toBe('somethingNew');
+  });
+
+  it('takes Mermaid’s share of the box off a drawing, for its viewBox’s size', () => {
+    const { svg, width, height } = naturalSize('<svg id="m1" width="100%" xmlns="http://www.w3.org/2000/svg" style="max-width: 2995px;" viewBox="-50 -10 2995 613"><g/></svg>');
+    expect([width, height]).toEqual([2995, 613]);
+    expect(svg).toBe('<svg width="2995" height="613" id="m1" xmlns="http://www.w3.org/2000/svg" viewBox="-50 -10 2995 613"><g/></svg>');
+    expect(naturalSize('<svg width="40px" height="20"></svg>')).toMatchObject({ width: 40, height: 20 });
+    expect(naturalSize('<svg><g/></svg>')).toMatchObject({ width: 0, height: 0 });
+  });
+
+  it('opens a wide diagram at a readable scale in a frame its height, and fits it whole when asked', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(300);
+    try {
+      const w = render('```mermaid\ngraph LR; wide\n```');
+      await flushPromises();
+      await flushPromises();
+      const frame = w.find('.diagram-frame');
+      const svg = () => w.find('.diagram-view svg').element as SVGElement;
+      // Fitting 1000 wide to 300 would be 30%: too small to read, so it opens at 60% and is dragged about.
+      expect([svg().style.width, svg().style.height]).toEqual(['600px', '120px']);
+      expect((w.find('.diagram').element as HTMLElement).style.height).toBe('120px');
+      expect(w.find('[data-zoom="actual"]').text()).toBe('60%');
+      expect(frame.classes()).toContain('pannable');
+      await w.find('[data-zoom="fit"]').trigger('click');
+      expect([svg().style.width, svg().style.height]).toEqual(['300px', '60px']);
+      expect(w.find('[data-zoom="actual"]').text()).toBe('30%');
+      expect(w.find('[data-zoom="out"]').attributes('disabled')).toBeDefined();
+      expect(frame.classes()).not.toContain('pannable');
+      await w.find('[data-zoom="actual"]').trigger('click');
+      expect(svg().style.width).toBe('1000px');
+      // Zoomed in, the frame grows with the drawing, up to its most.
+      expect((w.find('.diagram').element as HTMLElement).style.height).toBe('200px');
+      expect(frame.classes()).toContain('zoomed');
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('zooms a drawn diagram with its buttons or Ctrl and the wheel, laid out anew, and leaves a plain wheel to the page', async () => {
     const w = render('```mermaid\ngraph LR; zoom-->me\n```');
     await flushPromises();
     await flushPromises();
     const frame = w.find('.diagram-frame');
     const svg = () => w.find('.diagram-view svg').element as SVGElement;
-    expect(frame.findAll('[data-zoom]').map((b) => b.attributes('aria-label'))).toEqual(['Zoom out', 'Zoom in', 'Fit to window']);
-    await frame.find('[data-zoom="in"]').trigger('click');
-    expect(svg().style.transform).toBe('translate(0px, 0px) scale(1.5)');
+    expect(svg().style.width).toBe('10px');
+    expect(w.find('[data-zoom="actual"]').text()).toBe('100%');
+    await w.find('[data-zoom="in"]').trigger('click');
+    expect([svg().style.width, svg().style.transform]).toEqual(['12.5px', '']);
+    expect(w.find('[data-zoom="actual"]').text()).toBe('125%');
     expect(frame.classes()).toContain('zoomed');
-    await frame.find('[data-zoom="reset"]').trigger('click');
-    expect(svg().style.transform).toBe('');
+    await w.find('[data-zoom="fit"]').trigger('click');
+    expect(svg().style.width).toBe('10px');
     expect(frame.classes()).not.toContain('zoomed');
 
     const plain = new WheelEvent('wheel', { deltaY: -50, bubbles: true, cancelable: true });
     svg().dispatchEvent(plain);
     expect(plain.defaultPrevented).toBe(false);
-    expect(svg().style.transform).toBe('');
+    expect(svg().style.width).toBe('10px');
     const pinch = new WheelEvent('wheel', { deltaY: -50, bubbles: true, cancelable: true });
     // happy-dom's WheelEvent drops the modifier keys it is given.
     Object.defineProperty(pinch, 'ctrlKey', { value: true });
     svg().dispatchEvent(pinch);
     expect(pinch.defaultPrevented).toBe(true);
-    expect(svg().style.transform).toMatch(/scale\(1\.3/);
+    expect(svg().style.width).toMatch(/^13\.4/);
   });
 
-  it('drags a zoomed diagram, and does not take the press that dragged it for a click', async () => {
+  it('keeps how a diagram was zoomed when its block is drawn again', async () => {
+    const w = render('```mermaid\ngraph LR; keep-->me\n```');
+    await flushPromises();
+    await flushPromises();
+    await w.find('[data-zoom="in"]').trigger('click');
+    await w.setProps({ source: '```mermaid\ngraph LR; keep-->me\n```\n\nmore' });
+    await w.find('.code-toggle').trigger('click');
+    await w.find('.code-toggle').trigger('click');
+    expect((w.find('.diagram-view svg').element as SVGElement).style.width).toBe('12.5px');
+  });
+
+  it('drags a diagram larger than its frame, and does not take the press that dragged it for a click', async () => {
     const opened = vi.fn();
     const w = mount(defineComponent({ setup: () => () => h('div', { onClick: opened }, [h(Markdown, { source: '```mermaid\ngraph LR; drag-->me\n```', copyLabel: 'Copy', copiedLabel: 'Copied' })]) }));
     await flushPromises();
     await flushPromises();
+    const viewport = w.find('.diagram').element as HTMLElement;
+    Object.defineProperty(viewport, 'clientWidth', { value: 5 });
+    Object.defineProperty(viewport, 'scrollLeft', { value: 0, writable: true });
     await w.find('[data-zoom="in"]').trigger('click');
+    expect(w.find('.diagram-frame').classes()).toContain('pannable');
     opened.mockClear();
     const view = w.find('.diagram-view');
     const at = (type: string, x: number) => view.element.dispatchEvent(new PointerEvent(type, { pointerId: 1, clientX: x, clientY: 0, bubbles: true }));
@@ -263,10 +342,13 @@ describe('Markdown diagrams and previews', () => {
     at('pointermove', 30);
     at('pointerup', 30);
     await view.trigger('click');
-    expect((w.find('.diagram-view svg').element as SVGElement).style.transform).toBe('translate(30px, 0px) scale(1.5)');
+    expect(viewport.scrollLeft).toBe(-30);
     expect(opened).not.toHaveBeenCalled();
     await view.trigger('click');
     expect(opened).toHaveBeenCalledTimes(1);
+    // The head's open button opens it too, through the drawing.
+    await w.find('[data-open]').trigger('click');
+    expect(opened).toHaveBeenCalledTimes(3);
   });
 
   it('says why a diagram could not be drawn, under its code', async () => {
