@@ -26,20 +26,7 @@ export function analyticsScripts(production: boolean = import.meta.env.PROD) {
   return [{ src: UMAMI.src, defer: true, "data-website-id": UMAMI.websiteId, "data-domains": UMAMI.domains }];
 }
 
-/**
- * Giscus comments, one GitHub Discussions thread per documentation page.
- *
- * The thread is found by the page's own path (`/docs/<slug>`), not the address bar's: the
- * GitHub Pages copy lives under `/Hoshimi/`, and both languages share a URL, so `pathname`
- * mapping would split a page's comments in two.
- */
-export const GISCUS = {
-  repo: "licyk/Hoshimi",
-  repoId: "R_kgDOVP9Zpg",
-  category: "Comment",
-  categoryId: "DIC_kwDOVP9Zps4DJWTI",
-} as const;
-
-export function commentsTerm(slugs: readonly string[]): string {
+/** A documentation page's own path (`/docs/<slug>`), the same in both languages. */
+export function docsPath(slugs: readonly string[]): string {
   return slugs.length ? `/docs/${slugs.join("/")}` : "/docs";
 }

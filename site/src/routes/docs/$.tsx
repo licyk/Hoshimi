@@ -6,12 +6,12 @@ import { DocsLayout } from "fumadocs-ui/layouts/docs";
 import { DocsBody, DocsDescription, DocsPage, DocsTitle } from "fumadocs-ui/layouts/docs/page";
 import { Suspense, use } from "react";
 
-import Comments from "@/components/comments";
+import { DocsComments } from "@/components/docs-comments";
 import { useMDXComponents } from "@/components/mdx";
 import { useDocumentMetadata } from "@/lib/document-metadata";
 import { DEFAULT_LOCALE, languageIndependentPath, LOCALES, type Locale } from "@/lib/i18n";
 import { docsOptions } from "@/lib/layout.shared";
-import { canonicalUrl, commentsTerm } from "@/lib/site-config";
+import { canonicalUrl, docsPath } from "@/lib/site-config";
 import { useSiteLocale } from "@/lib/site-copy";
 import { docs, source } from "@/lib/source";
 
@@ -52,7 +52,7 @@ export const Route = createFileRoute("/docs/$")({
       meta: data
         ? [{ title: data.headTitle }, { name: "description", content: data.description }]
         : [],
-      links: [{ rel: "canonical", href: canonicalUrl(commentsTerm(splat(params._splat))) }],
+      links: [{ rel: "canonical", href: canonicalUrl(docsPath(splat(params._splat))) }],
     };
   },
 });
@@ -92,7 +92,7 @@ function splat(value: string | undefined): string[] {
   return value?.split("/").filter(Boolean) ?? [];
 }
 
-function DocumentationContent({ path, term }: { path: string; term: string }) {
+function DocumentationContent({ path }: { path: string }) {
   const page = docs.getPage(path);
   if (!page) throw new Error(`Documentation page not found: ${path}`);
 
@@ -106,7 +106,7 @@ function DocumentationContent({ path, term }: { path: string; term: string }) {
       <DocsBody>
         <MDX components={useMDXComponents()} />
       </DocsBody>
-      <Comments term={term} />
+      <DocsComments />
     </DocsPage>
   );
 }
@@ -115,7 +115,6 @@ function DocumentationPage() {
   const locale = useSiteLocale();
   const localizedData = Route.useLoaderData()[locale];
   const { pageTree, path } = useFumadocsLoader(localizedData);
-  const term = commentsTerm(splat(Route.useParams()._splat));
 
   useDocumentMetadata({
     description: localizedData.description,
@@ -125,7 +124,7 @@ function DocumentationPage() {
   return (
     <DocsLayout {...docsOptions(locale)} tree={pageTree}>
       <Suspense>
-        <DocumentationContent key={path} path={path} term={term} />
+        <DocumentationContent key={path} path={path} />
       </Suspense>
     </DocsLayout>
   );

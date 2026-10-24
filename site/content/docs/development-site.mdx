@@ -167,7 +167,7 @@ python scripts/generate_provider_inventory.py
 ## 统计与评论
 
 - **统计**：站点使用 Umami，只在生产构建中加载，并且只在两个站点域名上计数；本地预览不计数。
-- **评论**：每个文档页面的末尾有 Giscus 评论区，基于本仓库的 GitHub Discussions，分类为 “Comment”。每个页面对应一个讨论帖，按页面路径 `/docs/<slug>` 对应，所以同一页面的中英文版本、主站和备份站共用同一个帖子。评论区跟随站点的明暗主题和语言。仓库根目录的 `giscus.json` 限定哪些站点可以嵌入它。
+- **评论**：每个文档页面的末尾有 Giscus 评论区（`components/docs-comments.tsx`、`lib/giscus.ts`，与 rvc-next 的站点相同），基于本仓库的 GitHub Discussions，分类为 “Comment”。每个页面对应一个讨论帖，以 `specific` 方式按页面路径对应，路径去掉站点基础路径、语言前缀和首尾斜杠（`docs/<slug>`），所以同一页面的中英文版本、主站（位于根路径）和备份站（位于 `/Hoshimi/` 下）共用同一个帖子。评论区跟随站点的明暗主题和语言，切换时直接通知已加载的评论框，而不重新加载。
 
 ## README
 

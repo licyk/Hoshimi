@@ -167,7 +167,7 @@ The site can live under a sub-path: `VITE_BASE_PATH` sets Vite's `base`, and the
 ## Analytics and comments
 
 - **Analytics**: the site uses Umami, loaded in production builds only and counted on the two site domains alone; local previews are not counted.
-- **Comments**: every documentation page ends with Giscus comments, backed by this repository's GitHub Discussions in the "Comment" category. Each page has one discussion thread, matched by the page path `/docs/<slug>`, so a page's Chinese and English versions, on the main site and the backup alike, share one thread. The comments follow the site's theme and language. `giscus.json` at the repository root limits which sites may embed them.
+- **Comments**: every documentation page ends with Giscus comments (`components/docs-comments.tsx`, `lib/giscus.ts`, as rvc-next's site), backed by this repository's GitHub Discussions in the "Comment" category. Each page has one discussion thread, mapped `specific` on the page path with the base path, the language prefix and the slashes around it dropped (`docs/<slug>`), so a page's Chinese and English versions, on the main site (at the root) and the backup (under `/Hoshimi/`) alike, share one thread. The comments follow the site's theme and language, which are posted to the loaded comments frame rather than reloading it.
 
 ## The README
 

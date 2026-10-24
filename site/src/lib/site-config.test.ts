@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { analyticsScripts, canonicalUrl, commentsTerm, UMAMI } from "@/lib/site-config";
+import { analyticsScripts, canonicalUrl, docsPath, UMAMI } from "@/lib/site-config";
 
 describe("canonical addresses", () => {
   it("name the Netlify site, whichever host serves the copy", () => {
@@ -10,10 +10,10 @@ describe("canonical addresses", () => {
   });
 });
 
-describe("comments", () => {
-  it("find a page's thread by its own path, the same on both hosts and in both languages", () => {
-    expect(commentsTerm([])).toBe("/docs");
-    expect(commentsTerm(["guide-agent"])).toBe("/docs/guide-agent");
+describe("documentation paths", () => {
+  it("name a page by its own path, the same in both languages", () => {
+    expect(docsPath([])).toBe("/docs");
+    expect(docsPath(["guide-agent"])).toBe("/docs/guide-agent");
   });
 });
 
