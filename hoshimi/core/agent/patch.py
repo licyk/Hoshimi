@@ -339,7 +339,8 @@ class SourceFile:
         return "".join(line.text + (line.ending or self.preferred) for line in out)
 
 
-def compute_replacements(lines: list[str], path: str, chunks: list[UpdateChunk]) -> list[Replacement]:
+def compute_replacements(lines: list[str], path: str, chunks: list[UpdateChunk], starts: list[int] | None = None) -> list[Replacement]:
+    """Where each chunk's lines go; ``starts``, when given, gets each chunk's first line in ``lines`` (from 0)."""
     replacements: list[Replacement] = []
     line_index = 0
     for chunk in chunks:
@@ -350,6 +351,8 @@ def compute_replacements(lines: list[str], path: str, chunks: list[UpdateChunk])
             line_index = found + 1
         if not chunk.old_lines:
             replacements.append((len(lines), 0, list(chunk.new_lines)))
+            if starts is not None:
+                starts.append(len(lines))
             continue
         pattern, new = chunk.old_lines, chunk.new_lines
         found = seek_sequence(lines, pattern, line_index, chunk.is_end_of_file)
@@ -361,6 +364,8 @@ def compute_replacements(lines: list[str], path: str, chunks: list[UpdateChunk])
             found = seek_sequence(lines, pattern, line_index, chunk.is_end_of_file)
         if found is None:
             raise PatchError(f"Failed to find expected lines in {path}:\n" + "\n".join(chunk.old_lines))
+        if starts is not None:
+            starts.append(found)
         # Context lines stay as they are in the file, with their own endings.
         old_start = new_start = 0
         for old_context, new_context in chunk.context_line_indices:
@@ -376,9 +381,26 @@ def compute_replacements(lines: list[str], path: str, chunks: list[UpdateChunk])
     return replacements
 
 
-def updated_contents(original: str, path: str, chunks: list[UpdateChunk]) -> str:
+def updated_contents(original: str, path: str, chunks: list[UpdateChunk], starts: list[int] | None = None) -> str:
     source = SourceFile(original)
-    return source.apply(compute_replacements(source.texts(), path, chunks))
+    return source.apply(compute_replacements(source.texts(), path, chunks, starts))
+
+
+def hunk_lines(chunks: list[UpdateChunk], starts: list[int]) -> list[tuple[int, int]]:
+    """Where each chunk starts (from 1) in the file before and after, in the chunks' order: the after line counts
+    what the chunks above it (in the file, not in the patch) added and removed."""
+    after: dict[int, int] = {}
+    offset = 0
+    for i in sorted(range(len(chunks)), key=lambda i: starts[i]):
+        after[i] = starts[i] + offset
+        offset += len(chunks[i].new_lines) - len(chunks[i].old_lines)
+    return [(starts[i] + 1, after[i] + 1) for i in range(len(chunks))]
+
+
+def _counts(chunks: list[UpdateChunk]) -> tuple[int, int]:
+    """The lines a file's chunks add and remove: context lines stand in both and count in neither."""
+    context = sum(len(c.context_line_indices) for c in chunks)
+    return sum(len(c.new_lines) for c in chunks) - context, sum(len(c.old_lines) for c in chunks) - context
 
 
 # -- applying ------------------------------------------------------------------- #
@@ -395,6 +417,10 @@ class Change:
     move_to: str | None = None
     move_target: Path | None = None
     old: str = ""
+    added: int = 0
+    removed: int = 0
+    hunks: list[tuple[int, int]] = field(default_factory=list)
+    """An update's chunks, in the patch's order: the line each starts at (from 1) before and after."""
 
 
 @dataclass
@@ -432,18 +458,22 @@ def plan_patch(patch: str, resolve: Callable[[str], Path]) -> list[Change]:
         if isinstance(hunk, AddFile):
             if target.is_dir():
                 raise PatchError(f"Failed to write file {hunk.path}: it is a directory")
-            changes.append(Change("add", hunk.path, target, contents=hunk.contents))
+            changes.append(Change("add", hunk.path, target, contents=hunk.contents, added=len(hunk.contents.splitlines())))
         elif isinstance(hunk, DeleteFile):
             if target.is_dir():
                 raise PatchError(f"Failed to delete file {hunk.path}: it is a directory")
             if not target.is_file():
                 raise PatchError(f"Failed to delete file {hunk.path}: no such file")
-            changes.append(Change("delete", hunk.path, target, old=_read(target, hunk.path, "delete")))
+            old = _read(target, hunk.path, "delete")
+            changes.append(Change("delete", hunk.path, target, old=old, removed=len(old.splitlines())))
         else:
             if not target.is_file():
                 raise PatchError(f"Failed to read file to update {hunk.path}: no such file")
             old = _read(target, hunk.path, "update")
-            change = Change("update", hunk.path, target, contents=updated_contents(old, hunk.path, hunk.chunks), old=old)
+            starts: list[int] = []
+            added, removed = _counts(hunk.chunks)
+            contents = updated_contents(old, hunk.path, hunk.chunks, starts)
+            change = Change("update", hunk.path, target, contents=contents, old=old, added=added, removed=removed, hunks=hunk_lines(hunk.chunks, starts))
             if hunk.move_path:
                 change.move_to, change.move_target = hunk.move_path, resolve(hunk.move_path)
                 if change.move_target != target:

@@ -80,8 +80,20 @@ def test_a_long_line_is_cut(ctx: ToolContext) -> None:
 def test_apply_patch_changes_files_in_the_workspace(ctx: ToolContext) -> None:
     result = call("apply_patch", ctx, input="*** Begin Patch\n*** Add File: src/new.py\n+print('hi')\n*** End Patch")
     assert result.ok and result.output == "Success. Updated the following files:\nA src/new.py\n"
-    assert result.meta["files"] == [{"path": "src/new.py", "kind": "add"}]
+    assert result.meta["files"] == [{"path": "src/new.py", "kind": "add", "added": 1, "removed": 0}]
     assert (ctx.workspace / "src/new.py").read_text() == "print('hi')\n"
+
+
+def test_apply_patch_says_where_each_hunk_landed_and_how_many_lines_changed(ctx: ToolContext) -> None:
+    (ctx.workspace / "m.txt").write_text("".join(f"{n}\n" for n in range(1, 21)))
+    (ctx.workspace / "old.txt").write_text("a\nb\n")
+    patch = "*** Begin Patch\n*** Update File: m.txt\n*** Move to: n.txt\n@@\n 2\n-3\n+three\n+3.5\n 4\n@@\n 15\n-16\n 17\n*** Delete File: old.txt\n*** End Patch"
+    result = call("apply_patch", ctx, input=patch)
+    assert result.ok
+    assert result.meta["files"] == [
+        {"path": "n.txt", "kind": "update", "from": "m.txt", "added": 2, "removed": 2, "hunks": [[2, 2], [15, 16]]},
+        {"path": "old.txt", "kind": "delete", "added": 0, "removed": 2},
+    ]
 
 
 def test_apply_patch_outside_the_workspace_needs_leave_and_then_works(ctx: ToolContext, tmp_path: Path) -> None:

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from hoshimi.core.agent.base import Permission, Tool, ToolContext, ToolError, ToolResult, integer, string
-from hoshimi.core.agent.patch import PatchError, UpdateFile, commit, parse_patch, plan_patch
+from hoshimi.core.agent.patch import Change, PatchError, UpdateFile, commit, parse_patch, plan_patch
 
 READ_LIMIT = 2000
 """Lines a read returns when it names no limit."""
@@ -92,6 +92,17 @@ def _patch_permission(args: dict[str, Any], ctx: ToolContext) -> Permission:
     return Permission("edit", outside=outside)
 
 
+def _patched(change: Change) -> dict[str, Any]:
+    """What a patch did to one file, for the page: where it is now, the lines it gained and lost, and where each hunk landed."""
+    out: dict[str, Any] = {"path": change.move_to or change.path, "kind": change.kind}
+    if change.move_to:
+        out["from"] = change.path
+    out |= {"added": change.added, "removed": change.removed}
+    if change.kind == "update":
+        out["hunks"] = [list(h) for h in change.hunks]
+    return out
+
+
 def _apply_patch(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     patch = string(args, "input")
     ctx.workspace.mkdir(parents=True, exist_ok=True)
@@ -101,7 +112,7 @@ def _apply_patch(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         applied = commit(changes)
     except PatchError as exc:
         raise ToolError(f"apply_patch verification failed: {exc}") from None
-    files = [{"path": c.move_to or c.path, "kind": c.kind, **({"from": c.path} if c.move_to else {})} for c in changes]
+    files = [_patched(c) for c in changes]
     return ToolResult(applied.summary(), meta={"files": files})
 
 
