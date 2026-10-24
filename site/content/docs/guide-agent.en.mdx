@@ -104,6 +104,44 @@ Takes a patch in the Codex `apply_patch` format, so a model that knows the tool 
 
 A call that names no shell runs in **Settings › Tools › How tools run › Shell** (`playground.shell`). **Automatic**, the default, is bash, or `sh` where there is no bash; on Windows it is PowerShell, or cmd without it. The option shows what it is now ("Now bash"). The menu lists only the shells installed on the machine; a chosen shell that is not installed falls back to automatic. The tool descriptions tell the model the default shell and the ones installed, and a command's result says which shell it ran in.
 
+### Output that is not UTF-8
+
+Hoshimi reads command output as UTF-8. Output in any other encoding never stops a command or the reply: each byte that is not UTF-8 becomes `�` (U+FFFD). Hoshimi does not, however, make commands print UTF-8; they print in the encoding of the terminal Hoshimi was started from. Where that is not UTF-8 (most often Windows set to Chinese, Japanese or Korean, whose console uses a code page such as GBK, 936), non-English file names, `dir` listings and error messages reach the model as `����`, and what `write_stdin` types (always UTF-8) is misread the same way.
+
+To fix it, switch the terminal to UTF-8, then start Hoshimi from that same terminal; its commands inherit the setting:
+
+<Tabs items={["PowerShell", "cmd", "bash / zsh"]}>
+<Tab value="PowerShell">
+
+```powershell
+chcp 65001              # the console's code page: UTF-8
+$env:PYTHONUTF8 = "1"   # Python scripts print UTF-8 too
+hoshimi serve
+```
+
+</Tab>
+<Tab value="cmd">
+
+```bat
+chcp 65001
+set PYTHONUTF8=1
+hoshimi serve
+```
+
+</Tab>
+<Tab value="bash / zsh">
+
+```bash
+export LANG=C.UTF-8 LC_ALL=C.UTF-8   # or another UTF-8 locale `locale -a` lists, such as en_US.UTF-8
+export PYTHONUTF8=1
+hoshimi serve
+```
+
+</Tab>
+</Tabs>
+
+This lasts only for that terminal window. To keep it, and for a Hoshimi started without a terminal (a shortcut, a scheduled task, a service), set it for the system: on Windows, **Settings › Time & language › Language & region › Administrative language settings › Change system locale…**, tick **Beta: Use Unicode UTF-8 for worldwide language support** and restart; on Linux and macOS, put the `export` lines in your shell's profile, or `Environment=LANG=C.UTF-8` in a systemd unit. A program that picks its own encoding whatever the terminal says still prints in it.
+
 ### Search the web (`web_search`)
 
 - Asks DuckDuckGo's light page (no key needed), or a SearXNG instance set in **SearXNG address** (`playground.search_url`), whose JSON format must be turned on.

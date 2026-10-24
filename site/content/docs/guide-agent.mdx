@@ -104,6 +104,44 @@ icon: Wrench
 
 调用未指定 shell 时，命令在 **设置 › 工具 › 工具如何运行 › Shell**（`playground.shell`）中选择的 shell 中运行。默认的 **自动** 使用 bash，没有 bash 时用 `sh`；Windows 上使用 PowerShell，没有时用 cmd。该选项会显示当前实际使用的 shell（“当前为 bash”）。菜单只列出本机已安装的 shell；所选 shell 未安装时按自动处理。工具说明会告诉模型默认的 shell 和已安装的 shell，命令的结果也会注明它在哪个 shell 中运行。
 
+### 非 UTF-8 的输出
+
+Hoshimi 按 UTF-8 读取命令的输出。其他编码的输出不会让命令或回复中断：每个不是 UTF-8 的字节会变成 `�`（U+FFFD）。但 Hoshimi 不会让命令改用 UTF-8 输出，命令使用的是启动 Hoshimi 的终端的编码。终端不是 UTF-8 时（最常见的是中文、日文或韩文的 Windows，控制台使用 GBK（936）这样的代码页），中文文件名、`dir` 列表和错误信息到模型那里都会变成 `����`；`write_stdin` 输入的内容（始终是 UTF-8）也会被同样误读。
+
+解决方法：先把终端切换为 UTF-8，再在同一个终端里启动 Hoshimi，它运行的命令会继承这一设置：
+
+<Tabs items={["PowerShell", "cmd", "bash / zsh"]}>
+<Tab value="PowerShell">
+
+```powershell
+chcp 65001              # 控制台代码页改为 UTF-8
+$env:PYTHONUTF8 = "1"   # Python 脚本也输出 UTF-8
+hoshimi serve
+```
+
+</Tab>
+<Tab value="cmd">
+
+```bat
+chcp 65001
+set PYTHONUTF8=1
+hoshimi serve
+```
+
+</Tab>
+<Tab value="bash / zsh">
+
+```bash
+export LANG=C.UTF-8 LC_ALL=C.UTF-8   # 或 `locale -a` 列出的其他 UTF-8 区域设置，如 zh_CN.UTF-8
+export PYTHONUTF8=1
+hoshimi serve
+```
+
+</Tab>
+</Tabs>
+
+这只对当前终端窗口有效。要长期生效，或者 Hoshimi 不是从终端启动的（快捷方式、计划任务、系统服务），请在系统层面设置：Windows 上打开 **设置 › 时间和语言 › 语言和区域 › 管理语言设置 › 更改系统区域设置…**，勾选 **Beta 版：使用 Unicode UTF-8 提供全球语言支持** 并重启；Linux 和 macOS 上把 `export` 这几行写进 shell 的配置文件，或在 systemd 单元中写 `Environment=LANG=C.UTF-8`。不管终端设置、自行选择编码的程序仍会按它自己的编码输出。
+
 ### 网页搜索（`web_search`）
 
 - 使用 DuckDuckGo 的轻量页面（无需密钥），或使用 **SearXNG 地址**（`playground.search_url`）中设置的 SearXNG 实例，该实例需要开启 JSON 格式。

@@ -137,6 +137,8 @@ Playground 的 **运行命令** 和 **后台命令** 工具在服务器进程的
 
 命令在模型指定的 shell 中运行，未指定时使用 **设置 › 工具 › 工具如何运行 › Shell**（`playground.shell`）。默认的 **自动** 在 Linux 和 macOS 上用 `bash -c`（没有 bash 时用 `sh -c`），在 Windows 上用 PowerShell（没有时用 `cmd`）。任何 shell 都不会作为登录 shell 启动，PowerShell 也不读取配置文件（profile）。工具的完整说明见 [Playground 工具](/docs/guide-agent)。
 
+这里没有设置编码相关的变量：命令按启动 Hoshimi 的终端的编码输出，输出按 UTF-8 读取。中文等非英文输出变成 `�` 时，请从 UTF-8 的终端启动 Hoshimi，见 [非 UTF-8 的输出](/docs/guide-agent#非-utf-8-的输出)。
+
 ## 不会读取的变量
 
 - **渠道的密钥变量。** `hoshimi stations` 的 **Key env** 一列（如 `ZENMUX_API_KEY`）以及其他上游工具惯用的密钥变量，Hoshimi 都不读取。渠道的凭据只来自 `config.json` 中的账户，避免出现第二个来源。

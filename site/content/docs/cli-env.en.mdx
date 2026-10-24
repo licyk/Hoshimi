@@ -137,6 +137,8 @@ The Playground's **Run commands** and **Background commands** tools add these va
 
 Commands run in the shell the model names, or else in **Settings › Tools › How tools run › Shell** (`playground.shell`). Its default, **Automatic**, is `bash -c` on Linux and macOS (`sh -c` when there is no bash) and PowerShell on Windows (`cmd` without it). No shell is started as a login shell, and PowerShell reads no profile. The tools are covered in full in [Playground tools](/docs/guide-agent).
 
+No encoding variable is set: commands print in the encoding of the terminal Hoshimi was started from, and their output is read as UTF-8. When non-English output comes back as `�`, start Hoshimi from a UTF-8 terminal; see [Output that is not UTF-8](/docs/guide-agent#output-that-is-not-utf-8).
+
 ## Variables Hoshimi does not read
 
 - **Channel key variables.** The **Key env** column of `hoshimi stations` (such as `ZENMUX_API_KEY`) and other key variables upstream tools use are not read. Channel credentials come only from the accounts in `config.json`, so there is no second source.
