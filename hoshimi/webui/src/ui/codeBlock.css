@@ -1,7 +1,7 @@
 /*
  * Code blocks, wherever they stand: in a reply (Markdown.vue writes them as markup) and in a tool
- * call. One frame for both: a toolbar that says what the block holds (an icon and its language)
- * with its buttons at the end, over the code itself.
+ * call (the views under components/chat/tools). One frame for both: a toolbar that says what the
+ * block holds (an icon and its language or file) with its buttons at the end, over the code itself.
  * Highlighted code takes the theme's own roles, so it follows the seed colour and the dark theme.
  */
 .code-block {
@@ -15,6 +15,8 @@
   background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface-variant);
   font-size: var(--md-sys-typescale-label-medium-size); line-height: var(--md-sys-typescale-label-medium-line-height); font-weight: 500;
 }
+/* A block that shows nothing under its head (a deleted file) has no line under it either. */
+.code-head:last-child { border-bottom: 0; border-radius: inherit; }
 .code-title { display: flex; align-items: center; gap: var(--app-space-2); flex: 1; min-width: 0; }
 .code-icon { flex: none; }
 /* Pressed for room, the word after the title gives way well before the title does. */
@@ -52,7 +54,7 @@
 
 /* The code: as it was written, scrolling sideways in a lane of its own rather than wrapping. */
 .code-block pre { margin: 0; padding: var(--app-space-2) var(--app-space-3); white-space: pre; overflow-wrap: normal; --app-scroll-inset: var(--app-space-2); }
-.code-block pre code {
+.code-block pre code, .code-mono {
   padding: 0; border-radius: 0; background: none; color: var(--md-sys-color-on-surface);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--md-sys-typescale-body-small-size); line-height: 1.5;
 }
@@ -68,3 +70,18 @@
 .hljs-deletion { color: var(--md-sys-color-error); }
 .hljs-emphasis { font-style: italic; }
 
+/* Icons drawn as components (AppIcon's sizes start at 18) stand as the markup's do, at 16. */
+.code-head .code-icon, .code-copy .app-icon, .code-tool .app-icon { width: 16px; height: 16px; }
+.code-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 400; }
+/* Short facts in a head (an exit code, the lines a change adds and removes, a count), after its title. */
+.code-tags { display: inline-flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: var(--app-space-1); min-width: 0; }
+.code-tag {
+  display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 var(--app-space-2); border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface-variant); font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.code-tag.ok { background: color-mix(in srgb, var(--md-sys-color-primary) 14%, transparent); color: var(--md-sys-color-primary); }
+.code-tag.bad { background: color-mix(in srgb, var(--md-sys-color-error) 14%, transparent); color: var(--md-sys-color-error); }
+.code-tag.warn { background: color-mix(in srgb, var(--md-sys-color-tertiary) 14%, transparent); color: var(--md-sys-color-tertiary); }
+.code-tag .app-icon { width: 14px; height: 14px; }
+.count-add { color: var(--md-sys-color-primary); }
+.count-remove { color: var(--md-sys-color-error); }

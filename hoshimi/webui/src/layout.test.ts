@@ -85,7 +85,7 @@ describe('scrolling areas', () => {
   // An area that scrolls inside the conversation hands a swipe past its end on to it, rather than stopping it there.
   it('pass on vertical swipes past their end when they scroll inside another', () => {
     expect(/\n\.app-scroll\.app-scroll-chain\s*\{([^}]*)\}/.exec(tokens)![1]).toMatch(/overscroll-behavior-y:\s*auto/);
-    for (const file of ['components/chat/ToolCall.vue', 'components/chat/CompactionMarker.vue']) {
+    for (const file of ['components/chat/tools/RawOutput.vue', 'components/chat/tools/CommandView.vue', 'components/chat/CompactionMarker.vue']) {
       expect(readFileSync(join(SRC, file), 'utf8')).toMatch(/class="[^"]*app-scroll[^"]*app-scroll-chain/);
     }
   });

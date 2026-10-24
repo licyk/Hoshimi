@@ -167,7 +167,7 @@ If the reviewer denies 3 calls in a row, or 10 in one reply, the reply is stoppe
 
 ## Answer an approval
 
-A call that must ask you stops with **Needs approval**, opens, and shows what it would do (the command, or the patch with its added and removed lines) and a question:
+A call that must ask you stops with **Needs approval**, opens, and shows what it would do (the command, or each file the patch changes, as a diff) and a question:
 
 | Question | Asked for |
 | --- | --- |
@@ -200,7 +200,18 @@ Each call is a line in the reply: an icon, a verb and what it acted on (**Read**
 | **Denied by review** | The review model denied it; the model reads why |
 | **Stopped** | The reply was stopped before it finished |
 
-Click a card to open it: the command, the patch, or the arguments as sent, and what came back. Between rounds the reply shows **Working…**.
+Click a card to open it. What was asked and what came back are laid out for each tool:
+
+| Tool | Opened, it shows |
+| --- | --- |
+| `apply_patch` | How many files changed and the lines added and removed, then each file with what happened to it (**Added**, **Modified**, **Renamed from** *path*, **Deleted**) and its diff, highlighted in the file's language. Once applied, each line has its numbers in the file before and after. A long diff starts folded. A patch shows while the model is still writing it |
+| `read` | A file's lines beside their numbers, highlighted, with which lines they are (**Lines 1–2000 of 5000**); a directory's folders and files, and how many more were left out |
+| `shell` and background commands | The command, highlighted, with its shell and where it ran; the keys typed into a session (**^C** for Ctrl+C, **⏎** for Enter); then the output under its exit code (**Running** for a session still going), **Timed out**, and how long it took |
+| `web_search` | Each result's title as a link, its site, and what it says |
+| `web_fetch` | The page's title and site, a link to it, **Cut short** when the tool cut it, and its text as Markdown, which opens to its full length when asked |
+| Any other tool | Its arguments one to a row, and its output (highlighted when it is JSON) |
+
+Each part has a **Copy code** button, and anything the Playground does not recognise (an error, for one) shows as the tool returned it. Between rounds the reply shows **Working…**.
 
 ## Steer a reply while it works
 

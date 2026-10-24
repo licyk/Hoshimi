@@ -357,16 +357,18 @@ describe('Playground chat', () => {
     await tool().findAll('.answers md-filled-button, .answers button').at(-1)!.trigger('click');
     await flushPromises();
     expect(calls('POST', /\/approvals\/call_1$/).map((c) => c.body)).toEqual([{ decision: 'allow' }]);
-    const done = { ...asked, status: 'done', approval: 'command', output: 'total 0', exit_code: 0, ms: 1200 };
+    const done = { ...asked, status: 'done', approval: 'command', output: 'Exit code: 0\nWall time: 1.2 seconds\nOutput:\ntotal 0\n', exit_code: 0, ms: 1200 };
     stream.send({ type: 'tool', step: { ...asked, status: 'running' } });
     stream.send({ type: 'tool', step: done });
     await flushPromises();
     expect(tool().find('.approval').exists()).toBe(false);
     expect(tool().find('.state').text()).toBe('1.2 s');
     // Opened to ask, it folds again once done; it opens on a press.
-    expect(tool().find('.output').exists()).toBe(false);
+    expect(tool().find('.terminal').exists()).toBe(false);
     await tool().find('.line').trigger('click');
-    expect(tool().find('.output').text()).toBe('total 0');
+    // Its output as a terminal shows it, under its exit code and how long it took.
+    expect(tool().find('.terminal').text()).toBe('total 0');
+    expect(tool().findAll('.code-tag').map((t) => t.text())).toEqual(['Exit 0', '1.2 s']);
     expect(wrapper.find('.assistant-message .run-status .label').text()).toBe('Working…');
     server.terminals = [{ id: 3, command: 'npm run dev', cwd: '/w', started_at: 1, running: true, exit_code: null }];
     await answer('All good.', { steps: [{ type: 'text', text: 'Let me look.', round: 0 }, done, { type: 'text', text: 'All good.', round: 1 }] });
@@ -480,7 +482,7 @@ describe('Playground chat', () => {
     expect(tool().find('.state').text()).toBe('Denied by review');
     // It opens to say why; the words the model is told are not shown as its output.
     expect(tool().find('.review').text()).toBe('Denied by judge · high risk — It deletes the build.');
-    expect(tool().find('.output').exists()).toBe(false);
+    expect(tool().find('.terminal, .raw-output').exists()).toBe(false);
     const failed = { ...review, outcome: '', risk_level: '', user_authorization: '', rationale: 'The reviewer (judge) failed: down', failed: true };
     stream.send({ type: 'tool', step: { ...call, id: 'call_2', status: 'waiting', review: failed } });
     await flushPromises();

@@ -61,3 +61,45 @@ export function languageName(language: string): string {
   return NAMES[lower] ?? hljs.getLanguage(lower)?.name?.split(',')[0] ?? language;
 }
 
+const EXTENSIONS: Record<string, string> = {
+  ts: 'typescript', mts: 'typescript', cts: 'typescript', tsx: 'typescript', js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
+  py: 'python', pyi: 'python', rs: 'rust', go: 'go', java: 'java', kt: 'kotlin', kts: 'kotlin', c: 'c', h: 'c', cc: 'cpp', cpp: 'cpp', cxx: 'cpp',
+  hpp: 'cpp', hh: 'cpp', cs: 'csharp', rb: 'ruby', php: 'php', lua: 'lua', swift: 'swift', sh: 'bash', bash: 'bash', zsh: 'bash', ps1: 'powershell',
+  psm1: 'powershell', sql: 'sql', css: 'css', scss: 'scss', html: 'xml', htm: 'xml', xml: 'xml', svg: 'xml', vue: 'xml', json: 'json', jsonc: 'json',
+  yaml: 'yaml', yml: 'yaml', toml: 'ini', ini: 'ini', cfg: 'ini', conf: 'ini', md: 'markdown', mdx: 'markdown', diff: 'diff', patch: 'diff',
+};
+
+/** The language a file is written in, by its name or extension ('' for one this build does not highlight). */
+export function languageForPath(path: string): string {
+  const name = path.split(/[\\/]/).pop()?.toLowerCase() ?? '';
+  if (name === 'dockerfile' || name.endsWith('.dockerfile')) return 'dockerfile';
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? (EXTENSIONS[name.slice(dot + 1)] ?? '') : '';
+}
+
+export const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
+/**
+ * ``code`` highlighted as a whole (so a string or a comment over several lines keeps its colour) and
+ * cut into its lines, each closing the spans still open at its end and opening them again on the
+ * next. Escaped text, line by line, for a language this build does not know.
+ */
+export function highlightLines(code: string, language: string): string[] {
+  const html = highlight(code, language);
+  if (html === null) return code.split('\n').map(escapeHtml);
+  const lines: string[] = [];
+  const open: string[] = [];
+  let line = '';
+  for (const [part] of html.matchAll(/<span[^>]*>|<\/span>|\n|[^<\n]+/g)) {
+    if (part === '\n') {
+      lines.push(line + '</span>'.repeat(open.length));
+      line = open.join('');
+    } else {
+      if (part.startsWith('<span')) open.push(part);
+      else if (part === '</span>') open.pop();
+      line += part;
+    }
+  }
+  lines.push(line + '</span>'.repeat(open.length));
+  return lines;
+}

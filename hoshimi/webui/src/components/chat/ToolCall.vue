@@ -1,6 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch, type Component } from 'vue';
 import type { ApprovalDecision, ToolStep } from '@/api/types';
+import CommandView from '@/components/chat/tools/CommandView.vue';
+import FetchView from '@/components/chat/tools/FetchView.vue';
+import GenericView from '@/components/chat/tools/GenericView.vue';
+import PatchView from '@/components/chat/tools/PatchView.vue';
+import RawOutput from '@/components/chat/tools/RawOutput.vue';
+import ReadView from '@/components/chat/tools/ReadView.vue';
+import ReviewNote from '@/components/chat/tools/ReviewNote.vue';
+import SearchView from '@/components/chat/tools/SearchView.vue';
+import { hostOf, parseArguments, partialString } from '@/components/chat/tools/parse';
 import { duration } from '@/format';
 import { useI18n } from '@/i18n';
 import { AppButton, AppIcon, Collapse, icons } from '@/ui';
@@ -8,9 +17,11 @@ import { AppButton, AppIcon, Collapse, icons } from '@/ui';
 /**
  * One tool call in a reply, as a line that opens: what it did in a few words ("Ran `npm test`",
  * "Edited app.py"), how it is going (preparing, being reviewed, waiting for approval, running with the
- * time so far, done, failed, declined, stopped) and how long it took. Opened, it shows what was asked
- * (the command, the patch with its added and removed lines, or the arguments), what the reviewer said
- * of it, and what came back. A call that waits for approval stands open with the question and the
+ * time so far, done, failed, declined, stopped) and how long it took. Opened, it shows what was asked,
+ * what the reviewer said of it, and what came back, each laid out for its tool (``tools/``): a patch
+ * as the diff of each file it changes, a file read as its numbered lines and a directory as its
+ * entries, a command with its output and exit code, search results and a fetched page as such, and
+ * any other tool's arguments one to a row. A call that waits for approval stands open with the question and the
  * answers under it (and why the reviewer could not decide, when it was asked first); one the reviewer
  * denied opens to say why.
  */
@@ -23,29 +34,15 @@ const answering = ref(false);
 /** Opened to ask: folded again once answered and done, as the other calls are. */
 let openedToAsk = false;
 
-const args = computed<Record<string, unknown>>(() => {
-  try {
-    const value = JSON.parse(props.step.arguments || '{}');
-    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  } catch {
-    return {};
-  }
-});
-const str = (key: string) => (typeof args.value[key] === 'string' ? (args.value[key] as string) : '');
+const args = computed(() => parseArguments(props.step.arguments));
+/** A string argument, or as much of it as has come while the arguments are still coming in. */
+const str = (key: string) => (typeof args.value[key] === 'string' ? (args.value[key] as string) : partialString(props.step.arguments, key));
 const firstLine = (text: string) => {
   const line = text.trim().split('\n')[0] ?? '';
   return text.trim().includes('\n') ? `${line} …` : line;
 };
 /** The files a patch names, in order. */
 const patchFiles = computed(() => [...str('input').matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)].map((m) => m[1].trim()));
-const host = (url: string) => {
-  try {
-    const u = new URL(url.includes('://') ? url : `https://${url}`);
-    return u.host + (u.pathname === '/' ? '' : u.pathname);
-  } catch {
-    return url;
-  }
-};
 
 const KINDS: Record<string, { icon: Component; verb: string }> = {
   read: { icon: icons.FileText, verb: 'read' },
@@ -78,7 +75,7 @@ const summary = computed(() => {
     case 'web_search':
       return { label, detail: str('query') ? `“${str('query')}”` : '', code: false };
     case 'web_fetch':
-      return { label, detail: host(str('url')), code: false };
+      return { label, detail: hostOf(str('url')), code: false };
     default:
       return { label, detail: '', code: false };
   }
@@ -143,22 +140,10 @@ const review = computed(() => {
 /** The words a model is told of a denial are the reviewer's: shown as its verdict, not as output. */
 const output = computed(() => (props.step.status === 'denied' && props.step.review?.outcome === 'deny' ? '' : props.step.output));
 
-/** What was asked: the command, the patch, or the arguments as they were sent. */
-const command = computed(() => str('command') || str('cmd'));
-const patchLines = computed(() =>
-  str('input')
-    .replace(/\n$/, '')
-    .split('\n')
-    .map((line) => ({ line, kind: line.startsWith('***') || line.startsWith('@@') ? 'head' : line.startsWith('+') ? 'add' : line.startsWith('-') ? 'remove' : '' })),
-);
-const argumentsText = computed(() => {
-  if (!props.step.arguments) return '';
-  try {
-    return JSON.stringify(JSON.parse(props.step.arguments), null, 2);
-  } catch {
-    return props.step.arguments;
-  }
-});
+const COMMANDS = new Set(['shell', 'exec_command', 'write_stdin', 'kill_session']);
+const failed = computed(() => props.step.status === 'error');
+/** What the patch tool said once it worked: the diff shows it, so only a failure is shown. */
+const patchError = computed(() => (props.step.name === 'apply_patch' && failed.value ? output.value : ''));
 /** What the call needs leave for, as the server says (``command``, ``edit``, ``edit-outside``, ``read-outside``). */
 const QUESTIONS: Record<string, string> = {
   command: 'playground.approveRun',
@@ -191,14 +176,23 @@ function answer(decision: ApprovalDecision) {
     </button>
     <Collapse :show="open">
       <div :id="id" class="body">
-        <pre v-if="command" class="block command type-body-small"><span class="prompt" aria-hidden="true">$ </span>{{ command }}</pre>
-        <pre v-else-if="step.name === 'apply_patch' && str('input')" class="block patch type-body-small"><span v-for="(l, i) in patchLines" :key="i" :class="l.kind">{{ l.line }}
-</span></pre>
-        <pre v-else-if="argumentsText && step.status !== 'pending'" class="block type-body-small">{{ argumentsText }}</pre>
-        <p v-if="review && step.status !== 'waiting'" class="review type-body-small" :class="review.tone">
-          <AppIcon :icon="review.icon" :size="18" /><span><strong>{{ review.text }}</strong><span v-if="review.risk"> · {{ review.risk }}</span><span v-if="review.why"> — {{ review.why }}</span></span>
-        </p>
-        <pre v-if="output" class="block output app-scroll app-scroll-chain type-body-small" :class="{ failed: step.status === 'error' }">{{ output }}</pre>
+        <template v-if="step.name === 'apply_patch'">
+          <PatchView v-if="str('input')" :input="str('input')" :meta="step.meta" />
+          <ReviewNote v-if="review && step.status !== 'waiting'" :review="review" />
+          <RawOutput v-if="patchError" :text="patchError" failed />
+        </template>
+        <CommandView v-else-if="COMMANDS.has(step.name)" :name="step.name" :raw="step.arguments" :args="args" :output="output" :meta="step.meta" :failed="failed">
+          <template #review><ReviewNote v-if="review && step.status !== 'waiting'" :review="review" /></template>
+        </CommandView>
+        <template v-else-if="step.name === 'read' || step.name === 'web_search' || step.name === 'web_fetch'">
+          <ReviewNote v-if="review && step.status !== 'waiting'" :review="review" />
+          <ReadView v-if="step.name === 'read'" :path="str('path')" :output="output" :meta="step.meta" :failed="failed" />
+          <SearchView v-else-if="step.name === 'web_search'" :output="output" :failed="failed" />
+          <FetchView v-else :output="output" :failed="failed" />
+        </template>
+        <GenericView v-else :raw="step.arguments" :args="args" :output="output" :failed="failed" :pending="step.status === 'pending'">
+          <template #review><ReviewNote v-if="review && step.status !== 'waiting'" :review="review" /></template>
+        </GenericView>
       </div>
     </Collapse>
     <div v-if="step.status === 'waiting'" class="approval" role="group" :aria-label="question">
@@ -238,18 +232,6 @@ code.detail { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-
 .open .chevron { transform: rotate(180deg); }
 /* What it asked and what came back stand a step under the line, as far apart as from each other. */
 .body { display: flex; flex-direction: column; gap: var(--app-space-2); padding: var(--app-space-2) var(--app-space-3) var(--app-space-3); }
-/* Commands, patches and output wrap rather than scroll sideways; long output scrolls down. */
-.block {
-  margin: 0; padding: var(--app-space-2) var(--app-space-3); border-radius: var(--md-sys-shape-corner-small);
-  background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere;
-}
-.output { max-height: 320px; }
-.output.failed { color: var(--md-sys-color-error); }
-.prompt { color: var(--md-sys-color-on-surface-variant); user-select: none; }
-.patch .add { color: var(--md-sys-color-primary); }
-.patch .remove { color: var(--md-sys-color-error); }
-.patch .head { color: var(--md-sys-color-on-surface-variant); font-weight: 600; }
 .approval {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--app-space-2);
   padding: var(--app-space-2) var(--app-space-2) var(--app-space-2) var(--app-space-3); border-top: 1px solid var(--md-sys-color-outline-variant);
@@ -258,12 +240,6 @@ code.detail { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-
 .question :deep(svg) { flex: none; color: var(--md-sys-color-tertiary); }
 .why { flex-basis: 100%; order: 1; color: var(--md-sys-color-on-surface-variant); }
 .answers { order: 2; }
-.review { display: flex; align-items: flex-start; gap: var(--app-space-2); margin: 0; color: var(--md-sys-color-on-surface-variant); }
-.review :deep(svg) { flex: none; }
-.review.done :deep(svg) { color: var(--md-sys-color-primary); }
-.review.failed :deep(svg) { color: var(--md-sys-color-error); }
-.review.ask :deep(svg) { color: var(--md-sys-color-tertiary); }
-.review strong { color: var(--md-sys-color-on-surface); font-weight: 500; }
 .answers { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--app-space-1); margin-inline-start: auto; }
 @media (prefers-reduced-motion: reduce) {
   .spin { animation: none; }
