@@ -553,6 +553,7 @@ export default {
       drawing: 'Drawing the diagram…',
       diagramFailed: 'Couldn’t draw this diagram: {reason}',
       previewTitle: 'HTML preview',
+      plainText: 'Text',
     },
     viewer: {
       title: 'Image viewer',

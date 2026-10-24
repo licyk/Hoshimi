@@ -1,7 +1,8 @@
 <script lang="ts">
 import MarkdownIt from 'markdown-it';
 import type Token from 'markdown-it/lib/token.mjs';
-import { highlight } from '@/ui/highlight';
+import '@/ui/codeBlock.css';
+import { highlight, languageName } from '@/ui/highlight';
 import { mathPlugin } from '@/ui/markdownMath';
 import {
   DEFAULT_LABELS, allowedMedia, blockModes, fill, hash, hostOf, isRemote, mediaKind, previewDocument,
@@ -16,8 +17,9 @@ import { drawings } from '@/ui/mermaid';
  * app and give the page they open no hold on it. Code blocks and tables scroll sideways on their
  * own (``.app-scroll-x``) rather than widen the conversation.
  *
- * A code block is highlighted when its fence names a language this build knows (``highlight.ts``)
- * and carries a head with that name and a copy button. The button is plain HTML in the rendered
+ * A code block is highlighted when its fence names a language this build knows (``highlight.ts``).
+ * Its head is a toolbar (``codeBlock.css``): an icon for what it holds and its language by name
+ * (``Text`` for none), then its buttons, a copy button last. The button is plain HTML in the rendered
  * string, so a click on it is caught on the whole reply: the code goes to the clipboard, the button
  * shows a check (and says ``copiedLabel``) for a moment, and ``copied`` or ``copyFailed`` lets the
  * page say so too. The check is set on the button in place rather than rendered, so a keyboard
@@ -53,13 +55,35 @@ const ICON = (className: string, shapes: string) =>
 const COPY_ICONS =
   ICON('icon-copy', '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>') +
   ICON('icon-check', '<path d="M20 6 9 17l-5-5"/>');
-const IMAGE_ICON = ICON('icon-media', '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>');
+const IMAGE_SHAPES = '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>';
+const IMAGE_ICON = ICON('icon-media', IMAGE_SHAPES);
 const PLAY_ICON = ICON('icon-media', '<polygon points="6 3 20 12 6 21 6 3"/>');
 const ZOOM_ICONS = {
   in: ICON('', '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/>'),
   out: ICON('', '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M8 11h6"/>'),
   reset: ICON('', '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>'),
 };
+/** What the head's icon says a block holds: code, a command, a diff, a diagram, an image, a page. */
+const KIND_ICONS = {
+  code: '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>',
+  terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>',
+  diff: '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/>',
+  diagram: '<rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/>',
+  image: IMAGE_SHAPES,
+  page: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/>',
+  text: '<path d="M17 6.1H3"/><path d="M21 12.1H3"/><path d="M15.1 18H3"/>',
+};
+const TERMINALS = new Set(['bash', 'sh', 'shell', 'zsh', 'fish', 'console', 'shellsession', 'powershell', 'ps1', 'pwsh', 'ps', 'cmd', 'bat', 'batch']);
+function kindOf(language: string): keyof typeof KIND_ICONS {
+  const lower = language.toLowerCase();
+  if (!lower || lower === 'text' || lower === 'txt' || lower === 'plaintext' || lower === 'plain') return 'text';
+  if (TERMINALS.has(lower)) return 'terminal';
+  if (lower === 'diff' || lower === 'patch') return 'diff';
+  if (lower === 'mermaid') return 'diagram';
+  if (lower === 'svg') return 'image';
+  if (lower === 'html' || lower === 'htm') return 'page';
+  return 'code';
+}
 /** How long a copy button shows its check. */
 export const COPIED_MS = 1500;
 
@@ -90,13 +114,18 @@ interface BlockParts {
   hideCode?: boolean;
 }
 
+/**
+ * A block's head is a toolbar: an icon for what it holds and its language (``Text`` for a block that
+ * names none), then its buttons, copy last.
+ */
 function codeBlock(code: string, info: string, env: Env, parts: BlockParts = {}): string {
   const language = info.trim().split(/\s+/)[0] ?? '';
   const highlighted = highlight(code, language);
   const label = escape(env.copyLabel);
+  const name = languageName(language) || env.labels.plainText;
   return (
     '<div class="code-block">' +
-    `<div class="code-head"><span class="code-lang">${escape(language)}</span><span class="code-tools">${parts.tools ?? ''}` +
+    `<div class="code-head"><span class="code-title">${ICON('code-icon', KIND_ICONS[kindOf(language)])}<span class="code-lang">${escape(name)}</span></span><span class="code-tools">${parts.tools ?? ''}` +
     `<button type="button" class="code-copy" data-copy aria-label="${label}" title="${label}">${COPY_ICONS}</button></span></div>` +
     (parts.body ?? '') +
     `<pre class="app-scroll app-scroll-x app-scroll-auto"${parts.hideCode ? ' hidden' : ''}><code class="hljs${highlighted === null ? '' : ` language-${escape(language)}`}">${highlighted ?? escape(code)}</code></pre>` +
@@ -433,50 +462,15 @@ function onError(event: Event) {
 }
 .markdown :deep(h1) { font-size: var(--md-sys-typescale-title-large-size); line-height: var(--md-sys-typescale-title-large-line-height); }
 .markdown :deep(a) { color: var(--md-sys-color-primary); text-decoration: underline; text-underline-offset: 2px; }
-.markdown :deep(code) {
+.markdown :deep(:not(pre) > code) {
   padding: 1px 4px; border-radius: var(--md-sys-shape-corner-extra-small); background: var(--md-sys-color-surface-container-highest);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em;
 }
-.markdown :deep(.code-block) { border-radius: var(--md-sys-shape-corner-small); background: var(--md-sys-color-surface-container-highest); }
-.markdown :deep(.code-head) {
-  display: flex; align-items: center; justify-content: space-between; gap: var(--app-space-2); padding: var(--app-space-1) var(--app-space-1) 0 var(--app-space-3);
-  color: var(--md-sys-color-on-surface-variant); font-size: var(--md-sys-typescale-label-small-size); line-height: var(--md-sys-typescale-label-small-line-height);
-}
-.markdown :deep(.code-lang) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.markdown :deep(.code-copy) {
-  display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--md-sys-shape-corner-full);
-  background: transparent; color: inherit; cursor: pointer;
-  transition: background-color var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
-}
-.markdown :deep(.code-copy:hover) { background: color-mix(in srgb, currentColor calc(var(--md-sys-state-hover-state-layer-opacity) * 100%), transparent); }
-.markdown :deep(.code-copy .icon-check), .markdown :deep(.code-copy.copied .icon-copy) { display: none; }
-.markdown :deep(.code-copy.copied .icon-check) { display: block; }
-.markdown :deep(.code-copy.copied) { color: var(--md-sys-color-primary); }
-.markdown :deep(.code-copy:active) { background: color-mix(in srgb, currentColor calc(var(--md-sys-state-pressed-state-layer-opacity) * 100%), transparent); }
-.markdown :deep(pre) { margin: 0; padding: 0 var(--app-space-3) var(--app-space-2); white-space: pre; overflow-wrap: normal; --app-scroll-inset: var(--app-space-2); }
-.markdown :deep(pre code) { padding: 0; background: none; font-size: var(--md-sys-typescale-body-small-size); line-height: 1.5; }
-/* Highlighted code in the theme's own roles, so it follows the seed colour and the dark theme. */
-.markdown :deep(.hljs-comment), .markdown :deep(.hljs-quote), .markdown :deep(.hljs-meta) { color: var(--md-sys-color-on-surface-variant); }
-.markdown :deep(.hljs-comment), .markdown :deep(.hljs-quote) { font-style: italic; }
-.markdown :deep(.hljs-keyword), .markdown :deep(.hljs-literal), .markdown :deep(.hljs-selector-tag), .markdown :deep(.hljs-section), .markdown :deep(.hljs-name), .markdown :deep(.hljs-doctag) { color: var(--md-sys-color-primary); }
-.markdown :deep(.hljs-string), .markdown :deep(.hljs-regexp), .markdown :deep(.hljs-addition), .markdown :deep(.hljs-char.escape_), .markdown :deep(.hljs-meta .hljs-string) { color: var(--md-sys-color-tertiary); }
-.markdown :deep(.hljs-number), .markdown :deep(.hljs-symbol), .markdown :deep(.hljs-bullet), .markdown :deep(.hljs-attr), .markdown :deep(.hljs-attribute), .markdown :deep(.hljs-variable), .markdown :deep(.hljs-template-variable), .markdown :deep(.hljs-type), .markdown :deep(.hljs-selector-class), .markdown :deep(.hljs-selector-id) { color: var(--md-sys-color-secondary); }
-.markdown :deep(.hljs-title), .markdown :deep(.hljs-built_in), .markdown :deep(.hljs-strong) { font-weight: 600; }
-.markdown :deep(.hljs-deletion) { color: var(--md-sys-color-error); }
-.markdown :deep(.hljs-emphasis) { font-style: italic; }
 .markdown :deep(blockquote) { padding-inline-start: var(--app-space-3); border-inline-start: 3px solid var(--md-sys-color-outline-variant); color: var(--md-sys-color-on-surface-variant); }
 .markdown :deep(hr) { height: 1px; border: 0; background: var(--md-sys-color-outline-variant); }
 .markdown :deep(table) { border-collapse: collapse; font-size: var(--md-sys-typescale-body-small-size); }
 .markdown :deep(th), .markdown :deep(td) { padding: var(--app-space-1) var(--app-space-2); border: 1px solid var(--md-sys-color-outline-variant); text-align: start; overflow-wrap: normal; }
 .markdown :deep(th) { background: var(--md-sys-color-surface-container-high); font-weight: 600; }
-/* The head's buttons: a switch between a block's drawing and its code, then copy. */
-.markdown :deep(.code-tools) { display: inline-flex; align-items: center; gap: var(--app-space-1); }
-.markdown :deep(.code-toggle) {
-  height: 28px; padding: 0 var(--app-space-2); border: 0; border-radius: var(--md-sys-shape-corner-full); background: transparent; color: inherit;
-  font: inherit; cursor: pointer;
-}
-.markdown :deep(.code-toggle:hover) { background: color-mix(in srgb, currentColor calc(var(--md-sys-state-hover-state-layer-opacity) * 100%), transparent); }
-.markdown :deep(.code-toggle:active) { background: color-mix(in srgb, currentColor calc(var(--md-sys-state-pressed-state-layer-opacity) * 100%), transparent); }
 /* Math: a formula set apart scrolls sideways on its own when it is wider than the column. */
 .markdown :deep(.math-block) { margin: 0 0 var(--app-space-2); padding: var(--app-space-1) 0; --app-scroll-inset: var(--app-space-2); }
 .markdown :deep(.math-block .katex-display) { margin: 0; }

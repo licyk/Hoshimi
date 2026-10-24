@@ -1,0 +1,66 @@
+/*
+ * Code blocks, wherever they stand: in a reply (Markdown.vue writes them as markup) and in a tool
+ * call. One frame for both: a toolbar that says what the block holds (an icon and its language)
+ * with its buttons at the end, over the code itself.
+ * Highlighted code takes the theme's own roles, so it follows the seed colour and the dark theme.
+ */
+.code-block {
+  min-width: 0; border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-sys-shape-corner-small);
+  background: var(--md-sys-color-surface-container-high);
+}
+.code-head {
+  display: flex; align-items: center; gap: var(--app-space-2); min-height: 36px; padding: 2px var(--app-space-1) 2px var(--app-space-3);
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: calc(var(--md-sys-shape-corner-small) - 1px) calc(var(--md-sys-shape-corner-small) - 1px) 0 0;
+  background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--md-sys-typescale-label-medium-size); line-height: var(--md-sys-typescale-label-medium-line-height); font-weight: 500;
+}
+.code-title { display: flex; align-items: center; gap: var(--app-space-2); flex: 1; min-width: 0; }
+.code-icon { flex: none; }
+/* Pressed for room, the word after the title gives way well before the title does. */
+.code-lang { flex: 0 1 auto; min-width: 4ch; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--md-sys-color-on-surface); }
+.code-sub { flex: 0 12 auto; min-width: 0; overflow: hidden; font-weight: 400; white-space: nowrap; text-overflow: ellipsis; }
+.code-sub::before { content: '·'; margin-inline-end: var(--app-space-2); }
+.code-tools { display: inline-flex; align-items: center; gap: 2px; flex: none; }
+
+/* The head's buttons: copy, and a switch between a drawing and its code. */
+.code-copy {
+  display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--md-sys-shape-corner-full);
+  background: transparent; color: inherit; cursor: pointer;
+  transition: background-color var(--md-sys-motion-duration-short2) var(--md-sys-motion-easing-standard);
+}
+.code-toggle {
+  height: 28px; padding: 0 var(--app-space-2); border: 0; border-radius: var(--md-sys-shape-corner-full); background: transparent; color: inherit;
+  font: inherit; cursor: pointer;
+}
+.code-copy:hover, .code-toggle:hover {
+  background: color-mix(in srgb, currentColor calc(var(--md-sys-state-hover-state-layer-opacity) * 100%), transparent);
+}
+.code-copy:active, .code-toggle:active {
+  background: color-mix(in srgb, currentColor calc(var(--md-sys-state-pressed-state-layer-opacity) * 100%), transparent);
+}
+.code-copy:focus-visible, .code-toggle:focus-visible {
+  outline: 2px solid var(--md-sys-color-primary); outline-offset: -2px;
+}
+.code-copy .icon-check, .code-copy.copied .icon-copy { display: none; }
+.code-copy.copied .icon-check { display: block; }
+.code-copy.copied { color: var(--md-sys-color-primary); }
+
+/* The code: as it was written, scrolling sideways in a lane of its own rather than wrapping. */
+.code-block pre { margin: 0; padding: var(--app-space-2) var(--app-space-3); white-space: pre; overflow-wrap: normal; --app-scroll-inset: var(--app-space-2); }
+.code-block pre code {
+  padding: 0; border-radius: 0; background: none; color: var(--md-sys-color-on-surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--md-sys-typescale-body-small-size); line-height: 1.5;
+}
+
+.hljs-comment, .hljs-quote, .hljs-meta { color: var(--md-sys-color-on-surface-variant); }
+.hljs-comment, .hljs-quote { font-style: italic; }
+.hljs-keyword, .hljs-literal, .hljs-selector-tag, .hljs-section, .hljs-name, .hljs-doctag { color: var(--md-sys-color-primary); }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-char.escape_, .hljs-meta .hljs-string { color: var(--md-sys-color-tertiary); }
+.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable, .hljs-type, .hljs-selector-class, .hljs-selector-id {
+  color: var(--md-sys-color-secondary);
+}
+.hljs-title, .hljs-built_in, .hljs-strong { font-weight: 600; }
+.hljs-deletion { color: var(--md-sys-color-error); }
+.hljs-emphasis { font-style: italic; }
+

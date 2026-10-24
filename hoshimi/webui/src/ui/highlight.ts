@@ -47,3 +47,17 @@ export function highlight(code: string, language: string): string | null {
   if (!language || !hljs.getLanguage(language)) return null;
   return hljs.highlight(code, { language, ignoreIllegals: true }).value;
 }
+
+/** Names a fence's language word shows as where highlight.js's own is a list (``HTML, XML``) or not a name. */
+const NAMES: Record<string, string> = {
+  html: 'HTML', htm: 'HTML', xhtml: 'XHTML', xml: 'XML', svg: 'SVG', vue: 'Vue', shell: 'Shell', console: 'Shell', zsh: 'Zsh',
+  toml: 'TOML', ini: 'INI', php: 'PHP', jsx: 'JSX', tsx: 'TSX', mermaid: 'Mermaid', patch: 'Diff',
+};
+
+/** What a fence's language is called (``py`` is Python): its own word for one this build does not know, '' for none. */
+export function languageName(language: string): string {
+  const lower = language.toLowerCase();
+  if (!lower) return '';
+  return NAMES[lower] ?? hljs.getLanguage(lower)?.name?.split(',')[0] ?? language;
+}
+

@@ -55,7 +55,9 @@ describe('Markdown', () => {
   it('highlights a block in a language it knows, by name or alias, and leaves others as text', () => {
     const w = render('```ts\nconst x: number = 1; // one\n```\n\n```py\ndef f(): return "s"\n```\n\n```nosuchlang\nif <x> then\n```');
     const [ts, py, other] = w.findAll('.code-block');
-    expect(ts.find('.code-lang').text()).toBe('ts');
+    expect(ts.find('.code-lang').text()).toBe('TypeScript');
+    expect(py.find('.code-lang').text()).toBe('Python');
+    expect(other.find('.code-lang').text()).toBe('nosuchlang');
     expect(ts.find('code').classes()).toEqual(['hljs', 'language-ts']);
     expect(ts.find('.hljs-keyword').text()).toBe('const');
     expect(ts.find('.hljs-comment').text()).toBe('// one');
@@ -63,6 +65,19 @@ describe('Markdown', () => {
     expect(py.find('.hljs-string').text()).toBe('"s"');
     expect(other.find('code').classes()).toEqual(['hljs']);
     expect(other.find('code').element.innerHTML).toBe('if &lt;x&gt; then\n');
+  });
+
+  it('heads each block with a toolbar: an icon for what it holds, its language (Text for none), and copy', () => {
+    const w = render('```\nplain\n```\n\n```bash\nls\n```\n\n```diff\n-a\n+b\n```\n\n    indented');
+    const heads = w.findAll('.code-head');
+    expect(heads.map((h) => h.find('.code-lang').text())).toEqual(['Text', 'Bash', 'Diff', 'Text']);
+    for (const head of heads) {
+      expect(head.find('.code-title > svg.code-icon').exists()).toBe(true);
+      expect(head.find('.code-tools > button.code-copy:last-child').exists()).toBe(true);
+    }
+    // Each kind has its own icon: text, a command and a diff differ.
+    const icons = heads.slice(0, 3).map((h) => h.find('.code-icon').element.innerHTML);
+    expect(new Set(icons).size).toBe(3);
   });
 
   it('copies a code block’s code, without its last newline, and says so on the page', async () => {

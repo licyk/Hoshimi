@@ -27,6 +27,8 @@ export interface MarkdownLabels {
   zoomIn: string;
   zoomOut: string;
   resetZoom: string;
+  /** A code block's language when it names none. */
+  plainText: string;
 }
 
 export const DEFAULT_LABELS: MarkdownLabels = {
@@ -44,6 +46,7 @@ export const DEFAULT_LABELS: MarkdownLabels = {
   zoomIn: 'Zoom in',
   zoomOut: 'Zoom out',
   resetZoom: 'Fit to window',
+  plainText: 'Text',
 };
 
 export interface MarkdownContext {

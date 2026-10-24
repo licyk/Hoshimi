@@ -553,6 +553,7 @@ export default {
       drawing: '図を描画しています…',
       diagramFailed: 'この図を描画できませんでした：{reason}',
       previewTitle: 'HTML プレビュー',
+      plainText: 'テキスト',
     },
     viewer: {
       title: '画像ビューアー',

@@ -553,6 +553,7 @@ export default {
       drawing: '正在绘制图表…',
       diagramFailed: '无法绘制此图表：{reason}',
       previewTitle: 'HTML 预览',
+      plainText: '纯文本',
     },
     viewer: {
       title: '图片查看器',
