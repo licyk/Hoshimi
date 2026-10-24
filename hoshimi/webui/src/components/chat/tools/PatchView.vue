@@ -3,7 +3,7 @@ import { computed, reactive } from 'vue';
 import CodeFrame from '@/components/chat/tools/CodeFrame.vue';
 import { numberLines, parsePatch, patchedFiles, type PatchFile } from '@/components/chat/tools/parse';
 import { useI18n } from '@/i18n';
-import { icons } from '@/ui';
+import { Collapse, icons } from '@/ui';
 import { escapeHtml, highlightLines, languageForPath } from '@/ui/highlight';
 
 /**
@@ -11,7 +11,8 @@ import { escapeHtml, highlightLines, languageForPath } from '@/ui/highlight';
  * of its own (added, changed, renamed or deleted, with the lines it adds and removes) holding its
  * diff, highlighted in the file's language. Once the patch is applied the tool says where each hunk
  * landed, and its lines carry their numbers in the file before and after; a patch still being written
- * shows as far as it has come. A file with a long diff starts folded.
+ * shows as far as it has come. A file with a long diff starts folded; folding and unfolding ease its
+ * height, as the call's own line does (``Collapse``).
  */
 const props = defineProps<{ input: string; meta: Record<string, unknown> }>();
 const { t } = useI18n();
@@ -100,24 +101,28 @@ const isFolded = (f: { key: string; rows: Row[] }) => folded.get(f.key) ?? f.row
           <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
         </button>
       </template>
-      <div v-if="f.rows.length && !isFolded(f)" class="diff app-scroll app-scroll-chain app-scroll-auto">
-        <table :class="{ numbered: f.numbered }">
-          <tbody>
-            <tr v-for="(row, r) in f.rows" :key="r" :class="row.kind">
-              <template v-if="row.kind === 'hunk'">
-                <td :colspan="f.numbered ? 4 : 2" class="hunk-head code-mono"><span class="dots" aria-hidden="true">⋯</span> <span v-html="row.html" /></td>
-              </template>
-              <template v-else>
-                <td v-if="f.numbered" class="n" aria-hidden="true">{{ row.old ?? '' }}</td>
-                <td v-if="f.numbered" class="n" aria-hidden="true">{{ row.new ?? '' }}</td>
-                <td class="sign" aria-hidden="true">{{ row.kind === 'add' ? '+' : row.kind === 'remove' ? '−' : '' }}</td>
-                <td class="text code-mono" v-html="row.html" />
-              </template>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p v-else-if="f.op === 'deleted'" class="note type-body-small">{{ t('playground.toolView.deletedLines', { n: f.removed }) }}</p>
+      <Collapse :show="f.rows.length > 0 && !isFolded(f)">
+        <div class="diff app-scroll app-scroll-chain app-scroll-auto">
+          <table :class="{ numbered: f.numbered }">
+            <tbody>
+              <tr v-for="(row, r) in f.rows" :key="r" :class="row.kind">
+                <template v-if="row.kind === 'hunk'">
+                  <td :colspan="f.numbered ? 4 : 2" class="hunk-head code-mono"><span class="dots" aria-hidden="true">⋯</span> <span v-html="row.html" /></td>
+                </template>
+                <template v-else>
+                  <td v-if="f.numbered" class="n" aria-hidden="true">{{ row.old ?? '' }}</td>
+                  <td v-if="f.numbered" class="n" aria-hidden="true">{{ row.new ?? '' }}</td>
+                  <td class="sign" aria-hidden="true">{{ row.kind === 'add' ? '+' : row.kind === 'remove' ? '−' : '' }}</td>
+                  <td class="text code-mono" v-html="row.html" />
+                </template>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </Collapse>
+      <Collapse :show="f.op === 'deleted' && (!f.rows.length || isFolded(f))">
+        <p class="note type-body-small">{{ t('playground.toolView.deletedLines', { n: f.removed }) }}</p>
+      </Collapse>
     </CodeFrame>
   </div>
 </template>

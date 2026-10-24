@@ -257,6 +257,7 @@ describe('morphHeight', () => {
     expect(order).toEqual(['change', 'settled']);
     const [frames, options] = vi.mocked(el.animate).mock.calls[0] as [Keyframe[], KeyframeAnimationOptions];
     expect(frames.map((f) => f.height)).toEqual(['196px', '224px']);
+    expect(frames.every((f) => f.maxHeight === 'none')).toBe(true);
     expect(options.duration).toBeGreaterThan(100);
   });
 

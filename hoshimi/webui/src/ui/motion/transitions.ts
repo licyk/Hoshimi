@@ -74,7 +74,9 @@ export async function morphHeight(el: HTMLElement | null | undefined, change: ()
   const root = getComputedStyle(document.documentElement);
   const duration = milliseconds(root.getPropertyValue('--md-sys-motion-duration-medium2')) || 300;
   const easing = root.getPropertyValue('--md-sys-motion-easing-emphasized').trim() || 'cubic-bezier(0.2, 0, 0, 1)';
-  el.animate([{ height: `${from}px`, overflow: 'hidden' }, { height: `${to}px`, overflow: 'hidden' }], { duration, easing });
+  // The heights were read with any cap the box has; lifted while it moves, so a capped box can close to it.
+  const frame = { overflow: 'hidden', maxHeight: 'none' };
+  el.animate([{ ...frame, height: `${from}px` }, { ...frame, height: `${to}px` }], { duration, easing });
 }
 
 /**

@@ -5,17 +5,21 @@ import RawOutput from '@/components/chat/tools/RawOutput.vue';
 import { hostOf, parseFetch } from '@/components/chat/tools/parse';
 import { useI18n } from '@/i18n';
 import { AppIcon, icons } from '@/ui';
+import { morphHeight } from '@/ui/motion/transitions';
 // Not through '@/ui': markdown-it and highlight.js load with the Playground alone.
 import Markdown from '@/ui/Markdown.vue';
 
 /**
  * A page ``web_fetch`` read: its title and site, a link to it, whether the tool cut it, and its text
- * as the Markdown the tool made of it, in a box that opens to its whole length when asked.
+ * as the Markdown the tool made of it, in a box that opens to its whole length when asked (and eases
+ * its height there and back, ``morphHeight``).
  */
 const props = defineProps<{ output: string; failed: boolean }>();
 const { t } = useI18n();
 const page = computed(() => (props.failed ? null : parseFetch(props.output)));
 const whole = ref(false);
+const box = ref<HTMLElement | null>(null);
+const toggle = () => morphHeight(box.value, () => (whole.value = !whole.value));
 </script>
 
 <template>
@@ -33,12 +37,12 @@ const whole = ref(false);
         :aria-expanded="whole"
         :aria-label="whole ? t('playground.toolView.showLess') : t('playground.toolView.showAll')"
         :title="whole ? t('playground.toolView.showLess') : t('playground.toolView.showAll')"
-        @click="whole = !whole"
+        @click="toggle"
       >
         <AppIcon :icon="icons.ChevronsUpDown" :size="18" />
       </button>
     </template>
-    <div class="page app-scroll app-scroll-chain app-scroll-auto" :class="{ whole }">
+    <div ref="box" class="page app-scroll app-scroll-chain app-scroll-auto" :class="{ whole }">
       <Markdown class="type-body-medium" :source="page.body" :copy-label="t('playground.copyCode')" :copied-label="t('playground.codeCopied')" />
     </div>
   </CodeFrame>
