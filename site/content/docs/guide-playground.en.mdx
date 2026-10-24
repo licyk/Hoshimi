@@ -59,7 +59,6 @@ Type <kbd>/</kbd> at the start of the box to open the commands over the composer
 | `/status` | How much of the context window is used and left, the last request's and the whole conversation's tokens (cached ones among them), compactions, how long replies worked, and the tools |
 | `/new` (or `/clear`) | Start a new chat |
 | `/fork` *title* | Continue this conversation in a new chat, up to the message on screen; words after the name are its title |
-| `/tools` | Turn this chat's tools on or off |
 | `/permissions` (or `/approval`) | Choose when tools ask before they run |
 
 While a reply is running only `/status`, `/permissions` and `/new` run; the others say why they can't. A slash followed by something that is not a command, such as `/etc/hosts`, is sent as a message.
@@ -160,7 +159,7 @@ Editing, retrying and switching versions are unavailable while a reply is coming
 
 ## Branch a chat
 
-**Branch in new chat** (on a reply) copies the chat up to that reply into a new chat and opens it ("Opened in a new chat"). The new chat keeps the title, the model and effort, and the chat's tool and approval choices; the original is untouched. Use it to take a conversation in two directions without switching versions back and forth.
+**Branch in new chat** (on a reply) copies the chat up to that reply into a new chat and opens it ("Opened in a new chat"). The new chat keeps the title, the model and effort, and the chat's approval mode; the original is untouched. Use it to take a conversation in two directions without switching versions back and forth.
 
 ## Copy as API request
 

@@ -114,7 +114,7 @@ Hoshimi 不认识的顶层键和字段在读取时被忽略，并且**在下一�
 | `playground.system_prompt` | 字符串 | `""` | 作为 Playground 每个对话的第一条消息发送；空则不发送 |
 | `playground.title_model` | 字符串 | `""` | 新对话收到第一条回复后，用来为它命名的模型；空则使用对话自己的模型 |
 | `playground.vision_model` | 字符串 | `"auto"` | 为不能读图的模型描述图片：`auto` 选第一个可用且能读图的模型，`off` 直接略去图片，其他值是一个模型 id。空字符串按 `auto` 处理 |
-| `playground.tools` | 字符串列表 | 全部六个 | 新对话默认开启的内置工具：`read`、`apply_patch`、`shell`、`terminal`、`web_search`、`web_fetch`。`[]` 表示一个都不开启。每个对话可以在输入框中单独开关 |
+| `playground.tools` | 字符串列表 | 全部六个 | 所有对话使用的内置工具：`read`、`apply_patch`、`shell`、`terminal`、`web_search`、`web_fetch`。`[]` 表示一个都不开启 |
 | `playground.workspace` | 字符串 | `""` | 工具的工作目录，支持 `~`；空则为 `<数据目录>/workspace` |
 | `playground.approval` | `"review"`、`"ask"`、`"workspace"` 或 `"full"` | `"review"` | 工具何时先询问、询问谁：`review` 由模型判断命令、文件更改以及工作区外的访问，无法判断时询问你；`ask` 在这些操作前询问你；`workspace` 只在读写工作区外的文件时询问；`full` 从不询问。仍接受旧名称 `"auto"`（即 `workspace`）。空字符串按 `review` 处理 |
 | `playground.review_model` | 字符串 | `""` | 在 `review` 模式下判断工具调用的模型；空则使用对话自身的模型 |

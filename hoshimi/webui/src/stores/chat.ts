@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, reactive, ref } from 'vue';
 import { conversationsApi, type ReplyEvent } from '@/api/conversations';
-import { TOOL_GROUPS, type ApprovalDecision, type ApprovalMode, type AttachmentView, type ContextView, type ConversationView, type MessageView, type ReplyUsage, type Step, type TerminalView, type ToolGroup, type ToolStep } from '@/api/types';
+import type { ApprovalDecision, ApprovalMode, AttachmentView, ContextView, ConversationView, MessageView, ReplyUsage, Step, TerminalView, ToolStep } from '@/api/types';
 
 type Summary = Omit<ConversationView, 'messages'>;
 
@@ -40,12 +40,6 @@ export const useChatStore = defineStore('chat', () => {
   const temporary = ref(false);
   const model = ref<string | null>(null);
   const effort = ref('');
-  /**
-   * How this conversation (or the next new one) differs from the tools Settings starts new ones with:
-   * the ones it turned off, and the ones it turned on.
-   */
-  const toolsOff = ref<ToolGroup[]>([]);
-  const toolsOn = ref<ToolGroup[]>([]);
   /** When its tools ask first; empty: as Settings say. */
   const approval = ref<ApprovalMode | ''>('');
   /** Messages sent to the reply under way that it has not read yet. */
@@ -105,8 +99,6 @@ export const useChatStore = defineStore('chat', () => {
     temporary.value = view.temporary;
     if (view.model) model.value = view.model;
     effort.value = view.effort;
-    toolsOff.value = (view.tools_off ?? []) as ToolGroup[];
-    toolsOn.value = (view.tools_on ?? []) as ToolGroup[];
     approval.value = view.approval ?? '';
     context.value = null;
     void refreshTerminals();
@@ -135,10 +127,8 @@ export const useChatStore = defineStore('chat', () => {
     messages.clear();
     leaf.value = '';
     temporary.value = !!options.temporary;
-    // A new chat starts as Settings say: its tools, and when they ask first.
+    // A new chat starts as Settings say when its tools ask first.
     approval.value = '';
-    toolsOff.value = [];
-    toolsOn.value = [];
     terminals.value = [];
     context.value = null;
     void conversationsApi.setSession(null).catch(() => undefined);
@@ -146,7 +136,7 @@ export const useChatStore = defineStore('chat', () => {
 
   async function ensure(): Promise<string> {
     if (conversation.value) return conversation.value.id;
-    const view = await conversationsApi.create(model.value ?? '', effort.value, temporary.value, { on: toolsOn.value, off: toolsOff.value }, approval.value);
+    const view = await conversationsApi.create(model.value ?? '', effort.value, temporary.value, approval.value);
     load(view);
     if (!view.temporary) {
       void conversationsApi.setSession(view.id).catch(() => undefined);
@@ -461,14 +451,6 @@ export const useChatStore = defineStore('chat', () => {
     if (id) void conversationsApi.update(id, { model: model.value ?? '', effort: effort.value }).then(refreshContext, () => undefined);
   }
 
-  /** The tools this conversation uses (``on``), kept with it as how they differ from Settings' ``defaults``. */
-  function chooseTools(on: ToolGroup[], defaults: ToolGroup[]) {
-    toolsOn.value = TOOL_GROUPS.filter((g) => on.includes(g) && !defaults.includes(g));
-    toolsOff.value = defaults.filter((g) => !on.includes(g));
-    const id = conversation.value?.id;
-    if (id) void conversationsApi.update(id, { tools_on: toolsOn.value, tools_off: toolsOff.value }).catch(() => undefined);
-  }
-
   /**
    * A message for the reply under way, read at its next round. False when no reply takes it (none
    * runs, it has no tools, or it has just ended): the caller keeps the text to send on its own.
@@ -542,8 +524,8 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   return {
-    conversation, messages, leaf, temporary, model, effort, toolsOff, toolsOn, approval, queued, terminals, busy, compacting, startedAt, context, live, stage, listChanged,
-    children, path, siblings, leafUnder, load, open, startNew, submit, edit, retry, stop, compact, refreshContext, switchTo, branch, rename, title, choose, chooseTools,
+    conversation, messages, leaf, temporary, model, effort, approval, queued, terminals, busy, compacting, startedAt, context, live, stage, listChanged,
+    children, path, siblings, leafUnder, load, open, startNew, submit, edit, retry, stop, compact, refreshContext, switchTo, branch, rename, title, choose,
     chooseApproval, steer, takeUnread, approve, refreshTerminals, stopTerminal, forget,
   };
 });

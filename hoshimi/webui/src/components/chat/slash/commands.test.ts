@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { COMMANDS, filterOptions, find, match, parseDraft, unavailable, type SlashContext } from '@/components/chat/slash/commands';
 
-const idle: SlashContext = { busy: false, replied: true, kept: true, efforts: true, tools: true };
+const idle: SlashContext = { busy: false, replied: true, kept: true, efforts: true };
 
 describe('slash commands', () => {
   it('reads a draft as a command only when it starts with a slash and names one word', () => {
@@ -28,7 +28,7 @@ describe('slash commands', () => {
     expect(match('co')[1].range).toBeNull();
     expect(match('new').map((m) => m.command.id)).toEqual(['new']);
     // Found in an alias too: effort's "reasoning", status's "context".
-    expect(match('o').map((m) => m.command.id)).toEqual(['model', 'effort', 'compact', 'status', 'fork', 'tools', 'permissions', 'stop']);
+    expect(match('o').map((m) => m.command.id)).toEqual(['model', 'effort', 'compact', 'status', 'fork', 'permissions', 'stop']);
     expect(match('o')[0].range).toEqual([2, 3]);
     // The reader's own words for a command find it too.
     expect(match('模型', (c) => (c.id === 'model' ? ['模型'] : [])).map((m) => m.command.id)).toEqual(['model']);
@@ -42,7 +42,6 @@ describe('slash commands', () => {
     expect(unavailable('compact', { ...idle, replied: false, kept: false })).toBe('playground.slash.nothingYet');
     expect(unavailable('fork', { ...idle, kept: false })).toBe('playground.slash.nothingYet');
     expect(unavailable('effort', { ...idle, efforts: false })).toBe('playground.slash.noEfforts');
-    expect(unavailable('permissions', { ...idle, tools: false })).toBe('playground.slash.noTools');
   });
 
   it('narrows a list by its labels, descriptions and keywords', () => {

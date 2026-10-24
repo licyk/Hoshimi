@@ -159,13 +159,12 @@ def test_an_unknown_tool_and_bad_arguments_go_back_to_the_model(client: Any, pro
     assert [m["content"] for m in provider.seen[-1]["messages"] if m["role"] == "tool"] == ["unsupported call: teleport", "unsupported call: web_fetch"]
 
 
-def test_a_conversation_can_do_without_tools_and_a_model_without_tool_calls_gets_none(client: Any, provider: AgentProvider) -> None:
-    cid = _new(client, tools_off=["read", "apply_patch", "shell", "terminal"])
-    assert client.get(f"/api/v1/playground/conversations/{cid}").json()["tools_off"] == ["read", "apply_patch", "shell", "terminal"]
+def test_with_every_tool_off_in_settings_and_for_a_model_without_tool_calls_none_are_offered(client: Any, services: Services, provider: AgentProvider) -> None:
+    cid = _new(client)
+    services.settings.playground_tools = []
     _send(client, cid, "hi")
     assert "tools" not in provider.seen[-1]
-    assert client.patch(f"/api/v1/playground/conversations/{cid}", json={"tools_off": ["shell"]}).json()["tools_off"] == ["shell"]
-    assert client.patch(f"/api/v1/playground/conversations/{cid}", json={"tools_off": ["nope"]}).status_code == 400
+    services.settings.playground_tools = ["read"]
     plain = _new(client, model="plain")
     events = _send(client, plain, "hi")
     assert {"type": "notice", "notice": {"kind": "tools-unsupported", "model": "plain"}} in events
@@ -181,22 +180,24 @@ def test_a_station_that_refuses_tools_is_asked_again_without_them(client: Any, p
     assert ["tools" in body for body in provider.seen] == [True, False]
 
 
-def test_a_conversation_can_turn_on_a_tool_settings_leave_off(client: Any, provider: AgentProvider) -> None:
+def test_every_conversation_uses_the_tools_settings_turn_on(client: Any, services: Services, provider: AgentProvider) -> None:
+    # A conversation has no tools of its own: what an older client still sends for it is ignored.
     cid = _new(client, tools_on=["web_search"], tools_off=["shell", "terminal"])
     view = client.get(f"/api/v1/playground/conversations/{cid}").json()
-    assert (view["tools_on"], view["tools_off"]) == (["web_search"], ["shell", "terminal"])
+    assert "tools_on" not in view and "tools_off" not in view
     _send(client, cid, "hi")
-    assert [t["function"]["name"] for t in provider.seen[-1]["tools"]] == ["read", "apply_patch", "web_search"]
-    client.patch(f"/api/v1/playground/conversations/{cid}", json={"tools_on": [], "tools_off": ["read", "apply_patch", "shell", "terminal"]})
+    assert [t["function"]["name"] for t in provider.seen[-1]["tools"]] == ["read", "apply_patch", "shell", "exec_command", "write_stdin", "kill_session"]
+    # Settings changed: the same conversation uses the new set from its next reply.
+    services.settings.playground_tools = ["read", "web_search"]
+    assert client.patch(f"/api/v1/playground/conversations/{cid}", json={"tools_off": ["read"]}).status_code == 200
     _send(client, cid, "again")
-    assert "tools" not in provider.seen[-1]
-    assert client.patch(f"/api/v1/playground/conversations/{cid}", json={"tools_on": ["nope"]}).status_code == 400
+    assert [t["function"]["name"] for t in provider.seen[-1]["tools"]] == ["read", "web_search"]
 
 
-def test_calls_go_as_text_once_tools_are_off(client: Any, provider: AgentProvider) -> None:
+def test_calls_go_as_text_once_tools_are_off(client: Any, services: Services, provider: AgentProvider) -> None:
     cid = _new(client)
     reply = _send(client, cid, [["read", {"path": "a.txt"}]])[-1]["message"]
-    client.patch(f"/api/v1/playground/conversations/{cid}", json={"tools_off": ["read", "apply_patch", "shell", "terminal"]})
+    services.settings.playground_tools = []
     _send(client, cid, "and now?", parent_id=reply["id"])
     sent = provider.seen[-1]["messages"]
     assert [m["role"] for m in sent] == ["user", "assistant", "assistant", "user"]

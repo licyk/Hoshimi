@@ -62,7 +62,6 @@ BASE=http://127.0.0.1:10600/api/v1/playground
 | `archived` | 布尔 | 是否已归档 |
 | `temporary` | 布尔 | 临时对话：不会列出、不会命名，网页界面离开它时以及服务下次启动时删除 |
 | `branched_from` | 字符串 | 分支来源的对话，没有则为空 |
-| `tools_on`、`tools_off` | 字符串列表 | 该对话相对 `playground.tools` 开启或关闭的工具开关 |
 | `approval` | `""`、`ask`、`workspace`、`review`、`full` | 该对话自己的审批模式；为空则使用 `playground.approval`。不会返回 `auto`（`workspace` 的旧名称） |
 | `created_at`、`updated_at` | 数字 | Unix 秒；`updated_at` 为最后一条消息的时间，列表按它排序 |
 | `current_leaf` | 字符串 | 仅完整对话中有：当前显示路径的末端 |
@@ -70,14 +69,14 @@ BASE=http://127.0.0.1:10600/api/v1/playground
 
 `GET /conversations` 和 `PATCH` 返回摘要（不含 `current_leaf` 和 `messages`）；`POST /conversations`、`GET /conversations/{id}` 和 `POST .../branch` 返回完整对话。
 
-工具开关名为 `read`、`apply_patch`、`shell`、`terminal`、`web_search` 和 `web_fetch`，其他名称返回 `400`。当 `playground.tools` 或对话的 `tools_on` 包含某个工具、且 `tools_off` 不包含它时，对话使用该工具。
+所有对话都使用 `playground.tools` 开启的工具，对话没有自己的工具设置。（旧客户端发送的 `tools_on` 和 `tools_off` 会被忽略。）
 
 ### 创建
 
 ```bash
 curl -X POST $BASE/conversations \
   -H "Authorization: Bearer $ACCESS_KEY" -H "Content-Type: application/json" \
-  -d '{"model": "your-model", "tools_on": ["read"], "approval": "ask"}'
+  -d '{"model": "your-model", "approval": "ask"}'
 ```
 
 | 字段 | 默认值 | 含义 |
@@ -85,7 +84,6 @@ curl -X POST $BASE/conversations \
 | `model`、`effort` | `""` | 发送时未指定时使用的模型和推理强度 |
 | `title` | `""` | 你自己的标题（`title_state` 为 `user`） |
 | `temporary` | `false` | 是否为临时对话 |
-| `tools_on`、`tools_off` | `[]` | 相对设置开启或关闭的工具 |
 | `approval` | `""` | `ask`、`workspace`、`review`、`full`，为空则使用设置中的模式；`auto` 按 `workspace` 处理 |
 
 ### 修改
@@ -98,7 +96,6 @@ curl -X POST $BASE/conversations \
 | `model`、`effort` | 之后发送时默认使用的值 |
 | `archived` | 归档（`true`）或恢复（`false`）。发送消息也会恢复 |
 | `current_leaf` | 切换显示的版本：必须是该对话中的消息 ID（否则返回 `400`） |
-| `tools_on`、`tools_off` | 该对话的工具选择 |
 | `approval` | 该对话的审批模式（`auto` 按 `workspace` 处理）；从下一次工具调用起生效，正在进行的回复也一样 |
 
 修改不会改变 `updated_at`：只有新消息会让对话在列表中上移。
@@ -346,7 +343,7 @@ curl -X POST "$BASE/attachments?name=notes.md" \
 ## 标题、分支、请求与会话
 
 - `POST /conversations/{id}/title` 让模型根据第一轮问答为对话命名，并等待模型完成。使用 `playground.title_model`，未设置则用对话自身的模型。临时对话、已由模型命名的对话和你自己设置了标题的对话保持不变；模型调用失败时标题也不变。返回对话摘要。
-- `POST /conversations/{id}/branch`，请求体 `{"message_id": "..."}`，新建一个对话，包含截至该消息的路径（使用新的 ID），沿用标题、模型、推理强度、工具和审批模式，并设置 `branched_from`。返回 `201` 和完整对话。
+- `POST /conversations/{id}/branch`，请求体 `{"message_id": "..."}`，新建一个对话，包含截至该消息的路径（使用新的 ID），沿用标题、模型、推理强度和审批模式，并设置 `branched_from`。返回 `201` 和完整对话。
 - `GET /conversations/{id}/messages/{message_id}/request` 返回某条回复背后的 Chat Completions 请求体（对问题则是将用来回答它的请求）：`model`、`messages`、`stream: true`，设置了推理强度时有 `reasoning_effort`，开启了工具时有 `tools` 和 `tool_choice`。使用了工具的回复返回的是第一轮的请求。这就是网页界面的 **复制为 API 请求**。
 - `GET /session` 返回 `{"conversation_id": "..."}`，即上次打开的对话（没有，或该对话是临时对话或已删除时为 `null`）。`PUT /session` 用同样的请求体设置它（新对话时为 `null`）；ID 不存在时返回 `400`。网页界面启动时会重新打开它。
 

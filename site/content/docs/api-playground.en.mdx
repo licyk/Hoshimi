@@ -62,7 +62,6 @@ A conversation is a tree of messages. Each message names the one it follows (`pa
 | `archived` | boolean | In the archive |
 | `temporary` | boolean | Never listed, never titled, deleted when the Web UI leaves it and on the next start |
 | `branched_from` | string | The conversation it was branched from, or empty |
-| `tools_on`, `tools_off` | string list | Tool switches this conversation turns on or off against `playground.tools` |
 | `approval` | `""`, `ask`, `workspace`, `review`, `full` | Its own approval mode; empty follows `playground.approval`. Never `auto` (the old name of `workspace`) |
 | `created_at`, `updated_at` | number | Unix seconds; `updated_at` is the last message, which orders the list |
 | `current_leaf` | string | Only in a full conversation: the end of the path on screen |
@@ -70,14 +69,14 @@ A conversation is a tree of messages. Each message names the one it follows (`pa
 
 `GET /conversations` and `PATCH` return the summary (no `current_leaf`, no `messages`); `POST /conversations`, `GET /conversations/{id}` and `POST .../branch` return the full conversation.
 
-Tool switch names are `read`, `apply_patch`, `shell`, `terminal`, `web_search` and `web_fetch`; any other name is a `400`. A conversation uses a tool when `playground.tools` or its `tools_on` has it and its `tools_off` does not.
+Every conversation uses the tools `playground.tools` turns on; a conversation has no tools of its own. (`tools_on` and `tools_off`, which older clients send, are ignored.)
 
 ### Create
 
 ```bash
 curl -X POST $BASE/conversations \
   -H "Authorization: Bearer $ACCESS_KEY" -H "Content-Type: application/json" \
-  -d '{"model": "your-model", "tools_on": ["read"], "approval": "ask"}'
+  -d '{"model": "your-model", "approval": "ask"}'
 ```
 
 | Field | Default | Meaning |
@@ -85,7 +84,6 @@ curl -X POST $BASE/conversations \
 | `model`, `effort` | `""` | The model and reasoning effort for sends that name none |
 | `title` | `""` | A title of your own (`title_state` `user`) |
 | `temporary` | `false` | A temporary conversation |
-| `tools_on`, `tools_off` | `[]` | Tools to turn on or off against Settings |
 | `approval` | `""` | `ask`, `workspace`, `review`, `full`, or empty for Settings' mode; `auto` is taken as `workspace` |
 
 ### Update
@@ -98,7 +96,6 @@ curl -X POST $BASE/conversations \
 | `model`, `effort` | What later sends use by default |
 | `archived` | Archive (`true`) or restore (`false`). Sending a message also restores |
 | `current_leaf` | Show another version: a message id of this conversation (`400` otherwise) |
-| `tools_on`, `tools_off` | The conversation's tool choices |
 | `approval` | Its approval mode (`auto` is taken as `workspace`); applies from the next tool call, even in a reply under way |
 
 An update does not change `updated_at`: only a new message moves a conversation up the list.
@@ -346,7 +343,7 @@ Replies compact the conversation by themselves (as they begin, between rounds of
 ## Titles, branches, requests and the session
 
 - `POST /conversations/{id}/title` has a model name the conversation after its first exchange, and waits for it. The model is `playground.title_model`, else the conversation's own. A temporary conversation, one titled by a model already, and one with your own title are left as they are; if the model fails, the title stays. Answers the summary.
-- `POST /conversations/{id}/branch` with `{"message_id": "..."}` creates a conversation holding the path up to that message, under new ids, with the same title, model, effort, tools and approval mode, and `branched_from` set. Answers `201` with the full conversation.
+- `POST /conversations/{id}/branch` with `{"message_id": "..."}` creates a conversation holding the path up to that message, under new ids, with the same title, model, effort and approval mode, and `branched_from` set. Answers `201` with the full conversation.
 - `GET /conversations/{id}/messages/{message_id}/request` returns the Chat Completions body behind a reply (or the one that would answer a question): `model`, `messages`, `stream: true`, `reasoning_effort` when set, and `tools` with `tool_choice` when tools are on. For a reply that used tools it is the first round. This is the Web UI's **Copy as API request**.
 - `GET /session` returns `{"conversation_id": "..."}`, the conversation open last (`null` when none, or when it was temporary or deleted). `PUT /session` with the same body sets it (`null` for a new chat); an unknown id is a `400`. The Web UI reopens it on start.
 

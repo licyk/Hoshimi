@@ -12,8 +12,8 @@ sent is put together here, from the conversation's path:
   left out and the reply says so. A model said to read images whose station
   refuses them is asked once more, with descriptions.
 
-With tools turned on (``playground.tools``, less the ones a conversation
-turned off), a reply is an agent loop: the model is offered the built-in
+With tools turned on (``playground.tools``, for every conversation alike),
+a reply is an agent loop: the model is offered the built-in
 tools (:mod:`hoshimi.core.agent`); each round it streams, the tools it called
 run one after another (after the ones the approval mode asks about are
 approved, by the user or by the reviewer model: see
@@ -543,14 +543,14 @@ class PlaygroundRunner:
         return prepared
 
     # -- tools -------------------------------------------------------------- #
-    def groups(self, conversation: Conversation) -> list[str]:
-        """The tools a conversation uses: those Settings turns on for new ones, as the conversation turned them on or off."""
-        defaults = self.services.settings.playground_tools
-        return [g for g in GROUPS if (g in defaults or g in conversation.tools_on) and g not in conversation.tools_off]
+    def groups(self) -> list[str]:
+        """The tools every conversation uses: those Settings turns on (``playground.tools``)."""
+        on = self.services.settings.playground_tools
+        return [g for g in GROUPS if g in on]
 
     def tools(self, conversation: Conversation, model: str) -> list[Tool]:
         """The tools offered to ``model`` in ``conversation``; none for a model without tool calls."""
-        groups = self.groups(conversation)
+        groups = self.groups()
         spec = self.services.registry.spec(model)
         if not groups or (spec is not None and spec.tools is False):
             return []
@@ -639,7 +639,7 @@ class PlaygroundRunner:
             try:
                 tools = self.tools(conversation, model)
                 spec = self.services.registry.spec(model)
-                if not tools and spec is not None and spec.tools is False and self.groups(conversation):
+                if not tools and spec is not None and spec.tools is False and self.groups():
                     yield from notice({"kind": "tools-unsupported", "model": model})
                 describe = not self.sees_images(model)
                 for attempt in range(3):
@@ -1138,7 +1138,7 @@ class PlaygroundRunner:
             "last_compaction": {key: records[-1].get(key) for key in ("tokens_before", "tokens_after", "at", "trigger")} if records else None,
             "last_duration_ms": durations[-1] if durations else 0, "total_duration_ms": sum(durations),
             "running_since": self.services.agent.busy.started(conversation_id),
-            "tools": self.groups(conversation), "approval": self.approval_mode(conversation_id),
+            "tools": self.groups(), "approval": self.approval_mode(conversation_id),
         }
 
     # -- titles -------------------------------------------------------------- #

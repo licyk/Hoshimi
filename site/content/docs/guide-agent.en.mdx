@@ -17,18 +17,11 @@ Commands and file edits run on the machine that runs Hoshimi, with the permissio
 <Steps>
 <Step>
 
-### Choose the tools new chats start with
+### Choose the tools
 
-Open **Settings › Tools**. Under **Tools for new chats**, all six are on by default; switch off the ones you don't want (see [Settings](/docs/guide-settings)). This is the starting set for new chats; it does not force tools on any chat.
+Open **Settings › Tools**. Under **Tools**, all six are on by default; switch off the ones you don't want (see [Settings](/docs/guide-settings)). These are the tools of every chat: a chat has no switches of its own, and a change applies to every chat from its next reply.
 
 If your config file never set `playground.tools` or `playground.approval`, it now gets all tools and **Automatic review**. A config that sets `"tools": []` keeps none.
-
-</Step>
-<Step>
-
-### Turn tools on or off per chat
-
-In the composer, the **Tools** menu (the wrench) lists all six tools, each with a short description and an on/off switch; the menu stays open while you switch them. Its button shows how many are on, or **Off**. A chat can turn on a tool Settings leaves off, or turn off one Settings turns on. The menu is locked while a reply is coming in.
 
 </Step>
 <Step>
@@ -40,11 +33,9 @@ Tools are offered only to models that make tool calls. A model whose catalogue e
 </Step>
 </Steps>
 
-A chat keeps only how it differs from Settings (the tools it turned on, and the ones it turned off). A new chat starts again from Settings.
-
 ## The six tools
 
-| Switch (in Settings and the Tools menu) | Tool names the model sees | What it does | Asks first (never in Full access) |
+| Switch (in Settings) | Tool names the model sees | What it does | Asks first (never in Full access) |
 | --- | --- | --- | --- |
 | **Read files** | `read` | Read a text file, or list a folder | Only for paths outside the workspace |
 | **Edit files** | `apply_patch` | Create, change, move and delete files with a patch | Always in **Automatic review** and **Ask first**; in **Ask outside the workspace**, only for files outside it |
@@ -142,7 +133,7 @@ Searching and reading web pages never ask, and neither do reads inside the works
 
 ### The shield menu in the composer
 
-When a chat has at least one tool on, a shield appears in the composer next to **Tools**. It shows the chat's mode (**Auto review**, a shield with a check; **Ask**, a shield with a person; **Workspace**, a half shield; or **Full access**, a shield crossed out in red) and opens **When tools ask first** to change it for this chat alone. It works even while a reply is running: the new mode applies from the next tool call. A new chat starts as Settings say again. On a phone the shield shows only its icon.
+The composer always shows a shield, whether tools are on or not. It shows the chat's mode (**Auto review**, a shield with a check; **Ask**, a shield with a person; **Workspace**, a half shield; or **Full access**, a shield crossed out in red) and opens **When tools ask first** to change it for this chat alone. It works even while a reply is running: the new mode applies from the next tool call. A new chat starts as Settings say again. On a phone the shield shows only its icon.
 
 ## Automatic review
 
@@ -251,7 +242,7 @@ There is no sandbox. Tools run as the user running Hoshimi, on that machine, wit
 
 | Setting (**Settings › Tools**) | Key | Default |
 | --- | --- | --- |
-| **Tools for new chats** | `playground.tools`: any of `read`, `apply_patch`, `shell`, `terminal`, `web_search`, `web_fetch` | All six (`[]` keeps none) |
+| **Tools** | `playground.tools`: any of `read`, `apply_patch`, `shell`, `terminal`, `web_search`, `web_fetch` | All six (`[]` keeps none) |
 | **When tools ask first** | `playground.approval`: `review`, `ask`, `workspace` (`auto` is its old name) or `full` | `review` |
 | **Review model** | `playground.review_model` | empty: the chat's own model |
 | **Shell** | `playground.shell`: `auto`, `bash`, `zsh`, `sh`, `powershell` or `cmd` | `auto` |

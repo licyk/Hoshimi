@@ -238,7 +238,8 @@ MIGRATIONS: list[str] = [
     ALTER TABLE chat_messages ADD COLUMN reasoning    TEXT    NOT NULL DEFAULT '';
     ALTER TABLE chat_messages ADD COLUMN reasoning_ms INTEGER NOT NULL DEFAULT 0;
     """,
-    # 5: a reply's steps when it used tools (what it reasoned, said and called, in order), and the tools a conversation turned off.
+    # 5: a reply's steps when it used tools (what it reasoned, said and called, in order), and the tools a conversation turned off
+    # (tools_off and tools_on, 7, stay, unread: every conversation uses the tools Settings turns on).
     """
     ALTER TABLE chat_messages ADD COLUMN steps     TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE conversations ADD COLUMN tools_off TEXT NOT NULL DEFAULT '[]';

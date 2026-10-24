@@ -1844,10 +1844,6 @@ export interface components {
              * @default
              */
             title: string;
-            /** Tools Off */
-            tools_off?: string[];
-            /** Tools On */
-            tools_on?: string[];
         };
         /** ConversationList */
         ConversationList: {
@@ -1871,10 +1867,6 @@ export interface components {
             model?: string | null;
             /** Title */
             title?: string | null;
-            /** Tools Off */
-            tools_off?: string[] | null;
-            /** Tools On */
-            tools_on?: string[] | null;
         };
         /** ConversationSummary */
         ConversationSummary: {
@@ -1905,10 +1897,6 @@ export interface components {
              * @enum {string}
              */
             title_state: "" | "provisional" | "auto" | "user";
-            /** Tools Off */
-            tools_off: string[];
-            /** Tools On */
-            tools_on: string[];
             /** Updated At */
             updated_at: number;
         };
@@ -1945,10 +1933,6 @@ export interface components {
              * @enum {string}
              */
             title_state: "" | "provisional" | "auto" | "user";
-            /** Tools Off */
-            tools_off: string[];
-            /** Tools On */
-            tools_on: string[];
             /** Updated At */
             updated_at: number;
         };

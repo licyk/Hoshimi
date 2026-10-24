@@ -23,7 +23,6 @@ from hoshimi.api.playground import PlaygroundRunner, event, sse
 from hoshimi.api.routers.chat import chat_completion
 from hoshimi.api.routers.models import ModelList, list_models
 from hoshimi.core.agent.approval import approval_mode
-from hoshimi.core.agent.tools import GROUPS
 from hoshimi.core.context import Services
 from hoshimi.core.conversations import AttachmentInfo, ChatMessage, Conversation
 from hoshimi.core.errors import ConflictError, NotFoundError, ValidationError
@@ -119,10 +118,6 @@ class ConversationSummary(Record):
     temporary: bool
     branched_from: str
     """The conversation this one was branched from, if any."""
-    tools_off: list[str] = Field(default_factory=list)
-    """The tools (by their Settings switch) this conversation does without, though Settings turns them on for new ones."""
-    tools_on: list[str] = Field(default_factory=list)
-    """The tools this conversation uses, though Settings leaves them off for new ones."""
     approval: Literal["", "ask", "workspace", "review", "full"] = ""
     """When its tools ask first, and whom, as ``playground.approval``; empty: as Settings say."""
     created_at: float
@@ -146,8 +141,6 @@ class ConversationCreate(Record):
     effort: str = ""
     title: str = ""
     temporary: bool = False
-    tools_off: list[str] = Field(default_factory=list)
-    tools_on: list[str] = Field(default_factory=list)
     approval: Literal["", "ask", "workspace", "review", "full", "auto"] = ""
     """As ``playground.approval``; ``auto`` is the old name of ``workspace``."""
 
@@ -160,8 +153,6 @@ class ConversationPatch(Record):
     effort: str | None = None
     archived: bool | None = None
     current_leaf: str | None = None
-    tools_off: list[str] | None = None
-    tools_on: list[str] | None = None
     approval: Literal["", "ask", "workspace", "review", "full", "auto"] | None = None
     """When its tools ask first, and whom (from the next call on, even in a reply under way); empty: as Settings say. ``auto`` is the old name of ``workspace``."""
 
@@ -298,7 +289,7 @@ def _message(m: ChatMessage) -> MessageView:
 def _summary(c: Conversation) -> ConversationSummary:
     return ConversationSummary(
         id=c.id, title=c.title, title_state=c.title_state, model=c.model, effort=c.effort, archived=c.archived, temporary=c.temporary,
-        branched_from=c.branched_from, tools_off=c.tools_off, tools_on=c.tools_on, approval=approval_mode(c.approval),
+        branched_from=c.branched_from, approval=approval_mode(c.approval),
         created_at=c.created_at, updated_at=c.updated_at,
     )
 
@@ -312,13 +303,6 @@ def _conversation(services: Services, conversation_id: str) -> Conversation:
     if conversation is None:
         raise NotFoundError(f"No conversation '{conversation_id}'.")
     return conversation
-
-
-def _groups(names: list[str]) -> list[str]:
-    unknown = [n for n in names if n not in GROUPS]
-    if unknown:
-        raise ValidationError(f"No tool '{unknown[0]}' (known: {', '.join(GROUPS)}).")
-    return list(dict.fromkeys(names))
 
 
 def _model(services: Services, *candidates: str) -> str:
@@ -410,8 +394,7 @@ def list_conversations(services: ServicesDep, archived: Annotated[bool, Query(de
 
 @router.post("/conversations", operation_id="create_conversation", status_code=201)
 def create_conversation(services: ServicesDep, body: ConversationCreate) -> ConversationView:
-    return _view(services.conversations.create(model=body.model, effort=body.effort, title=body.title, temporary=body.temporary, tools_off=_groups(body.tools_off), tools_on=_groups(body.tools_on),
-                                                     approval=body.approval))
+    return _view(services.conversations.create(model=body.model, effort=body.effort, title=body.title, temporary=body.temporary, approval=body.approval))
 
 
 @router.get("/conversations/{conversation_id}", operation_id="get_conversation", responses=ERROR_RESPONSES)
@@ -424,9 +407,7 @@ def update_conversation(services: ServicesDep, conversation_id: str, body: Conve
     _conversation(services, conversation_id)
     try:
         conversation = services.conversations.update(
-            conversation_id, title=body.title, model=body.model, effort=body.effort, archived=body.archived, current_leaf=body.current_leaf,
-            tools_off=None if body.tools_off is None else _groups(body.tools_off), approval=body.approval,
-            tools_on=None if body.tools_on is None else _groups(body.tools_on),
+            conversation_id, title=body.title, model=body.model, effort=body.effort, archived=body.archived, current_leaf=body.current_leaf, approval=body.approval,
         )
     except ValueError as exc:
         raise ValidationError(str(exc)) from None

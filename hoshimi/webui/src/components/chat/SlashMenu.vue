@@ -33,9 +33,8 @@ const props = defineProps<{
   context: SlashContext;
   models: ComposerOption[];
   efforts: ComposerOption[];
-  tools: ComposerOption[];
   permissions: ComposerOption[];
-  current: { model: string | null; effort: string; tools: string[]; permission: string };
+  current: { model: string | null; effort: string; permission: string };
   status: ContextView | null;
   statusLabels: { effort: string; tools: string[]; approval: string };
   conversationId: string | null;
@@ -71,15 +70,14 @@ const matches = computed(() => {
 const query = computed(() => parsed.value?.rest ?? '');
 const options = computed<ComposerOption[]>(() => {
   if (blocked.value) return [];
-  const list = { models: props.models, efforts: props.efforts, tools: props.tools, permissions: props.permissions }[view.value as 'models'] ?? [];
+  const list = { models: props.models, efforts: props.efforts, permissions: props.permissions }[view.value as 'models'] ?? [];
   return filterOptions(list, query.value);
 });
 const count = computed(() => (view.value === 'commands' ? matches.value.length : view.value === 'status' ? 0 : options.value.length));
 const selectedValue = (o: ComposerOption) =>
   view.value === 'models' ? o.value === props.current.model
   : view.value === 'efforts' ? o.value === props.current.effort
-  : view.value === 'permissions' ? o.value === props.current.permission
-  : props.current.tools.includes(o.value);
+  : o.value === props.current.permission;
 
 // Closed by Escape (or a press elsewhere) until what the draft names changes.
 const token = computed(() => (parsed.value ? `${view.value}|${parsed.value.name.toLowerCase()}|${parsed.value.spaced}` : ''));
@@ -165,7 +163,7 @@ async function follow() {
 watch([active, count, view, open], () => void follow());
 
 // A list opening from a command slides in from the side; the menu eases to its new height.
-const direction = useAxisDirection(computed(() => view.value ?? 'commands'), () => ['commands', 'models', 'efforts', 'tools', 'permissions', 'status', 'terminals', 'stop']);
+const direction = useAxisDirection(computed(() => view.value ?? 'commands'), () => ['commands', 'models', 'efforts', 'permissions', 'status', 'terminals', 'stop']);
 watch(
   view,
   (next, previous) => {
@@ -255,7 +253,6 @@ const title = computed(() => {
   switch (view.value) {
     case 'models': return t('playground.model');
     case 'efforts': return t('playground.effort');
-    case 'tools': return t('playground.tools');
     case 'permissions': return t('settings.approval');
     case 'status': return t('playground.slash.commands.status.label');
     case 'terminals': return t('playground.slash.commands.ps.label');
@@ -307,7 +304,7 @@ defineExpose({ onKey, reopen, toggle, combobox, open });
               <p v-else class="type-body-medium muted empty">{{ t('playground.slash.statusLoading') }}</p>
             </div>
             <div v-else :key="view ?? 'commands'" class="pane">
-              <div :id="`${uid}-list`" ref="list" class="list app-scroll app-scroll-auto" role="listbox" :aria-label="title" :aria-multiselectable="view === 'tools' || undefined">
+              <div :id="`${uid}-list`" ref="list" class="list app-scroll app-scroll-auto" role="listbox" :aria-label="title">
                 <span v-if="indicator" class="indicator" aria-hidden="true" :style="{ transform: `translateY(${indicator.top}px)`, height: `${indicator.height}px` }" />
                 <TransitionGroup :name="TRANSITIONS.list" v-bind="keepLeavingInPlace" appear>
                   <template v-if="view === 'commands'">
@@ -359,8 +356,7 @@ defineExpose({ onKey, reopen, toggle, combobox, open });
                         <span class="type-body-medium name-text">{{ o.label }}</span>
                         <span v-if="o.description" class="type-body-small muted desc">{{ o.description }}</span>
                       </span>
-                      <span v-if="view === 'tools'" class="switch" :class="{ on: selectedValue(o) }" aria-hidden="true"><span class="handle" /></span>
-                      <AppIcon v-else-if="selectedValue(o)" :icon="icons.Check" :size="18" class="check" />
+                      <AppIcon v-if="selectedValue(o)" :icon="icons.Check" :size="18" class="check" />
                     </button>
                   </template>
                 </TransitionGroup>
@@ -418,17 +414,6 @@ defineExpose({ onKey, reopen, toggle, combobox, open });
 /* Chosen when it cannot be: it shakes its head. */
 .row.shake { animation: slash-shake 0.4s var(--md-sys-motion-easing-standard); }
 @keyframes slash-shake { 20%, 60% { transform: translateX(-4px); } 40%, 80% { transform: translateX(4px); } }
-.switch {
-  position: relative; flex: none; width: 40px; height: 24px; border-radius: 12px;
-  border: 2px solid var(--md-sys-color-outline); background: var(--md-sys-color-surface-container-highest);
-  transition: background var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard), border-color var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
-}
-.handle {
-  position: absolute; top: 50%; left: 4px; width: 12px; height: 12px; border-radius: 50%; background: var(--md-sys-color-outline); transform: translateY(-50%);
-  transition: all var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-emphasized);
-}
-.switch.on { border-color: var(--md-sys-color-primary); background: var(--md-sys-color-primary); }
-.switch.on .handle { left: 18px; width: 16px; height: 16px; background: var(--md-sys-color-on-primary); }
 .empty { margin: 0; padding: var(--app-space-4) var(--app-space-2); text-align: center; }
 @media (max-width: 599px) {
   .keys { display: none; }
@@ -436,7 +421,7 @@ defineExpose({ onKey, reopen, toggle, combobox, open });
   .row:not(.option) .desc { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .indicator, .icon, .switch, .handle { transition: none; }
+  .indicator, .icon { transition: none; }
   .row.shake { animation: none; }
 }
 </style>

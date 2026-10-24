@@ -63,10 +63,10 @@ describe('settings', () => {
     expect(state.update.mock.calls[0][0]).toEqual({ playground: { system_prompt: 'Answer briefly.' } });
   });
 
-  it('turns tools on one by one, in their order, and sets when they ask first', async () => {
+  it('turns tools on one by one, in their order, for every chat, and sets when they ask first', async () => {
     route.query = { tab: 'tools' };
     const w = mount(SettingsView, { global: { plugins: [createPinia()] } });
-    expect(w.findAll('h2').map((h) => h.text())).toEqual(['Tools for new chats', 'How tools run']);
+    expect(w.findAll('h2').map((h) => h.text())).toEqual(['Tools', 'How tools run']);
     const toggle = (label: string) => w.findAll('.switch').find((s) => s.text() === label)!.trigger('click');
     await toggle('Run commands');
     await toggle('Read files');

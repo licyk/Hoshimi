@@ -114,7 +114,7 @@ No other keys are allowed in `network`. Each channel can override this policy in
 | `playground.system_prompt` | string | `""` | Sent first in every Playground conversation; empty sends none |
 | `playground.title_model` | string | `""` | The model that names a new conversation after its first reply; empty uses the conversation's own model |
 | `playground.vision_model` | string | `"auto"` | Describes images for models that cannot read them: `auto` picks the first available model that reads images, `off` leaves images out, anything else is a model id. An empty string counts as `auto` |
-| `playground.tools` | list of strings | all six | The built-in tools a new conversation starts with: `read`, `apply_patch`, `shell`, `terminal`, `web_search`, `web_fetch`. `[]` keeps none. Each conversation turns tools on or off from its composer |
+| `playground.tools` | list of strings | all six | The built-in tools every conversation uses: `read`, `apply_patch`, `shell`, `terminal`, `web_search`, `web_fetch`. `[]` keeps none |
 | `playground.workspace` | string | `""` | Where the tools work; `~` is expanded. Empty means `<data directory>/workspace` |
 | `playground.approval` | `"review"`, `"ask"`, `"workspace"` or `"full"` | `"review"` | When tools ask first, and whom: `review` has a model judge commands, file changes and anything outside the workspace, and asks you when it cannot decide; `ask` asks you before those; `workspace` asks only before reading or changing files outside the workspace; `full` never asks. `"auto"`, the old name of `workspace`, is still accepted. An empty string counts as `review` |
 | `playground.review_model` | string | `""` | The model that judges tool calls under `review`; empty uses the conversation's own model |

@@ -21,7 +21,7 @@ vi.mock('@/ui', async (importOriginal) => ({ ...(await importOriginal<typeof imp
 
 // -- a server in memory: conversations as trees, replies streamed by the test -----------------
 interface Msg { id: string; parent_id: string | null; role: 'user' | 'assistant' | 'checkpoint'; content: string; model: string; effort: string; status: string; error: string; notices: { kind: string; name: string; model: string }[]; created_at: number; attachments: unknown[]; reasoning?: string; reasoning_ms?: number; steps?: unknown[]; duration_ms?: number; waited_ms?: number; finished_at?: number }
-interface Conv { id: string; title: string; title_state: string; model: string; effort: string; archived: boolean; temporary: boolean; branched_from: string; created_at: number; updated_at: number; current_leaf: string; messages: Msg[]; tools_off?: string[]; tools_on?: string[]; approval?: string }
+interface Conv { id: string; title: string; title_state: string; model: string; effort: string; archived: boolean; temporary: boolean; branched_from: string; created_at: number; updated_at: number; current_leaf: string; messages: Msg[]; approval?: string }
 let server: { conversations: Map<string, Conv>; session: string | null; calls: { method: string; path: string; body: unknown }[]; ids: number; clock: number; terminals?: unknown[]; steerOpen?: boolean; context?: object };
 /** The reply streams the test has not yet finished: it writes their events and closes them. */
 let streams: { send: (event: object) => void; close: () => void; signal: AbortSignal }[];
@@ -66,10 +66,10 @@ async function handle(input: RequestInfo | URL, init?: RequestInit): Promise<Res
     return json({ id: `a${++server.ids}`, kind: 'file', name: url.searchParams.get('name'), mime: url.searchParams.get('type') || 'text/plain', size: text.length, width: null, height: null }, 201);
   }
   if (kind === 'conversations' && !id && request.method === 'POST') {
-    const b = body as { model: string; effort: string; temporary: boolean; tools_off?: string[]; tools_on?: string[]; approval?: string };
+    const b = body as { model: string; effort: string; temporary: boolean; approval?: string };
     const conv: Conv = {
       id: `c${++server.ids}`, title: '', title_state: '', model: b.model, effort: b.effort, archived: false, temporary: b.temporary, branched_from: '', created_at: 1, updated_at: 1,
-      current_leaf: '', messages: [], tools_off: b.tools_off ?? [], tools_on: b.tools_on ?? [], approval: b.approval ?? '',
+      current_leaf: '', messages: [], approval: b.approval ?? '',
     };
     server.conversations.set(conv.id, conv);
     return json(conv, 201);
@@ -172,7 +172,7 @@ describe('Playground chat', () => {
     const { wrapper } = await openPlayground();
     expect(wrapper.text()).toContain('What can I help with?');
     await ask(wrapper, 'What is **this**?');
-    expect(calls('POST', /^\/conversations$/)[0].body).toEqual({ model: 'test/model', effort: '', temporary: false, title: '', tools_on: [], tools_off: [], approval: '' });
+    expect(calls('POST', /^\/conversations$/)[0].body).toEqual({ model: 'test/model', effort: '', temporary: false, title: '', approval: '' });
     expect(server.session).toBe('c1');
     expect(wrapper.find('.assistant-message').text()).toContain('Answering…');
     await answer('It is a **gateway**.');
@@ -339,8 +339,6 @@ describe('Playground chat', () => {
   it('shows a reply that used tools step by step, asks before a command, and lists what keeps running', async () => {
     state.tools = ['read', 'shell', 'terminal'];
     const { wrapper } = await openPlayground();
-    // The tools Settings turned on, all on for a new chat; one turned off here goes with the chat.
-    expect(wrapper.find('.tools-menu').text()).toContain('3');
     await ask(wrapper, 'look around');
     const stream = streams[0];
     stream.send({ type: 'delta', text: 'Let me look.' });
@@ -424,48 +422,11 @@ describe('Playground chat', () => {
     wrapper.unmount();
   });
 
-  it('lists every tool in the composer, each with a switch for this chat', async () => {
-    state.tools = ['read', 'shell'];
+  it('keeps the approval chip in the composer whether tools are on or not, and has no switches for tools of its own', async () => {
     const { wrapper } = await openPlayground();
-    expect(wrapper.find('.tools-menu').text()).toContain('2');
-    await wrapper.find('.tools-menu button').trigger('click');
-    await flushPromises();
-    const switches = () => [...document.body.querySelectorAll<HTMLElement>('.menu [role="switch"]')];
-    expect(switches().map((s) => [s.querySelector('.name')!.textContent, s.getAttribute('aria-checked')])).toEqual([
-      ['Read files', 'true'], ['Edit files', 'false'], ['Run commands', 'true'], ['Background commands', 'false'], ['Search the web', 'false'], ['Read web pages', 'false'],
-    ]);
-    // On a new chat, one Settings leaves off is turned on, one it turns on is turned off.
-    switches()[4].click();
-    switches()[2].click();
-    await flushPromises();
-    expect(switches().map((s) => s.getAttribute('aria-checked'))).toEqual(['true', 'false', 'false', 'false', 'true', 'false']);
-    await ask(wrapper, 'look it up');
-    await answer('Found.');
-    expect(calls('POST', /^\/conversations$/)[0].body).toMatchObject({ tools_on: ['web_search'], tools_off: ['shell'] });
-    // In a chat that exists, the change is kept with it.
-    await wrapper.find('.tools-menu button').trigger('click');
-    await flushPromises();
-    switches()[1].click();
-    await flushPromises();
-    expect(calls('PATCH', /^\/conversations\/c\d+$/).map((c) => c.body)).toContainEqual({ tools_on: ['apply_patch', 'web_search'], tools_off: ['shell'] });
-    state.tools = [];
-    wrapper.unmount();
-  });
-
-  it('brings the approval chip in when a tool is turned on and takes it away when the last goes, in a box of its own', async () => {
-    const { wrapper } = await openPlayground();
-    const approvalChip = () => wrapper.find('.chip-slot > .approval-menu');
-    expect(approvalChip().exists()).toBe(false);
-    await wrapper.find('.tools-menu button').trigger('click');
-    await flushPromises();
-    const switches = () => [...document.body.querySelectorAll<HTMLElement>('.menu [role="switch"]')];
-    switches()[0].click();
-    await flushPromises();
-    expect(approvalChip().exists()).toBe(true);
-    expect(wrapper.find('.chip-slot > .tools-menu').text()).toContain('1');
-    switches()[0].click();
-    await flushPromises();
-    expect(approvalChip().exists()).toBe(false);
+    // Settings turns every tool off: the chip still says (and sets) when they would ask.
+    expect(wrapper.find('.chip-slot > .approval-menu').text()).toBe('Auto review');
+    expect(wrapper.find('.tools-menu').exists()).toBe(false);
     wrapper.unmount();
   });
 
@@ -694,7 +655,7 @@ describe('Playground commands, compaction and run time', () => {
     const { wrapper } = await openPlayground();
     await type(wrapper, '/');
     expect(menu()).not.toBeNull();
-    expect(names()).toEqual(['/model', '/effort', '/compact', '/status', '/new', '/fork', '/tools', '/permissions', '/ps', '/stop']);
+    expect(names()).toEqual(['/model', '/effort', '/compact', '/status', '/new', '/fork', '/permissions', '/ps', '/stop']);
     expect(wrapper.find('.composer textarea').attributes('aria-expanded')).toBe('true');
     // Commands with nothing to work on yet say why.
     expect(rows()[2].getAttribute('aria-disabled')).toBe('true');

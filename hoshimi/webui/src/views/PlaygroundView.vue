@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { BASE_URL } from '@/api/baseUrl';
 import { conversationsApi, rememberAttachment, useRefreshConversations } from '@/api/conversations';
 import { useModelSpecs, useModels, useSettings } from '@/api/queries/app';
-import { APPROVAL_MODES, TOOL_GROUPS, type ApprovalDecision, type ApprovalMode, type AttachmentView, type CompactionStep, type ContextView, type ConversationSummary, type MessageView, type ToolGroup, type ToolStep } from '@/api/types';
+import { APPROVAL_MODES, TOOL_GROUPS, type ApprovalDecision, type ApprovalMode, type AttachmentView, type CompactionStep, type ContextView, type ConversationSummary, type MessageView, type ToolStep } from '@/api/types';
 import CatalogStatus from '@/components/CatalogStatus.vue';
 import AssistantMessage from '@/components/chat/AssistantMessage.vue';
 import AttachmentPreview from '@/components/chat/AttachmentPreview.vue';
@@ -80,12 +80,9 @@ const effortOptions = computed(() => [{ value: '', label: t('playground.effortAu
 const effortText = computed(() => (chat.effort ? effortOptions.value.find((o) => o.value === chat.effort)?.label : t('playground.effortAutoShort')));
 
 // -- tools ---------------------------------------------------------------------
-// Every tool, each switched on or off for this chat; a new chat starts with the ones Settings turns on.
+// The tools every chat uses are the ones Settings turns on; only when they ask first is the chat's to choose.
 const settings = useSettings();
-const defaultTools = computed(() => TOOL_GROUPS.filter((g) => settings.data.value?.playground.tools.includes(g)));
-const toolOptions = computed(() => TOOL_GROUPS.map((g) => ({ value: g, label: t(`playground.toolNames.${g}`), description: t(`settings.toolHelp.${g}`) })));
-const toolsOn = computed(() => TOOL_GROUPS.filter((g) => (defaultTools.value.includes(g) || chat.toolsOn.includes(g)) && !chat.toolsOff.includes(g)));
-const chooseTools = (on: string[]) => chat.chooseTools(on as ToolGroup[], defaultTools.value);
+const toolsOn = computed(() => TOOL_GROUPS.filter((g) => settings.data.value?.playground.tools.includes(g)));
 // When this chat's tools ask first: as Settings say until the chat chooses for itself.
 const defaultApproval = computed<ApprovalMode>(() => settings.data.value?.playground.approval ?? 'review');
 const approval = computed<ApprovalMode>(() => chat.approval || defaultApproval.value);
@@ -117,14 +114,12 @@ watch(
   },
 );
 const runningTerminals = computed(() => chat.terminals.filter((term) => term.running));
-// The composer's row of chips moves rather than jumps: the effort and approval chips (and the context
-// ring) open and close their width as they come and go (``chip-row``), the others slide over and a
-// long model name narrows; a chip whose words change eases to its new width.
+// The composer's row of chips moves rather than jumps: the effort chip (and the context ring) open and
+// close their width as they come and go (``chip-row``), the others slide over and a long model name
+// narrows; a chip whose words change eases to its new width.
 const effortSlot = ref<HTMLElement | null>(null);
-const toolsSlot = ref<HTMLElement | null>(null);
 const approvalSlot = ref<HTMLElement | null>(null);
 useMorphWidth(effortSlot, () => effortText.value);
-useMorphWidth(toolsSlot, () => toolsOn.value.length);
 useMorphWidth(approvalSlot, () => approval.value);
 async function approve(step: ToolStep, decision: ApprovalDecision) {
   try {
@@ -464,10 +459,9 @@ const slashContext = computed<SlashContext>(() => {
     replied: kept && since.some((m) => m.role === 'assistant' && m.status !== 'streaming' && !isLocal(m.id)),
     kept,
     efforts: effortOptions.value.length > 1,
-    tools: toolsOn.value.length > 0,
   };
 });
-const slashCurrent = computed(() => ({ model: chat.model, effort: chat.effort, tools: toolsOn.value as string[], permission: approval.value }));
+const slashCurrent = computed(() => ({ model: chat.model, effort: chat.effort, permission: approval.value }));
 const ZERO = { input: 0, cached: 0, output: 0, reasoning: 0 };
 /** What ``/status`` shows: the server's numbers for a kept chat; for a new one, the model's window as the catalogue gives it. */
 const statusView = computed<ContextView | null>(() => {
@@ -506,10 +500,6 @@ function runSlash(id: SlashId, argument: string) {
   else if (id === 'compact') void compactChat(argument);
 }
 function chooseSlash(page: SlashPage, value: string) {
-  if (page === 'tools') {
-    chooseTools(toolsOn.value.includes(value as ToolGroup) ? toolsOn.value.filter((g) => g !== value) : [...toolsOn.value, value]);
-    return flash('tools');
-  }
   draft.value = '';
   if (page === 'models') {
     chat.choose({ model: value, effort: '' });
@@ -773,37 +763,20 @@ onBeforeUnmount(() => {
                 />
               </span>
             </Transition>
-            <span ref="toolsSlot" class="chip-slot">
+            <span ref="approvalSlot" class="chip-slot">
               <ComposerMenu
-                class="tools-menu"
-                :class="{ flash: flashed === 'tools' }"
-                multiple
-                :values="toolsOn"
-                :icon="icons.Wrench"
-                :label="t('playground.tools')"
-                :hint="t('playground.toolsHelp')"
-                :text="toolsOn.length ? String(toolsOn.length) : t('playground.toolsOff')"
-                :options="toolOptions"
-                :disabled="chat.busy"
-                @update:values="chooseTools"
+                class="approval-menu"
+                :class="{ flash: flashed === 'approval' }"
+                :model-value="approval"
+                :icon="APPROVAL_ICONS[approval]"
+                :label="t('settings.approval')"
+                :hint="t('playground.approvalHint', { mode: t(`settings.approvalModes.${defaultApproval}`) })"
+                :text="t(`playground.approvalShort.${approval}`)"
+                :options="approvalOptions"
+                :danger="approval === 'full'"
+                @update:model-value="(m) => m && chat.chooseApproval(m as ApprovalMode)"
               />
             </span>
-            <Transition :name="TRANSITIONS.chipRow" v-bind="chipRowHooks">
-              <span v-if="toolsOn.length" ref="approvalSlot" class="chip-slot">
-                <ComposerMenu
-                  class="approval-menu"
-                  :class="{ flash: flashed === 'approval' }"
-                  :model-value="approval"
-                  :icon="APPROVAL_ICONS[approval]"
-                  :label="t('settings.approval')"
-                  :hint="t('playground.approvalHint', { mode: t(`settings.approvalModes.${defaultApproval}`) })"
-                  :text="t(`playground.approvalShort.${approval}`)"
-                  :options="approvalOptions"
-                  :danger="approval === 'full'"
-                  @update:model-value="(m) => m && chat.chooseApproval(m as ApprovalMode)"
-                />
-              </span>
-            </Transition>
           </template>
           <template #actions>
             <Transition :name="TRANSITIONS.chipRow" v-bind="chipRowHooks">
@@ -826,7 +799,6 @@ onBeforeUnmount(() => {
           :context="slashContext"
           :models="modelOptions"
           :efforts="effortOptions"
-          :tools="toolOptions"
           :permissions="approvalOptions"
           :current="slashCurrent"
           :status="statusView"
@@ -923,7 +895,7 @@ onBeforeUnmount(() => {
 .dock { display: flex; flex-direction: column; gap: var(--app-space-2); flex: none; width: min(100%, var(--column)); align-self: center; }
 .tray { display: flex; flex-wrap: wrap; gap: var(--app-space-2); padding: var(--app-space-3) var(--app-space-4) 0; }
 .file-input { display: none; }
-.attach, .effort, .tools-menu, .approval-menu { flex: none; }
+.attach, .effort, .approval-menu { flex: none; }
 /* A chip's own box, which its width opens and eases in (chip-row, useMorphWidth): no padding of its own. */
 .chip-slot { display: inline-flex; flex: none; min-width: 0; }
 /* A chip a slash command just changed glows once. */
