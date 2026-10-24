@@ -5,11 +5,18 @@ Sending, editing and retrying all add messages and stream the reply as
 Server-Sent Events, one JSON object per event (see
 :func:`hoshimi.api.playground.event`); everything a model is sent is put
 together on the server (:class:`hoshimi.api.playground.PlaygroundRunner`).
+
+A reply (and a compaction) works in the background (see
+:mod:`hoshimi.core.agent.runs`): the stream only follows it, so a page that
+leaves, or opens another conversation, does not stop it. ``/events`` follows
+the reply under way from its start, ``/stop`` stops it, and a conversation
+says whether a reply runs in it (``running``) and whether one of its tool
+calls waits for an answer (``waiting``).
 """
 
 import asyncio
 import threading
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Generator, Iterator
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Body, Query, Request, Response
@@ -19,10 +26,11 @@ from starlette.concurrency import run_in_threadpool
 
 from hoshimi.api.deps import ServicesDep
 from hoshimi.api.errors import ERROR_RESPONSES
-from hoshimi.api.playground import PlaygroundRunner, event, sse
+from hoshimi.api.playground import PlaygroundRunner, encode, event
 from hoshimi.api.routers.chat import chat_completion
 from hoshimi.api.routers.models import ModelList, list_models
 from hoshimi.core.agent.approval import approval_mode
+from hoshimi.core.agent.runs import Run
 from hoshimi.core.context import Services
 from hoshimi.core.conversations import AttachmentInfo, ChatMessage, Conversation
 from hoshimi.core.errors import ConflictError, NotFoundError, ValidationError
@@ -123,6 +131,10 @@ class ConversationSummary(Record):
     created_at: float
     updated_at: float
     """Unix seconds of the last message, which orders the list."""
+    running: bool = False
+    """A reply (or a compaction) is working in it now, whether or not a page follows it (``/events``)."""
+    waiting: bool = False
+    """A tool call of the reply under way waits for the user's answer."""
 
 
 class ConversationView(ConversationSummary):
@@ -286,16 +298,17 @@ def _message(m: ChatMessage) -> MessageView:
     )
 
 
-def _summary(c: Conversation) -> ConversationSummary:
+def _summary(services: Services, c: Conversation) -> ConversationSummary:
     return ConversationSummary(
         id=c.id, title=c.title, title_state=c.title_state, model=c.model, effort=c.effort, archived=c.archived, temporary=c.temporary,
         branched_from=c.branched_from, approval=approval_mode(c.approval),
         created_at=c.created_at, updated_at=c.updated_at,
+        running=services.agent.runs.running(c.id), waiting=services.agent.approvals.waiting(c.id),
     )
 
 
-def _view(c: Conversation) -> ConversationView:
-    return ConversationView(**_summary(c).model_dump(), current_leaf=c.current_leaf, messages=[_message(m) for m in c.messages])
+def _view(services: Services, c: Conversation) -> ConversationView:
+    return ConversationView(**_summary(services, c).model_dump(), current_leaf=c.current_leaf, messages=[_message(m) for m in c.messages])
 
 
 def _conversation(services: Services, conversation_id: str) -> Conversation:
@@ -318,18 +331,16 @@ PING_SECONDS = 2.0
 found only by writing to it, and a tool that runs (or waits for approval) writes nothing."""
 
 
-def _stream(events: Iterator[dict[str, Any]], cancel: threading.Event | None = None) -> StreamingResponse:
-    """Events as an SSE response that no proxy buffers.
+def _stream(events: Iterator[str], on_close: Callable[[], None] | None = None) -> StreamingResponse:
+    """Events (encoded) as an SSE response that no proxy buffers.
 
     The events are read on a worker thread, one at a time, and the reader is
-    closed as soon as the response ends: when the page stops a reply or goes
-    away, the reply settles as stopped at once, not whenever the abandoned
-    generator happens to be collected. ``cancel`` is set first, so a tool
-    that is running (or waiting for approval) gives up and lets it close.
-    While no event comes, a comment goes out every :data:`PING_SECONDS`, so
-    the server learns soon that the page is gone.
+    closed as soon as the response ends (the page went away, or stopped
+    reading). ``on_close`` is called first, so a read that waits gives up and
+    lets it close. While no event comes, a comment goes out every
+    :data:`PING_SECONDS`, so the server learns soon that the page is gone.
     """
-    lines = sse(_wired(events))
+    lines = _sse(events)
     lock = threading.Lock()
     done = object()
 
@@ -356,14 +367,58 @@ def _stream(events: Iterator[dict[str, Any]], cancel: threading.Event | None = N
                     return
                 yield line
         finally:
-            if cancel is not None:
-                cancel.set()
+            if on_close is not None:
+                on_close()
             if pending is not None:
-                # The read under way ends soon: a tool gives up on the cancel, a model's next chunk comes.
+                # The read under way ends soon: it was let go.
                 await asyncio.gather(pending, return_exceptions=True)
             await run_in_threadpool(close)
 
     return StreamingResponse(body(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+def _sse(events: Iterator[str]) -> Generator[str, None, None]:
+    """Encoded events as Server-Sent Events, one to a ``data:`` line; closing this closes ``events``."""
+    try:
+        for payload in events:
+            yield f"data: {payload}\n\n"
+    finally:
+        close = getattr(events, "close", None)
+        if close is not None:
+            close()
+
+
+def _follow(run: Run, after: int = 0) -> StreamingResponse:
+    """A run's events from the ``after``-th on, until it ends; a page that goes away stops reading, not the run."""
+    follower = run.follow(after)
+    return _stream(follower, follower.release)
+
+
+def _closing(services: Services) -> Callable[[dict[str, Any] | None], dict[str, Any] | None]:
+    """The last event of a run that ended without its own ``done``: its message as kept, or as last seen and stopped (a checkpoint taken back)."""
+
+    def closing(last: dict[str, Any] | None) -> dict[str, Any] | None:
+        if last is None:
+            return None
+        kept = services.conversations.message(str(last.get("id") or ""))
+        return {"type": "done", "message": _message(kept).model_dump() if kept is not None else {**last, "status": "stopped"}}
+
+    return closing
+
+
+def _start(services: Services, conversation_id: str, kind: str, events: Iterator[dict[str, Any]], cancel: threading.Event) -> Run:
+    """Run ``events`` in the background. A reply that ends with no page following it names its conversation, as the page would have asked."""
+
+    def after(run: Run, followed: bool) -> None:
+        if kind == "reply" and not followed and run.done is not None and run.done.get("status") == "complete":
+            PlaygroundRunner(services).title(conversation_id)
+
+    return services.agent.runs.start(conversation_id, kind, _wired(events), cancel, closing=_closing(services), after=after, encode=encode)
+
+
+def _free(services: Services, conversation_id: str) -> None:
+    if services.agent.runs.running(conversation_id):
+        raise ConflictError("A reply is running in this conversation; wait for it to end, or stop it.")
 
 
 def _wired(events: Iterator[dict[str, Any]]) -> Iterator[dict[str, Any]]:
@@ -389,17 +444,17 @@ def _wire(item: dict[str, Any]) -> dict[str, Any]:
 @router.get("/conversations", operation_id="list_conversations")
 def list_conversations(services: ServicesDep, archived: Annotated[bool, Query(description="The archive instead of the recent ones")] = False) -> ConversationList:
     """The kept conversations, the most recently used first; temporary ones are never listed."""
-    return ConversationList(conversations=[_summary(c) for c in services.conversations.conversations(archived=archived)])
+    return ConversationList(conversations=[_summary(services, c) for c in services.conversations.conversations(archived=archived)])
 
 
 @router.post("/conversations", operation_id="create_conversation", status_code=201)
 def create_conversation(services: ServicesDep, body: ConversationCreate) -> ConversationView:
-    return _view(services.conversations.create(model=body.model, effort=body.effort, title=body.title, temporary=body.temporary, approval=body.approval))
+    return _view(services, services.conversations.create(model=body.model, effort=body.effort, title=body.title, temporary=body.temporary, approval=body.approval))
 
 
 @router.get("/conversations/{conversation_id}", operation_id="get_conversation", responses=ERROR_RESPONSES)
 def get_conversation(services: ServicesDep, conversation_id: str) -> ConversationView:
-    return _view(_conversation(services, conversation_id))
+    return _view(services, _conversation(services, conversation_id))
 
 
 @router.patch("/conversations/{conversation_id}", operation_id="update_conversation", responses=ERROR_RESPONSES)
@@ -412,14 +467,16 @@ def update_conversation(services: ServicesDep, conversation_id: str, body: Conve
     except ValueError as exc:
         raise ValidationError(str(exc)) from None
     assert conversation is not None
-    return _summary(conversation)
+    return _summary(services, conversation)
 
 
 @router.delete("/conversations/{conversation_id}", operation_id="delete_conversation", status_code=204, responses=ERROR_RESPONSES)
 def delete_conversation(services: ServicesDep, conversation_id: str) -> Response:
+    _conversation(services, conversation_id)
+    # Its reply stops (and settles) before its messages go.
+    services.agent.end(conversation_id)
     if not services.conversations.delete(conversation_id):
         raise NotFoundError(f"No conversation '{conversation_id}'.")
-    services.agent.end(conversation_id)
     return Response(status_code=204)
 
 
@@ -434,6 +491,7 @@ def send_message(services: ServicesDep, conversation_id: str, body: MessageSend)
     conversation = _conversation(services, conversation_id)
     if not body.content.strip() and not body.attachment_ids:
         raise ValidationError("Write a message or attach a file.")
+    _free(services, conversation_id)
     model = _model(services, body.model, conversation.model)
     try:
         question = services.conversations.add_message(conversation_id, body.parent_id, "user", body.content, attachment_ids=body.attachment_ids)
@@ -448,7 +506,7 @@ def send_message(services: ServicesDep, conversation_id: str, body: MessageSend)
         yield event("user", message=question)
         yield from runner.reply(conversation_id, question.id, model=model, effort=body.effort, cancel=cancel)
 
-    return _stream(events(), cancel)
+    return _follow(_start(services, conversation_id, "reply", events(), cancel))
 
 
 @router.post("/conversations/{conversation_id}/messages/{message_id}/retry", operation_id="retry_conversation_message", responses=SSE_RESPONSES)
@@ -461,12 +519,13 @@ def retry_message(services: ServicesDep, conversation_id: str, message_id: str, 
     question = message.id if message.role == "user" else message.parent_id
     if question is None:
         raise ValidationError("This reply answers nothing to retry.")
+    _free(services, conversation_id)
     replied = message.role == "assistant"
     model = _model(services, body.model, message.model if replied else "", conversation.model)
     effort = body.effort if body.effort is not None else (message.effort if replied else conversation.effort)
     runner = PlaygroundRunner(services)
     cancel = threading.Event()
-    return _stream(runner.reply(conversation_id, question, model=model, effort=effort, cancel=cancel), cancel)
+    return _follow(_start(services, conversation_id, "reply", runner.reply(conversation_id, question, model=model, effort=effort, cancel=cancel), cancel))
 
 
 @router.post("/conversations/{conversation_id}/approvals/{call_id}", operation_id="answer_tool_approval", status_code=204, responses=ERROR_RESPONSES)
@@ -503,8 +562,31 @@ def compact_conversation(services: ServicesDep, conversation_id: str, body: Comp
     was). 409 while a reply is running; 400 when there is nothing to compact.
     """
     _conversation(services, conversation_id)
+    _free(services, conversation_id)
     cancel = threading.Event()
-    return _stream(PlaygroundRunner(services).compact(conversation_id, instructions=body.instructions, cancel=cancel), cancel)
+    events = PlaygroundRunner(services).compact(conversation_id, instructions=body.instructions, cancel=cancel)
+    return _follow(_start(services, conversation_id, "compaction", events, cancel))
+
+
+@router.get("/conversations/{conversation_id}/events", operation_id="follow_conversation_reply", responses=SSE_RESPONSES)
+def follow_reply(services: ServicesDep, conversation_id: str, after: Annotated[int, Query(ge=0, description="Skip this many events from the start")] = 0) -> StreamingResponse:
+    """Follow the reply (or compaction) working in the conversation, from its first event (or the ``after``-th), as its send did.
+
+    404 when none runs: it has ended, and the conversation holds it as kept.
+    """
+    _conversation(services, conversation_id)
+    run = services.agent.runs.get(conversation_id)
+    if run is None:
+        raise NotFoundError("No reply is running in this conversation.")
+    return _follow(run, after)
+
+
+@router.post("/conversations/{conversation_id}/stop", operation_id="stop_conversation_reply", status_code=204, responses=ERROR_RESPONSES)
+def stop_reply(services: ServicesDep, conversation_id: str) -> Response:
+    """Stop the reply (or compaction) working in the conversation; it settles as stopped, and its followers get its ``done``. Nothing running is no error."""
+    _conversation(services, conversation_id)
+    services.agent.runs.stop(conversation_id)
+    return Response(status_code=204)
 
 
 @router.get("/conversations/{conversation_id}/context", operation_id="get_conversation_context", responses=ERROR_RESPONSES)
@@ -554,7 +636,7 @@ def branch_conversation(services: ServicesDep, conversation_id: str, body: Branc
     except ValueError as exc:
         raise ValidationError(str(exc)) from None
     assert branch is not None
-    return _view(branch)
+    return _view(services, branch)
 
 
 @router.post("/conversations/{conversation_id}/title", operation_id="title_conversation", responses=ERROR_RESPONSES)
@@ -563,7 +645,7 @@ def title_conversation(services: ServicesDep, conversation_id: str) -> Conversat
     _conversation(services, conversation_id)
     conversation = PlaygroundRunner(services).title(conversation_id)
     assert conversation is not None
-    return _summary(conversation)
+    return _summary(services, conversation)
 
 
 # -- attachments -------------------------------------------------------------------- #

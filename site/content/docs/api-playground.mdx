@@ -28,10 +28,12 @@ BASE=http://127.0.0.1:10600/api/v1/playground
 | `POST /conversations` | `201` 对话 | 创建对话 |
 | `GET /conversations/{id}` | `200` 对话 | 一个对话及其消息树中的全部消息 |
 | `PATCH /conversations/{id}` | `200` 摘要 | 修改标题、模型、推理强度、归档、显示的版本、工具、审批模式 |
-| `DELETE /conversations/{id}` | `204` | 删除对话、其消息和只属于它的附件，并停止它的后台命令 |
+| `DELETE /conversations/{id}` | `204` | 删除对话、其消息和只属于它的附件，并停止它的回复和后台命令 |
 | `POST /conversations/{id}/messages` | `200` SSE | 添加问题并流式返回回复 |
 | `POST /conversations/{id}/messages/{message_id}/retry` | `200` SSE | 为同一个问题流式生成另一条回复 |
 | `GET /conversations/{id}/messages/{message_id}/request` | `200` JSON | 某条回复对应的 Chat Completions 请求 |
+| `GET /conversations/{id}/events` | `200` SSE | 从第一个事件起跟随正在进行的回复（或压缩） |
+| `POST /conversations/{id}/stop` | `204` | 停止正在进行的回复（或压缩） |
 | `POST /conversations/{id}/approvals/{call_id}` | `204` | 答复等待批准的工具调用 |
 | `POST /conversations/{id}/steer` | `202` `{"id"}` | 向正在进行的回复发送消息 |
 | `GET /conversations/{id}/terminals` | `200` 列表 | 该对话的工具启动的后台命令 |
@@ -64,6 +66,8 @@ BASE=http://127.0.0.1:10600/api/v1/playground
 | `branched_from` | 字符串 | 分支来源的对话，没有则为空 |
 | `approval` | `""`、`ask`、`workspace`、`review`、`full` | 该对话自己的审批模式；为空则使用 `playground.approval`。不会返回 `auto`（`workspace` 的旧名称） |
 | `created_at`、`updated_at` | 数字 | Unix 秒；`updated_at` 为最后一条消息的时间，列表按它排序 |
+| `running` | 布尔 | 此刻有回复（或压缩）在其中进行，无论是否有客户端在跟随 |
+| `waiting` | 布尔 | 该回复的某个工具调用正在等待答复（`POST .../approvals/{call_id}`） |
 | `current_leaf` | 字符串 | 仅完整对话中有：当前显示路径的末端 |
 | `messages` | 消息列表 | 仅完整对话中有：消息树中的全部消息，按时间先后排列 |
 
@@ -102,7 +106,7 @@ curl -X POST $BASE/conversations \
 
 ### 删除
 
-`DELETE /conversations/{id}` 删除对话、其消息和只属于它的附件，停止它的后台命令，并清除它的 **始终允许** 答复。
+`DELETE /conversations/{id}` 先停止其中正在进行的回复（保存为 `stopped`，随后与其余内容一并删除），再删除对话、其消息和只属于它的附件，停止它的后台命令，并清除它的 **始终允许** 答复。
 
 ## 消息
 
@@ -198,7 +202,21 @@ data: {"type": "done", "message": {"id": "5828…", "content": "Let me look.\n\n
 
 - 问题保存之前发现的错误（没有模型、`parent_id` 或附件不存在）直接以 `400` 或 `404` 返回，而不是流。
 - 之后模型或站点返回的错误会让回复以 `error` 结束，流仍以 `done` 收尾。
-- 关闭连接会停止回复：正在运行的工具被要求停止，等待中的批准被取消，回复连同已生成的内容保存为 `stopped`。之后不会再有 `done`。
+- 关闭连接只是停止读取：回复在服务端继续进行，结束时照常保存。可用 `GET /conversations/{id}/events` 重新跟随（见下文）。
+- `POST /conversations/{id}/stop` 停止回复：正在运行的工具被要求停止，等待中的批准被取消，回复连同已生成的内容保存为 `stopped`。所有跟随它的流都以这个 `done` 结束。
+
+### 后台进行的回复
+
+回复（以及压缩，`POST .../compact`）在服务端进行，与是否有客户端读取无关；一个对话同一时间只能有一个：已有回复进行时，发送、重试或压缩都会返回 `409`。对话的 `running` 表示有回复正在进行，`waiting` 表示它在等待批准；列表中的每个对话也会给出这两项。
+
+`GET /conversations/{id}/events` 从第一个事件起推送正在进行的回复（`?after=n` 跳过前 `n` 个），与发送时推送的事件完全相同，之后实时推送后续事件，直到 `done`。可以有任意多个客户端同时跟随。没有回复进行时返回 `404`：回复已经结束，`GET /conversations/{id}` 中是保存后的结果。
+
+```bash
+curl -N $BASE/conversations/$CID/events -H "Authorization: Bearer $ACCESS_KEY"
+curl -X POST $BASE/conversations/$CID/stop -H "Authorization: Bearer $ACCESS_KEY"
+```
+
+在无人跟随时完成的回复，会像 `POST .../title` 那样为尚无标题的对话命名。
 
 ### 重试
 

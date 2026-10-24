@@ -10,13 +10,17 @@ export type ConversationAction = 'rename' | 'archive' | 'unarchive' | 'delete';
  * One list of chats (the recent ones, or the archive), grouped by when they were last used: today,
  * yesterday, the last week, the last month, before. Each has a menu to rename, archive (or restore)
  * and delete it; the page does those. A chat archived, restored or deleted fades out where it was
- * while the ones under it slide up, and a group left empty goes the same way.
+ * while the ones under it slide up, and a group left empty goes the same way. A chat whose reply
+ * works now (here or in the background) says so after its title, and one whose tool call waits for
+ * an answer says that instead.
  */
-const props = defineProps<{ conversations: ConversationSummary[]; pending: boolean; current: string | null; archived?: boolean; query?: string }>();
+const props = defineProps<{ conversations: ConversationSummary[]; pending: boolean; current: string | null; working?: string | null; archived?: boolean; query?: string }>();
 const emit = defineEmits<{ select: [id: string]; act: [action: ConversationAction, conversation: ConversationSummary] }>();
 const { t } = useI18n();
 
 const titleOf = (c: ConversationSummary) => c.title || t('playground.untitled');
+/** What a chat is doing now: waiting for an answer, working, or nothing. */
+const activity = (c: ConversationSummary) => (c.waiting ? 'waiting' : c.running || c.id === props.working ? 'working' : '');
 const matching = computed(() => {
   const q = (props.query ?? '').trim().toLowerCase();
   return q ? props.conversations.filter((c) => titleOf(c).toLowerCase().includes(q)) : props.conversations;
@@ -64,6 +68,8 @@ const menu = (c: ConversationSummary) => [
             <button type="button" class="open state-layer" :aria-current="c.id === current ? 'page' : undefined" :title="titleOf(c)" @click="emit('select', c.id)">
               <AppIcon v-if="c.branched_from" :icon="icons.GitBranch" :size="18" class="branched" :label="t('playground.branchedFrom')" />
               <span class="title type-body-medium" :class="{ muted: !c.title }">{{ titleOf(c) }}</span>
+              <AppIcon v-if="activity(c) === 'waiting'" :icon="icons.ShieldAlert" :size="18" class="activity waiting" :label="t('playground.toolWaiting')" />
+              <AppIcon v-else-if="activity(c) === 'working'" :icon="icons.Loader2" :size="18" spin class="activity working" :label="t('playground.working')" />
             </button>
             <AppMenu :items="menu(c)" @select="(action) => emit('act', action as ConversationAction, c)">
               <template #default="{ toggle }"><IconButton :icon="icons.MoreHorizontal" :label="t('playground.chatMenu')" class="more" @click="toggle" /></template>
@@ -94,6 +100,11 @@ const menu = (c: ConversationSummary) => [
 }
 .branched { flex: none; opacity: 0.7; }
 .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* After the title, out of the way of the menu: a chat working now, or waiting for an answer. */
+.activity { flex: none; width: 16px; height: 16px; margin-inline-start: auto; }
+.activity.working { color: var(--md-sys-color-primary); }
+.activity.waiting { color: var(--md-sys-color-tertiary); }
+@media (prefers-reduced-motion: reduce) { .activity.working { animation-duration: 3s; } }
 /* The menu shows where the pointer or the focus is, and on the open chat. */
 .more { opacity: 0; transition: opacity var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard); }
 .item:hover .more, .item:focus-within .more, .item.current .more { opacity: 1; }

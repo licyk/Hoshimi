@@ -581,17 +581,15 @@ function onKey(e: KeyboardEvent) {
 onMounted(() => window.addEventListener('keydown', onKey));
 onActivated(() => window.addEventListener('keydown', onKey));
 onDeactivated(() => window.removeEventListener('keydown', onKey));
-onBeforeUnmount(() => {
-  window.removeEventListener('keydown', onKey);
-  chat.stop();
-});
+// A reply under way goes on when the page is left: the chat store keeps following it.
+onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
 </script>
 
 <template>
   <div ref="root" class="playground" :class="{ empty, wide }">
     <Transition name="chat-sidebar" :css="laidOut">
       <aside v-if="wide && sidebarOpen" class="sidebar">
-        <ChatSidebar :current="chat.conversation?.id ?? null" @select="select" @act="act" />
+        <ChatSidebar :current="chat.conversation?.id ?? null" :working="chat.busy ? (chat.conversation?.id ?? null) : null" @select="select" @act="act" />
       </aside>
     </Transition>
 
@@ -819,7 +817,7 @@ onBeforeUnmount(() => {
     </div>
 
     <SideSheet v-if="!wide" v-model:open="drawerOpen" side="start" :title="t('playground.chats')" :close-label="t('common.close')">
-      <ChatSidebar :current="chat.conversation?.id ?? null" @select="select" @act="act" />
+      <ChatSidebar :current="chat.conversation?.id ?? null" :working="chat.busy ? (chat.conversation?.id ?? null) : null" @select="select" @act="act" />
     </SideSheet>
     <ImageViewer v-model:open="viewer.open.value" v-model:index="viewer.index.value" :images="viewer.images.value" :from-rect="viewer.fromRect.value" :labels="viewerLabels" />
     <AppDialog v-model:open="renameOpen" :title="t('playground.renameTitle')" width="small">

@@ -28,10 +28,12 @@ BASE=http://127.0.0.1:10600/api/v1/playground
 | `POST /conversations` | `201` conversation | Create one |
 | `GET /conversations/{id}` | `200` conversation | One conversation with every message of its tree |
 | `PATCH /conversations/{id}` | `200` summary | Change title, model, effort, archive, the version on screen, tools, approval mode |
-| `DELETE /conversations/{id}` | `204` | Delete it, its messages and its own attachments; stop its background commands |
+| `DELETE /conversations/{id}` | `204` | Delete it, its messages and its own attachments; stop its reply and its background commands |
 | `POST /conversations/{id}/messages` | `200` SSE | Add a question and stream the reply |
 | `POST /conversations/{id}/messages/{message_id}/retry` | `200` SSE | Stream another reply to the same question |
 | `GET /conversations/{id}/messages/{message_id}/request` | `200` JSON | The Chat Completions request behind a reply |
+| `GET /conversations/{id}/events` | `200` SSE | Follow the reply (or compaction) under way from its first event |
+| `POST /conversations/{id}/stop` | `204` | Stop the reply (or compaction) under way |
 | `POST /conversations/{id}/approvals/{call_id}` | `204` | Answer a tool call waiting for approval |
 | `POST /conversations/{id}/steer` | `202` `{"id"}` | Send a message to the reply under way |
 | `GET /conversations/{id}/terminals` | `200` list | Background commands its tools started |
@@ -64,6 +66,8 @@ A conversation is a tree of messages. Each message names the one it follows (`pa
 | `branched_from` | string | The conversation it was branched from, or empty |
 | `approval` | `""`, `ask`, `workspace`, `review`, `full` | Its own approval mode; empty follows `playground.approval`. Never `auto` (the old name of `workspace`) |
 | `created_at`, `updated_at` | number | Unix seconds; `updated_at` is the last message, which orders the list |
+| `running` | boolean | A reply (or a compaction) is working in it now, whether or not anything follows it |
+| `waiting` | boolean | A tool call of that reply waits for an answer (`POST .../approvals/{call_id}`) |
 | `current_leaf` | string | Only in a full conversation: the end of the path on screen |
 | `messages` | message list | Only in a full conversation: every message of the tree, oldest first |
 
@@ -102,7 +106,7 @@ An update does not change `updated_at`: only a new message moves a conversation 
 
 ### Delete
 
-`DELETE /conversations/{id}` removes the conversation, its messages and the attachments only it carried, stops its background commands and forgets its **Always allow** answers.
+`DELETE /conversations/{id}` stops the reply working in it (kept as `stopped`, then removed with the rest), then removes the conversation, its messages and the attachments only it carried, stops its background commands and forgets its **Always allow** answers.
 
 ## Messages
 
@@ -198,7 +202,21 @@ How a stream ends:
 
 - Errors found before the question is kept (no model, an unknown `parent_id` or attachment) are a plain `400` or `404`, not a stream.
 - An error from the model or the station after that settles the reply as `error`, and the stream still ends with `done`.
-- Closing the connection stops the reply: a running tool is told to stop, a waiting approval is dropped, and the reply is kept as `stopped` with what came so far. No `done` follows.
+- Closing the connection only stops reading: the reply goes on on the server, and is kept as it ends. Follow it again with `GET /conversations/{id}/events` (below).
+- `POST /conversations/{id}/stop` stops it: a running tool is told to stop, a waiting approval is dropped, and the reply is kept as `stopped` with what came so far. Every stream following it ends with that `done`.
+
+### Replies in the background
+
+A reply (and a compaction, `POST .../compact`) runs on the server whether or not a client reads it, and a conversation has one at a time: a send, a retry or a compaction while one runs is `409`. The conversation's `running` says one runs, and `waiting` that it waits for an approval; the list says so too, for every conversation.
+
+`GET /conversations/{id}/events` streams the reply under way from its first event (`?after=n` skips the first `n`), exactly as its send streamed them, then the rest as they come, to its `done`. Any number of clients can follow it at once. With none running it is `404`: the reply has ended, and `GET /conversations/{id}` holds it as kept.
+
+```bash
+curl -N $BASE/conversations/$CID/events -H "Authorization: Bearer $ACCESS_KEY"
+curl -X POST $BASE/conversations/$CID/stop -H "Authorization: Bearer $ACCESS_KEY"
+```
+
+A reply that completes while nothing follows it names a conversation still without a title, as `POST .../title` would.
 
 ### Retry
 

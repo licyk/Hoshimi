@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { computed, reactive, ref } from 'vue';
-import { conversationsApi, type ReplyEvent } from '@/api/conversations';
+import { conversationsApi, type OnEvent, type ReplyEvent } from '@/api/conversations';
 import type { ApprovalDecision, ApprovalMode, AttachmentView, ContextView, ConversationView, MessageView, ReplyUsage, Step, TerminalView, ToolStep } from '@/api/types';
 
 type Summary = Omit<ConversationView, 'messages'>;
@@ -31,6 +31,11 @@ const UNSETTLED = new Set(['pending', 'reviewing', 'waiting', 'running']);
  * Replies stream into a placeholder that the server's own messages replace as they are filed, so
  * the page never waits to show what was asked. Failures before the question is kept are thrown
  * (the page puts the draft back); later ones end in the reply itself, as an error to retry.
+ *
+ * A reply works on the server, not in the page: leaving its conversation (for another, or a new one)
+ * only stops following it, and it goes on. Opening a conversation whose reply (or compaction) is
+ * under way follows it again from its first event. Stop asks the server to stop it; the reply's own
+ * end comes back as it settles.
  */
 export const useChatStore = defineStore('chat', () => {
   const conversation = ref<Summary | null>(null);
@@ -59,6 +64,10 @@ export const useChatStore = defineStore('chat', () => {
   /** Bumped whenever the history list should be read again. */
   const listChanged = ref(0);
   let controller: AbortController | null = null;
+  /** Which following is the page's: one left behind (another conversation opened) reads no more and changes nothing. */
+  let following = 0;
+  /** Times in a row a followed reply's stream ended before its end came, and the page went to look. */
+  let lost = 0;
 
   /** Each message's replies or versions, oldest first, by the id they follow ('' for the first). */
   const children = computed(() => {
@@ -101,13 +110,63 @@ export const useChatStore = defineStore('chat', () => {
     effort.value = view.effort;
     approval.value = view.approval ?? '';
     context.value = null;
+    if (view.running) attach(view);
     void refreshTerminals();
     void refreshContext();
   }
 
-  /** A temporary conversation ends when it is left. */
+  /** Stop following the reply under way, which goes on on the server: nothing it sends from now on changes this page. */
+  function detach() {
+    following++;
+    controller?.abort();
+    controller = null;
+    busy.value = compacting.value = false;
+    stage.value = null;
+    live.value = null;
+    queued.value = [];
+  }
+
+  /**
+   * Follow the reply (or compaction) under way in a conversation just opened, from its first event:
+   * what the page has of it (as it was filed, before a word) is replaced as the events come again.
+   */
+  function attach(view: ConversationView) {
+    const id = view.id;
+    const working = [...view.messages].reverse().find((m) => m.status === 'streaming');
+    const gone = (error: unknown) => {
+      // It ended between the conversation and its events: the page looks again.
+      if ((error as { status?: number }).status !== 404) throw error;
+    };
+    if (working?.role === 'checkpoint') {
+      void runCompaction((signal, onEvent) => conversationsApi.follow(id, onEvent, signal).catch(gone), working.parent_id ?? '').catch(() => undefined);
+    } else {
+      if (working) {
+        messages.set(working.id, { ...working, content: '', reasoning: '', notices: [], steps: [] });
+        leaf.value = working.id;
+      }
+      void run((signal, onEvent) => conversationsApi.follow(id, onEvent, signal).catch(gone), { reply: working?.id ?? localId('assistant') }, working?.parent_id ?? view.current_leaf);
+    }
+    // Its clock counts from when it started, not from when this page came back to it.
+    if (working) startedAt.value = working.created_at * 1000;
+  }
+
+  /** The open conversation as the server has it now, followed again if its reply still works. */
+  async function reload() {
+    const id = conversation.value?.id;
+    if (!id || isLocal(id)) return;
+    try {
+      const view = await conversationsApi.get(id);
+      if (conversation.value?.id !== id) return;
+      detach();
+      load(view);
+    } catch {
+      /* it stays as the page has it */
+    }
+  }
+
+  /** Leaving a conversation stops following its reply, which goes on; a temporary conversation ends (and its reply with it). */
   function leave() {
-    stop();
+    detach();
     const left = conversation.value;
     if (left?.temporary) void conversationsApi.remove(left.id).catch(() => undefined);
   }
@@ -237,7 +296,8 @@ export const useChatStore = defineStore('chat', () => {
    * Runs one streamed reply. A failure before the server kept the question takes the placeholders
    * back and is thrown; after it, the reply settles as stopped (the user stopped it) or as an error.
    */
-  async function run(start: (signal: AbortSignal, onEvent: (event: ReplyEvent) => boolean) => Promise<void>, placeholders: { user?: string; reply: string }, before: string) {
+  async function run(start: (signal: AbortSignal, onEvent: OnEvent) => Promise<void>, placeholders: { user?: string; reply: string }, before: string) {
+    const mine = ++following;
     busy.value = true;
     stage.value = null;
     startedAt.value = Date.now();
@@ -246,13 +306,21 @@ export const useChatStore = defineStore('chat', () => {
     controller = local;
     const onEvent = follow(placeholders);
     let kept = !placeholders.user;
+    /** The reply's end came (``done``), or its stream failed and the reply settled here: no need to look again. */
+    let ended = false;
     const tracking = (event: ReplyEvent) => {
+      // Let go (another conversation opened): stop reading; the reply goes on without this page.
+      if (mine !== following) return true;
       if (event.type === 'user') kept = true;
+      if (event.type === 'assistant') listChanged.value++;
+      if (event.type === 'done') ended = true;
       return onEvent(event);
     };
     try {
       await start(local.signal, tracking);
     } catch (error) {
+      if (mine !== following) return;
+      ended = true;
       const stopped = (error as Error).name === 'AbortError';
       if (!kept && !stopped) {
         if (placeholders.user) messages.delete(placeholders.user);
@@ -273,11 +341,19 @@ export const useChatStore = defineStore('chat', () => {
       }
     } finally {
       if (controller === local) controller = null;
-      busy.value = false;
-      stage.value = null;
-      live.value = null;
+      if (mine === following) {
+        busy.value = false;
+        stage.value = null;
+        live.value = null;
+      }
     }
+    if (mine !== following) return;
     listChanged.value++;
+    if (ended) lost = 0;
+    else if (lost++ < 3) {
+      // The stream ended before the reply did (the connection dropped): look again, and follow it if it still works.
+      return void reload();
+    }
     void title();
     void refreshTerminals();
     void refreshContext();
@@ -329,8 +405,13 @@ export const useChatStore = defineStore('chat', () => {
     await run((signal, onEvent) => conversationsApi.retry(id, messageId, body, onEvent, signal), { reply: reply.id }, before);
   }
 
+  /** Stop the reply (or compaction) under way, on the server: its end comes back as it settles. */
   function stop() {
-    controller?.abort();
+    const id = conversation.value?.id;
+    if (!busy.value) return;
+    if (!id || isLocal(id)) return void controller?.abort();
+    // The server cannot be told: the page stops reading at least, and says the reply stopped.
+    conversationsApi.stop(id).catch(() => controller?.abort());
   }
 
   /**
@@ -341,7 +422,12 @@ export const useChatStore = defineStore('chat', () => {
   async function compact(instructions = '') {
     const id = conversation.value?.id;
     if (!id || busy.value) return;
-    const before = leaf.value;
+    return runCompaction((signal, onEvent) => conversationsApi.compact(id, instructions, onEvent, signal), leaf.value);
+  }
+
+  /** Follows a compaction (the user's, just asked for or under way when the conversation was opened) to its end; true when it was kept. */
+  async function runCompaction(start: (signal: AbortSignal, onEvent: OnEvent) => Promise<void>, before: string): Promise<boolean> {
+    const mine = ++following;
     busy.value = compacting.value = true;
     startedAt.value = Date.now();
     const local = new AbortController();
@@ -349,29 +435,29 @@ export const useChatStore = defineStore('chat', () => {
     let checkpoint = '';
     let failure = '';
     try {
-      await conversationsApi.compact(
-        id,
-        instructions,
-        (event) => {
-          if (event.type === 'checkpoint' || (event.type === 'done' && event.message.status !== 'error')) {
-            messages.set(event.message.id, event.message);
-            checkpoint = event.message.id;
-            leaf.value = event.message.id;
-          } else if (event.type === 'done') {
-            failure = event.message.error;
-          }
-        },
-        local.signal,
-      );
+      await start(local.signal, (event) => {
+        if (mine !== following) return true;
+        if (event.type === 'checkpoint' || (event.type === 'done' && event.message.status !== 'error')) {
+          messages.set(event.message.id, event.message);
+          checkpoint = event.message.id;
+          leaf.value = event.message.id;
+          if (event.type === 'checkpoint') listChanged.value++;
+        } else if (event.type === 'done') {
+          failure = event.message.error;
+        }
+      });
     } catch (error) {
+      if (mine !== following) return false;
       // Stopped: quietly, as it was. Refused before it began (nothing to compact, a reply running): thrown as it came.
       const stopped = (error as Error).name === 'AbortError';
       if (!stopped && !checkpoint) throw error;
       if (!stopped) failure = (error as Error).message;
     } finally {
       if (controller === local) controller = null;
-      busy.value = compacting.value = false;
+      if (mine === following) busy.value = compacting.value = false;
     }
+    if (mine !== following) return false;
+    listChanged.value++;
     const kept = messages.get(checkpoint);
     if (!kept || kept.status !== 'complete') {
       // Failed or stopped: the server took the checkpoint back.
@@ -514,6 +600,7 @@ export const useChatStore = defineStore('chat', () => {
   /** Something done to a conversation elsewhere (the history's menu): the page follows. */
   function forget(id: string) {
     if (conversation.value?.id === id) {
+      detach();
       conversation.value = null;
       messages.clear();
       leaf.value = '';
@@ -525,7 +612,7 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     conversation, messages, leaf, temporary, model, effort, approval, queued, terminals, busy, compacting, startedAt, context, live, stage, listChanged,
-    children, path, siblings, leafUnder, load, open, startNew, submit, edit, retry, stop, compact, refreshContext, switchTo, branch, rename, title, choose,
+    children, path, siblings, leafUnder, load, reload, open, startNew, submit, edit, retry, stop, detach, compact, refreshContext, switchTo, branch, rename, title, choose,
     chooseApproval, steer, takeUnread, approve, refreshTerminals, stopTerminal, forget,
   };
 });

@@ -8,7 +8,9 @@ import type { ApprovalDecision, ApprovalMode, AttachmentView, CompactionStep, Me
 /**
  * The Playground's kept conversations. A conversation is a tree of messages; sending, editing and
  * retrying add messages and stream the reply back as events (``ReplyEvent``), while the server puts
- * together what the model is sent. The history list is a query these calls invalidate.
+ * together what the model is sent. A reply works on the server whether or not a page reads it:
+ * leaving only stops reading, ``follow`` reads the one under way from its start, and ``stop`` stops
+ * it. The history list is a query these calls invalidate; it says which conversations work now.
  */
 export type ReplyEvent =
   | { type: 'user'; message: MessageView }
@@ -34,9 +36,12 @@ export interface SendBody {
   effort: string;
 }
 
-async function stream(path: string, body: unknown, onEvent: (event: ReplyEvent) => void, signal?: AbortSignal): Promise<void> {
-  const response = await authedFetch(path, { method: 'POST', headers: { Accept: 'text/event-stream' }, json: body, signal });
-  await readSse(response, (payload) => onEvent(JSON.parse(payload) as ReplyEvent));
+/** An event handler; true stops reading (the page let the reply go). */
+export type OnEvent = (event: ReplyEvent) => boolean | void;
+
+async function stream(path: string, body: unknown, onEvent: OnEvent, signal?: AbortSignal): Promise<void> {
+  const response = await authedFetch(path, { method: body === undefined ? 'GET' : 'POST', headers: { Accept: 'text/event-stream' }, ...(body === undefined ? {} : { json: body }), signal });
+  await readSse(response, (payload) => onEvent(JSON.parse(payload) as ReplyEvent) === true);
 }
 
 const path = (id: string) => ({ params: { path: { conversation_id: id } } });
@@ -71,14 +76,19 @@ export const conversationsApi = {
   setSession: (id: string | null) => unwrap(api.PUT('/api/v1/playground/session', { body: { conversation_id: id } })),
 
   /** Add a question after ``parent_id`` and stream the reply. */
-  send: (id: string, body: SendBody, onEvent: (event: ReplyEvent) => void, signal?: AbortSignal) =>
+  send: (id: string, body: SendBody, onEvent: OnEvent, signal?: AbortSignal) =>
     stream(`/api/v1/playground/conversations/${encodeURIComponent(id)}/messages`, body, onEvent, signal),
   /** Another reply beside ``messageId`` (or a first one to a question), streamed. */
-  retry: (id: string, messageId: string, body: { model?: string; effort?: string }, onEvent: (event: ReplyEvent) => void, signal?: AbortSignal) =>
+  retry: (id: string, messageId: string, body: { model?: string; effort?: string }, onEvent: OnEvent, signal?: AbortSignal) =>
     stream(`/api/v1/playground/conversations/${encodeURIComponent(id)}/messages/${encodeURIComponent(messageId)}/retry`, body, onEvent, signal),
 
+  /** The reply (or compaction) working in the conversation, from its first event; a 404 when none is. */
+  follow: (id: string, onEvent: OnEvent, signal?: AbortSignal) => stream(`/api/v1/playground/conversations/${encodeURIComponent(id)}/events`, undefined, onEvent, signal),
+  /** Stop the reply (or compaction) working in the conversation; whoever follows it gets its end. */
+  stop: (id: string) => unwrap(api.POST('/api/v1/playground/conversations/{conversation_id}/stop', path(id))),
+
   /** Compact the conversation on screen now (a checkpoint after it, holding the summary), streamed. */
-  compact: (id: string, instructions: string, onEvent: (event: ReplyEvent) => void, signal?: AbortSignal) =>
+  compact: (id: string, instructions: string, onEvent: OnEvent, signal?: AbortSignal) =>
     stream(`/api/v1/playground/conversations/${encodeURIComponent(id)}/compact`, { instructions }, onEvent, signal),
 
   /** An image as itself, or a file as its text (with ``type`` the file's own, for a PDF read in the browser). */
@@ -113,11 +123,12 @@ export function rememberAttachment(id: string, url: string) {
   blobs.set(id, Promise.resolve(url));
 }
 
-/** Recent or archived conversations, the most recently used first. */
+/** Recent or archived conversations, the most recently used first; read again every few seconds while any of them works. */
 export const useConversations = (archived: Ref<boolean>) =>
   useQuery({
     queryKey: computed(() => keys.conversationList(archived.value)),
     queryFn: () => unwrap(api.GET('/api/v1/playground/conversations', { params: { query: { archived: archived.value } } })),
+    refetchInterval: (query) => (query.state.data?.conversations.some((c) => c.running) ? 3_000 : false),
   });
 
 /** Marks both lists stale after a change, so the one in view refetches. */

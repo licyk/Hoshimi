@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMemoryHistory, createRouter } from 'vue-router';
+import { useChatStore } from '@/stores/chat';
 import PlaygroundView from '@/views/PlaygroundView.vue';
 
 // Stubbed before the API client is made: openapi-fetch keeps the fetch it was created with.
@@ -23,8 +24,10 @@ vi.mock('@/ui', async (importOriginal) => ({ ...(await importOriginal<typeof imp
 interface Msg { id: string; parent_id: string | null; role: 'user' | 'assistant' | 'checkpoint'; content: string; model: string; effort: string; status: string; error: string; notices: { kind: string; name: string; model: string }[]; created_at: number; attachments: unknown[]; reasoning?: string; reasoning_ms?: number; steps?: unknown[]; duration_ms?: number; waited_ms?: number; finished_at?: number }
 interface Conv { id: string; title: string; title_state: string; model: string; effort: string; archived: boolean; temporary: boolean; branched_from: string; created_at: number; updated_at: number; current_leaf: string; messages: Msg[]; approval?: string }
 let server: { conversations: Map<string, Conv>; session: string | null; calls: { method: string; path: string; body: unknown }[]; ids: number; clock: number; terminals?: unknown[]; steerOpen?: boolean; context?: object };
-/** The reply streams the test has not yet finished: it writes their events and closes them. */
-let streams: { send: (event: object) => void; close: () => void; signal: AbortSignal }[];
+/** The reply streams the test has not yet finished: it writes their events and closes them. Each says which conversation's reply it follows. */
+let streams: { send: (event: object) => void; close: () => void; signal: AbortSignal; conversation: string }[];
+/** What each conversation's reply under way has sent, for a page that follows it again from its start. */
+const sent = new Map<string, object[]>();
 
 const json = (body: unknown, status = 200) => new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const summary = ({ messages: _m, current_leaf: _l, ...rest }: Conv) => rest;
@@ -35,16 +38,31 @@ function message(c: Conv, parent: string | null, role: Msg['role'], content: str
   if (!c.title && role === 'user') Object.assign(c, { title: content, title_state: 'provisional' });
   return m;
 }
-function sse(signal: AbortSignal | null | undefined, first: object[]) {
+/** A reply's stream. A page that stops reading it (aborts) leaves the reply going, as the server does. */
+function sse(signal: AbortSignal | null | undefined, first: object[], conversation = '', replay = false) {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
+  let open = true;
   const body = new ReadableStream<Uint8Array>({ start: (c) => { controller = c; } });
+  const log = sent.get(conversation) ?? [];
+  sent.set(conversation, log);
   const stream = {
-    send: (event: object) => controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)),
-    close: () => controller.close(),
+    send: (event: object) => {
+      if (!replay || stream !== streams[streams.length - 1]) log.push(event);
+      if (open) controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+    },
+    close: () => {
+      if (open) controller.close();
+      open = false;
+    },
     signal: signal ?? new AbortController().signal,
+    conversation,
   };
-  stream.signal.addEventListener('abort', () => controller.error(new DOMException('Aborted', 'AbortError')), { once: true });
-  first.forEach(stream.send);
+  stream.signal.addEventListener('abort', () => {
+    if (open) controller.error(new DOMException('Aborted', 'AbortError'));
+    open = false;
+  }, { once: true });
+  if (replay) first.forEach((event) => controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)));
+  else first.forEach(stream.send);
   streams.push(stream);
   return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } });
 }
@@ -75,7 +93,7 @@ async function handle(input: RequestInfo | URL, init?: RequestInit): Promise<Res
     return json(conv, 201);
   }
   if (!c) return json({ code: 'not_found', message: 'No such conversation' }, 404);
-  if (!sub && request.method === 'GET') return json(c);
+  if (!sub && request.method === 'GET') return json({ ...c, running: c.messages.some((m) => m.status === 'streaming') });
   if (!sub && request.method === 'PATCH') {
     Object.assign(c, Object.fromEntries(Object.entries(body as object).filter(([, v]) => v !== undefined)));
     return json(summary(c));
@@ -97,14 +115,32 @@ async function handle(input: RequestInfo | URL, init?: RequestInit): Promise<Res
     const b = body as { parent_id: string | null; content: string; attachment_ids: string[]; model: string };
     const question = message(c, b.parent_id, 'user', b.content, { attachments: b.attachment_ids.map((a) => ({ id: a, kind: 'file', name: 'notes.md', mime: 'text/markdown', size: 4 })) });
     const reply = message(c, question.id, 'assistant', '', { status: 'streaming', model: b.model });
-    return sse(request.signal, [{ type: 'user', message: question }, { type: 'assistant', message: reply }]);
+    sent.set(c.id, []);
+    return sse(request.signal, [{ type: 'user', message: question }, { type: 'assistant', message: reply }], c.id);
   }
   if (sub === 'messages' && action === 'retry') {
     const target = c.messages.find((m) => m.id === mid)!;
     const reply = message(c, target.role === 'user' ? target.id : target.parent_id, 'assistant', '', { status: 'streaming', model: (body as { model?: string }).model || 'test/model' });
-    return sse(request.signal, [{ type: 'assistant', message: reply }]);
+    sent.set(c.id, []);
+    return sse(request.signal, [{ type: 'assistant', message: reply }], c.id);
   }
   if (sub === 'approvals') return json(null, 204);
+  if (sub === 'events') {
+    if (!c.messages.some((m) => m.status === 'streaming')) return json({ code: 'not_found', message: 'No reply is running' }, 404);
+    return sse(request.signal, sent.get(c.id) ?? [], c.id, true);
+  }
+  if (sub === 'stop') {
+    // Stopped: settled with what came, and its end sent to whoever follows it.
+    const reply = c.messages.find((m) => m.status === 'streaming');
+    if (reply) {
+      Object.assign(reply, { status: 'stopped', content: (sent.get(c.id) ?? []).map((e) => ((e as { type: string; text?: string }).type === 'delta' ? (e as { text: string }).text : '')).join('') });
+      for (const stream of streams.filter((x) => x.conversation === c.id)) {
+        stream.send({ type: 'done', message: reply });
+        stream.close();
+      }
+    }
+    return json(null, 204);
+  }
   if (sub === 'steer') return server.steerOpen ? json({ id: `steer${++server.ids}` }, 202) : json({ code: 'conflict', message: 'No reply is running' }, 409);
   if (sub === 'terminals' && request.method === 'GET') return json({ terminals: server.terminals ?? [] });
   if (sub === 'terminals' && request.method === 'DELETE') {
@@ -115,7 +151,8 @@ async function handle(input: RequestInfo | URL, init?: RequestInit): Promise<Res
   if (sub === 'compact') {
     const record = { type: 'compaction', id: `cmp${++server.ids}`, status: 'running', trigger: 'manual', phase: 'manual', round: 0, summary: '', recent: [], tokens_before: 0, tokens_after: 0, model: '', ms: 0, error: '', at: 1 };
     const checkpoint = message(c, c.current_leaf || null, 'checkpoint', '', { status: 'streaming', steps: [record] });
-    return sse(request.signal, [{ type: 'checkpoint', message: checkpoint }]);
+    sent.set(c.id, []);
+    return sse(request.signal, [{ type: 'checkpoint', message: checkpoint }], c.id);
   }
   if (sub === 'messages' && action === 'request') return json({ model: 'test/model', messages: [{ role: 'user', content: 'hello' }], stream: true });
   return json({ code: 'not_found', message: path }, 404);
@@ -158,6 +195,7 @@ describe('Playground chat', () => {
     vi.clearAllMocks();
     server = { conversations: new Map(), session: null, calls: [], ids: 0, clock: 0 };
     streams = [];
+    sent.clear();
     state.route.mockImplementation(handle);
     vi.stubGlobal('fetch', state.fetch);
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
@@ -294,17 +332,75 @@ describe('Playground chat', () => {
     wrapper.unmount();
   });
 
-  it('stops a reply and keeps what came', async () => {
+  it('stops a reply on the server and keeps what came', async () => {
     const { wrapper } = await openPlayground();
     await ask(wrapper, 'hello');
     streams[0].send({ type: 'delta', text: 'partial' });
     await flushPromises();
     await wrapper.find('button[aria-label="Stop"]').trigger('click');
     await flushPromises();
-    expect(streams[0].signal.aborted).toBe(true);
+    // The server is told, and the reply's end comes back on its stream as it settles.
+    expect(calls('POST', /\/stop$/)).toHaveLength(1);
+    expect(streams[0].signal.aborted).toBe(false);
     expect(wrapper.find('.assistant-message').text()).toContain('partial');
     expect(wrapper.find('.assistant-message .ended').text()).toBe('Stopped');
     expect(wrapper.find('button[aria-label="Send"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('stops reading a reply, and says it stopped, when the server cannot be told', async () => {
+    const { wrapper } = await openPlayground();
+    await ask(wrapper, 'hello');
+    streams[0].send({ type: 'delta', text: 'partial' });
+    await flushPromises();
+    state.route.mockImplementation((input: RequestInfo | URL, init?: RequestInit) =>
+      String(input instanceof Request ? input.url : input).endsWith('/stop') ? Promise.reject(new TypeError('offline')) : handle(input, init));
+    await wrapper.find('button[aria-label="Stop"]').trigger('click');
+    await flushPromises();
+    expect(streams[0].signal.aborted).toBe(true);
+    expect(wrapper.find('.assistant-message').text()).toContain('partial');
+    expect(wrapper.find('.assistant-message .ended').text()).toBe('Stopped');
+    wrapper.unmount();
+  });
+
+  it('leaves a reply working when another chat opens, and follows it again from its start on coming back', async () => {
+    const { wrapper } = await openPlayground();
+    await ask(wrapper, 'first question');
+    const first = [...server.conversations.keys()][0];
+    streams[0].send({ type: 'delta', text: 'part one, ' });
+    await flushPromises();
+    // A new chat: the page stops reading the reply, and does not stop it.
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'O', ctrlKey: true, shiftKey: true }));
+    await flushPromises();
+    expect(streams[0].signal.aborted).toBe(true);
+    expect(calls('POST', /\/stop$/)).toHaveLength(0);
+    expect(turns(wrapper)).toEqual([]);
+    expect(wrapper.find('button[aria-label="Send"]').exists()).toBe(true);
+    // The reply goes on without the page.
+    streams[0].send({ type: 'delta', text: 'part two' });
+    // Opened again: what it sent so far comes again, from the first event, and the rest as it comes.
+    await useChatStore().open(first);
+    await flushPromises();
+    expect(calls('GET', new RegExp(`/conversations/${first}/events$`))).toHaveLength(1);
+    expect(turns(wrapper)).toEqual(['Q: first question', 'A: part one, part two']);
+    expect(wrapper.find('button[aria-label="Stop"]').exists()).toBe(true);
+    await answer('part one, part two, done.');
+    expect(turns(wrapper)).toEqual(['Q: first question', 'A: part one, part two, done.']);
+    expect(wrapper.find('button[aria-label="Send"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('opens a chat whose reply ended meanwhile as it was kept', async () => {
+    const { wrapper } = await openPlayground();
+    await ask(wrapper, 'first question');
+    const first = [...server.conversations.keys()][0];
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'O', ctrlKey: true, shiftKey: true }));
+    await flushPromises();
+    Object.assign(server.conversations.get(first)!.messages[1], { status: 'complete', content: 'Answered in the background.' });
+    await useChatStore().open(first);
+    await flushPromises();
+    expect(calls('GET', /\/events$/)).toHaveLength(0);
+    expect(turns(wrapper)).toEqual(['Q: first question', 'A: Answered in the background.']);
     wrapper.unmount();
   });
 
@@ -632,6 +728,7 @@ describe('Playground commands, compaction and run time', () => {
     vi.clearAllMocks();
     server = { conversations: new Map(), session: null, calls: [], ids: 0, clock: 0 };
     streams = [];
+    sent.clear();
     state.route.mockImplementation(handle);
     vi.stubGlobal('fetch', state.fetch);
     localStorage.clear();

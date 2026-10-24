@@ -1,5 +1,5 @@
 """What the Playground's agent keeps between calls: background commands, approvals asked and given, messages that steer a reply under way,
-the conversations working now, and the context windows stations have turned out to have."""
+the conversations working now and the replies running in the background, and the context windows stations have turned out to have."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from hoshimi.core.agent.context_window import LearnedWindows
+from hoshimi.core.agent.runs import Runs
 from hoshimi.core.agent.terminals import TerminalManager
 
 Decision = Literal["allow", "always", "deny"]
@@ -70,6 +71,11 @@ class Approvals:
             pending.decision = decision
             pending.event.set()
         return True
+
+    def waiting(self, conversation_id: str) -> bool:
+        """Whether a call in the conversation waits for the user's answer."""
+        with self.lock:
+            return any(key[0] == conversation_id for key in self.pending)
 
     def forget(self, conversation_id: str) -> None:
         with self.lock:
@@ -172,12 +178,16 @@ class AgentRuntime:
         self.approvals = Approvals()
         self.steering = Steering()
         self.busy = Busy()
+        self.runs = Runs()
         self.windows = LearnedWindows()
 
     def end(self, conversation_id: str) -> None:
-        """A conversation is gone: its background commands stop, its approvals are forgotten."""
+        """A conversation is gone: its reply stops, its background commands stop, its approvals are forgotten."""
+        self.runs.stop(conversation_id, wait=5.0)
         self.terminals.end(conversation_id)
         self.approvals.forget(conversation_id)
 
     def close(self) -> None:
+        # The replies settle (as stopped) while the database is still open.
+        self.runs.close()
         self.terminals.close()

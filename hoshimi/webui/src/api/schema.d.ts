@@ -523,6 +523,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/playground/conversations/{conversation_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Follow Reply
+         * @description Follow the reply (or compaction) working in the conversation, from its first event (or the ``after``-th), as its send did.
+         *
+         *     404 when none runs: it has ended, and the conversation holds it as kept.
+         */
+        get: operations["follow_conversation_reply"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/playground/conversations/{conversation_id}/messages": {
         parameters: {
             query?: never;
@@ -604,6 +626,26 @@ export interface paths {
          *     ended; send the message as a message of its own then.
          */
         post: operations["steer_conversation_reply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/playground/conversations/{conversation_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop Reply
+         * @description Stop the reply (or compaction) working in the conversation; it settles as stopped, and its followers get its ``done``. Nothing running is no error.
+         */
+        post: operations["stop_conversation_reply"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1888,6 +1930,11 @@ export interface components {
             id: string;
             /** Model */
             model: string;
+            /**
+             * Running
+             * @default false
+             */
+            running: boolean;
             /** Temporary */
             temporary: boolean;
             /** Title */
@@ -1899,6 +1946,11 @@ export interface components {
             title_state: "" | "provisional" | "auto" | "user";
             /** Updated At */
             updated_at: number;
+            /**
+             * Waiting
+             * @default false
+             */
+            waiting: boolean;
         };
         /** ConversationView */
         ConversationView: {
@@ -1924,6 +1976,11 @@ export interface components {
             messages: components["schemas"]["MessageView"][];
             /** Model */
             model: string;
+            /**
+             * Running
+             * @default false
+             */
+            running: boolean;
             /** Temporary */
             temporary: boolean;
             /** Title */
@@ -1935,6 +1992,11 @@ export interface components {
             title_state: "" | "provisional" | "auto" | "user";
             /** Updated At */
             updated_at: number;
+            /**
+             * Waiting
+             * @default false
+             */
+            waiting: boolean;
         };
         /**
          * CooledAccount
@@ -4706,6 +4768,77 @@ export interface operations {
             };
         };
     };
+    follow_conversation_reply: {
+        parameters: {
+            query?: {
+                /** @description Skip this many events from the start */
+                after?: number;
+            };
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The reply's events, as Server-Sent Events */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     send_conversation_message: {
         parameters: {
             query?: never;
@@ -4944,6 +5077,71 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SteerView"];
                 };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_conversation_reply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Bad Request */
             400: {

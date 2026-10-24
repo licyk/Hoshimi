@@ -46,7 +46,7 @@ going for another round, to answer it.
 
 The reply streams back as events (see :func:`event`) while it is kept: it is
 filed as ``streaming`` before the first word, and settles as ``complete``,
-``stopped`` (the page stopped it or went away) or ``error``, with the tokens
+``stopped`` (the user stopped it, or the server went down) or ``error``, with the tokens
 its rounds took (``usage``: the ``last`` round's and the ``total``, as the
 station reported them, and the ``context`` it ended with) and how long it
 worked (``duration_ms``, less the time it waited for approvals). Titles are
@@ -609,7 +609,10 @@ class PlaygroundRunner:
 
     # -- replies ------------------------------------------------------------- #
     def reply(self, conversation_id: str, parent_id: str, *, model: str, effort: str, cancel: threading.Event | None = None) -> Iterator[dict[str, Any]]:
-        """Stream and keep a new reply to the question ``parent_id``; ``cancel`` is set when the page stops it."""
+        """Stream and keep a new reply to the question ``parent_id``; ``cancel`` is set when the user stops it.
+
+        Closing the events (what stopping a run does once ``cancel`` is seen) settles it as stopped, with what came.
+        """
         cancel = cancel or threading.Event()
         conversation = self.store.get(conversation_id)
         assert conversation is not None
@@ -666,7 +669,7 @@ class PlaygroundRunner:
                             continue
                         raise
             except GeneratorExit:
-                # The page stopped the reply, or went away: what came is kept.
+                # Stopped (closed by its run, or the server going down): what came is kept.
                 run.end_reasoning()
                 run.stop_calls()
                 settle("stopped")
@@ -1103,7 +1106,7 @@ class PlaygroundRunner:
             yield event("done", message=self.store.message(checkpoint.id))
         finally:
             if not settled:
-                # Stopped, failed, or the page went away: the conversation is as it was.
+                # Stopped, failed, or closed by the server going down: the conversation is as it was.
                 self.store.remove_leaf(checkpoint.id)
             busy.end(conversation.id)
 
@@ -1179,11 +1182,16 @@ def clean_title(raw: str) -> str:
     return line[:TITLE_LIMIT]
 
 
+def encode(item: dict[str, Any]) -> str:
+    """One event as the JSON object a ``data:`` line carries."""
+    return json.dumps(item, default=_jsonable, ensure_ascii=False)
+
+
 def sse(events: Iterator[dict[str, Any]]) -> Generator[str, None, None]:
     """Events as Server-Sent Events, one JSON object per ``data:`` line; closing this closes ``events``."""
     try:
         for item in events:
-            yield f"data: {json.dumps(item, default=_jsonable, ensure_ascii=False)}\n\n"
+            yield f"data: {encode(item)}\n\n"
     finally:
         close = getattr(events, "close", None)
         if close is not None:

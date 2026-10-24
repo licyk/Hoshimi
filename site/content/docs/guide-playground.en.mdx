@@ -49,7 +49,9 @@ On a phone or a tablet, whose keyboard has no <kbd>Shift</kbd>+<kbd>Enter</kbd>,
 
 The whole conversation scrolls as one. A tool's output, a compaction summary and a question being edited scroll on their own when they are long; once one reaches its top or its end, scrolling on in the same direction (the wheel, a trackpad or a swipe) moves the conversation instead of stopping there.
 
-Pressing **Stop** (or <kbd>Esc</kbd>) ends the reply; what came so far is kept and the reply is marked **Stopped**. Leaving the page does the same.
+Pressing **Stop** (or <kbd>Esc</kbd>) ends the reply; what came so far is kept and the reply is marked **Stopped**.
+
+A reply runs on the server, not in the page. Opening another chat, starting a new one, leaving the Playground or reloading the page does not stop it: it goes on in the background, and several chats can work at the same time. Open the chat again to watch it from where it is, with what it wrote so far; it can be stopped from there too. A reply that ends while no page shows it is kept, and its chat is named as usual.
 
 ## Commands
 
@@ -85,7 +87,8 @@ Chats are grouped by when they were last used: **Today**, **Yesterday**, **Previ
 - Each chat has a menu (**Chat options**, the `…` button) with **Rename**, **Archive** and **Delete**. The same menu is in the header for the open chat.
 - **Rename** sets your own title, which is never replaced by a generated one.
 - **Archive** puts a chat away without deleting it. **Archived chats**, at the foot of the list, shows the archive; **Restore** brings a chat back, and so does sending a new message in it. **Back to chats** returns to the list. Archiving the open chat starts a new one.
-- **Delete** asks first, then removes the chat, its messages and the attachments only it carried, for good. Any background commands its tools started are stopped.
+- **Delete** asks first, then removes the chat, its messages and the attachments only it carried, for good. A reply working in it is stopped first, and any background commands its tools started are stopped.
+- A chat whose reply is working now shows a spinner after its title (**Working…**), whether the page follows it or it works in the background; one whose tool call waits for your approval shows a shield (**Needs approval**) instead. Open it to answer.
 
 ### Titles
 
@@ -212,7 +215,7 @@ While a reply runs, a line at its foot says what it is doing (writing, running o
 
 | What you see | Meaning |
 | --- | --- |
-| **Stopped** | You stopped it, or the page went away; the text that came is kept |
+| **Stopped** | You stopped it, or the server stopped; the text that came is kept |
 | **This reply failed.** and a reason | The model or the station returned an error; **Try again** retries |
 | "The image … was described by …" | A model that cannot read images got a description |
 | "The image … was left out: no model could read it." | No describing model was available, or **Image model** is **Off** |

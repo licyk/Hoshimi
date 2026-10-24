@@ -15,7 +15,8 @@ export type { ConversationAction };
  * way (shared-axis-x); each view keeps its own list, so the one leaving does not change under the
  * slide. What is done to a chat (rename, archive, restore, delete) is the page's.
  */
-const props = defineProps<{ current: string | null; refresh?: number }>();
+/** ``working``: the open chat, while this page follows a reply in it (the list may not know yet). */
+const props = defineProps<{ current: string | null; working?: string | null; refresh?: number }>();
 const emit = defineEmits<{ select: [id: string]; act: [action: ConversationAction, conversation: ConversationSummary] }>();
 const { t } = useI18n();
 
@@ -35,7 +36,7 @@ const axis = computed(() => (archived.value ? 1 : -1));
     <Transition :name="TRANSITIONS.sharedAxisX">
       <div v-if="!archived" key="recent" class="pane">
         <SearchField v-model="query" compact class="search" :label="t('playground.searchChats')" :placeholder="t('playground.searchChats')" />
-        <ChatList :conversations="recentChats" :pending="recent.isPending.value" :current="current" :query="query" @select="(id) => emit('select', id)" @act="(a, c) => emit('act', a, c)" />
+        <ChatList :conversations="recentChats" :pending="recent.isPending.value" :current="current" :working="working" :query="query" @select="(id) => emit('select', id)" @act="(a, c) => emit('act', a, c)" />
         <button type="button" class="archive-link state-layer type-label-large" @click="archived = true">
           <AppIcon :icon="icons.Archive" :size="18" />{{ t('playground.archivedChats') }}
         </button>
@@ -44,7 +45,7 @@ const axis = computed(() => (archived.value ? 1 : -1));
         <button type="button" class="back state-layer type-label-large" @click="archived = false">
           <AppIcon :icon="icons.ArrowLeft" :size="18" />{{ t('playground.backToChats') }}
         </button>
-        <ChatList :conversations="archivedChats" :pending="archive.isPending.value" :current="current" archived @select="(id) => emit('select', id)" @act="(a, c) => emit('act', a, c)" />
+        <ChatList :conversations="archivedChats" :pending="archive.isPending.value" :current="current" :working="working" archived @select="(id) => emit('select', id)" @act="(a, c) => emit('act', a, c)" />
       </div>
     </Transition>
   </nav>

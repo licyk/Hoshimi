@@ -12,9 +12,9 @@ const chat = (id: string, title: string, at: number, extra: object = {}) => ({
 });
 const recent = [
   chat('a', 'Setting up the gateway', Date.now() / 1000),
-  chat('b', '', midnight - DAY / 2),
+  chat('b', '', midnight - DAY / 2, { running: true }),
   chat('c', 'Branched idea', midnight - 3 * DAY, { branched_from: 'a' }),
-  chat('d', 'Old notes', midnight - 90 * DAY),
+  chat('d', 'Old notes', midnight - 90 * DAY, { running: true, waiting: true }),
 ];
 const archived = [chat('z', 'Put away', midnight - 20 * DAY, { archived: true })];
 
@@ -45,6 +45,16 @@ describe('ChatSidebar', () => {
     expect(w.find('.item.current .title').text()).toBe('Setting up the gateway');
     expect(w.find('.item.current .open').attributes('aria-current')).toBe('page');
     expect(w.findAll('.item')[2].find('.branched').exists()).toBe(true);
+    w.unmount();
+  });
+
+  it('marks the chats working now, here or in the background, and one that waits for an answer', async () => {
+    const w = open();
+    const activity = () => w.findAll('.item').map((item) => (item.find('.activity').exists() ? item.find('.activity').attributes('aria-label') : ''));
+    expect(activity()).toEqual(['', 'Working…', '', 'Needs approval']);
+    // The open chat, while this page follows its reply, before the list has heard of it.
+    await w.setProps({ working: 'a' });
+    expect(activity()[0]).toBe('Working…');
     w.unmount();
   });
 
