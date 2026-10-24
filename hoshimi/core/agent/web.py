@@ -29,7 +29,10 @@ from hoshimi.core.agent.base import Tool, ToolContext, ToolError, ToolResult, cl
 from hoshimi.core.net.policy import proxy_route
 
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
-TIMEOUT = 20.0
+TIMEOUT = 60.0
+"""Seconds a request may wait for a reply, or between two parts of one: long enough for a slow connection."""
+CONNECT_TIMEOUT = 30.0
+"""Seconds a request may take to connect."""
 MAX_BYTES = 5_000_000
 """The most of a page that is downloaded."""
 FETCH_CHARS = 60_000
@@ -43,7 +46,7 @@ def _client(ctx: ToolContext, url: str) -> httpx.Client:
     proxy, _ = proxy_route(httpx.URL(url), ctx.network)
     if ctx.transport is not None:
         return httpx.Client(transport=ctx.transport, timeout=TIMEOUT, follow_redirects=False)
-    return httpx.Client(proxy=proxy, timeout=httpx.Timeout(TIMEOUT, connect=10.0), follow_redirects=False, trust_env=False)
+    return httpx.Client(proxy=proxy, timeout=httpx.Timeout(TIMEOUT, connect=CONNECT_TIMEOUT), follow_redirects=False, trust_env=False)
 
 
 # -- addresses -------------------------------------------------------------------- #
