@@ -23,11 +23,14 @@ from collections.abc import Iterator
 from typing import Any, ClassVar
 
 from hoshimi.core.catalog import ModelSpec, opencode_spec
+from hoshimi.core.failure import parse_retry_after
+from hoshimi.core.net.identity import identity
 from hoshimi.core.providers.base import Account, ProviderError
 from hoshimi.core.providers.openai_compat import (
     OpenAiCompatProvider,
-    consume_openai_sse,
+    model_rows,
     raise_for_status,
+    read_body,
 )
 from hoshimi.core.providers.opencode_fingerprint import (
     apply_fingerprint,
@@ -43,9 +46,9 @@ OPENCODE_BASE_URL = "https://opencode.ai/inference"
 
 CLIENT_UA = "opencode/latest/2.0.26/cli"
 
-# Models served by /inference/v1/responses instead of /chat/completions.
+# Models served by /inference/openai/v1/responses instead of /chat/completions.
 RESPONSES_MODELS = frozenset({"muse-spark-1.2-contributor-free", "muse-spark-1.3-contributor-free"})
-# Models served by the Anthropic-shaped /inference/v1/messages endpoint.
+# Models served by the Anthropic-shaped /inference/anthropic/v1/messages endpoint.
 MESSAGES_MODELS = frozenset({"union-alpha"})
 # Ids that are free-tier without carrying a `free` token.
 ALWAYS_FREE = frozenset({"union-alpha", "space-bunny-free", "big-pickle"})
@@ -215,13 +218,35 @@ class OpencodeProvider(OpenAiCompatProvider):
     def _anonymous(self) -> bool:
         return not self.accounts or self._api_key(self.accounts[0]) == "public"
 
+    def model_wire(self, model: str) -> str:
+        """Prefer explicit model configuration and catalog protocol declarations."""
+        configured = self.options.get("model_protocols", {})
+        selected = configured.get(model) if isinstance(configured, dict) else None
+        selected = selected or getattr(self, "_model_wires", {}).get(model) or wire_for(model)
+        if selected not in ("chat", "responses", "messages"):
+            raise ProviderError(400, f"{self.id}: unsupported model protocol {selected!r}")
+        return selected
+
+    def parse_models_response(self, data: Any) -> list[str]:
+        aliases = {"chat-completions": "chat", "chat": "chat", "responses": "responses", "messages": "messages"}
+        wires = {}
+        for row in model_rows(data):
+            api = row.get("api")
+            raw = row.get("wire") or row.get("protocol") or api
+            if isinstance(raw, dict):
+                raw = next((key for key in raw if key in aliases), None)
+            if isinstance(row.get("id"), str) and isinstance(raw, str) and raw in aliases:
+                wires[row["id"]] = aliases[raw]
+        self._model_wires = wires
+        return super().parse_models_response(data)
+
     def endpoint_url(self, wire: str) -> str:
         base = self.base_url.rstrip("/")
         if wire == "responses":
-            return f"{base}/v1/responses"
+            return f"{base}/openai/v1/responses"
         if wire == "messages":
-            return f"{base}/v1/messages"
-        return f"{base}/v1/chat/completions"
+            return f"{base}/anthropic/v1/messages"
+        return f"{base}/openai/v1/chat/completions"
 
     def build_headers(
         self,
@@ -235,9 +260,9 @@ class OpencodeProvider(OpenAiCompatProvider):
             "Content-Type": "application/json",
             "Accept": accept,
             "Authorization": f"Bearer {self._api_key(account)}",
-            "User-Agent": self.user_agent or CLIENT_UA,
+            "User-Agent": identity.get().user_agent or self.user_agent or CLIENT_UA,
             "x-opencode-client": "cli",
-            "x-opencode-project": str(account.get("project_id") or "global"),
+            "x-opencode-project": identity.get().project or str(account.get("project_id") or "global"),
         }
         if session:
             for name in ("x-opencode-session", "x-opencode-session-id", "x-session-affinity", "x-session-id"):
@@ -311,8 +336,10 @@ class OpencodeProvider(OpenAiCompatProvider):
         are undone: a caller's own ``read`` travels as ``read_client`` beside
         the gate's ``read``. On a keyed account every tool is the caller's.
         """
-        wire = wire_for(model)
-        session = session_for_conversation(_session_seed(body), namespace=f"{account.id}\0{self._api_key(account)}")
+        wire = self.model_wire(model)
+        context = identity.get()
+        seed = context.session or _session_seed(body)
+        session = context.session if context.forwarded and context.session else session_for_conversation(seed, namespace=f"{account.id}\0{self._api_key(account)}")
 
         if wire == "responses":
             payload = chat_to_responses(body, model=model)
@@ -323,6 +350,8 @@ class OpencodeProvider(OpenAiCompatProvider):
         else:
             payload = self.build_body(body, model)
             style = "chat"
+        if wire != "messages":
+            payload["prompt_cache_key"] = session
 
         # The fingerprint gate belongs to the anonymous lane; a keyed account
         # sees the caller's tools exactly as declared.
@@ -349,12 +378,13 @@ class OpencodeProvider(OpenAiCompatProvider):
             observe_response(self.id, response)
             if response.status_code >= 400:
                 raise_for_status(response, provider=self.id)
+            retry_after = parse_retry_after(response.headers.get("retry-after"))
             if wire == "responses":
-                chunks = iter_responses_chunks(response.iter_lines(), provider=self.id)
+                chunks = iter_responses_chunks(response.iter_lines(), provider=self.id, retry_after=retry_after)
             elif wire == "messages":
-                chunks = iter_anthropic_chunks(response.iter_lines())
+                chunks = iter_anthropic_chunks(response.iter_lines(), provider=self.id, retry_after=retry_after)
             else:
-                chunks = consume_openai_sse(response.iter_lines(), provider=self.id)
+                chunks = read_body(response, provider=self.id)
             for chunk in chunks:
                 if isinstance(chunk, dict) and chunk.get("type") == "tool_call_start":
                     sent = chunk.get("name")
@@ -379,4 +409,4 @@ class OpencodeProvider(OpenAiCompatProvider):
 
     def specs(self) -> dict[str, ModelSpec]:
         """The local capability table plus this model's endpoint."""
-        return {model_id: opencode_spec(model_id, self.id, wire=wire_for(model_id)) for model_id in self.models()}
+        return {model_id: opencode_spec(model_id, self.id, wire=self.model_wire(model_id)) for model_id in self.models()}

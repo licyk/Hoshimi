@@ -137,7 +137,7 @@ def test_a_transient_failure_reasks_the_pool_instead_of_failing_at_once() -> Non
     assert lane.calls == ["a", "a", "a"], "one account, one pass, then the retries it is owed"
 
 
-def test_the_wait_is_capped_even_when_the_station_names_a_longer_one(slept: list[float]) -> None:
+def test_long_server_wait_is_returned_without_an_early_retry(slept: list[float]) -> None:
     """`Retry-After` is a statement about the station's limiter, not a licence.
 
     A request path that parks for an hour is a worse answer than a failure
@@ -145,11 +145,11 @@ def test_the_wait_is_capped_even_when_the_station_names_a_longer_one(slept: list
     """
     lane = _Lane([_Failing(503)], transient=ProviderError(503, "lane: slow down", retryable=True, retry_after=3600.0))
 
-    with pytest.raises(ProviderError):
+    with pytest.raises(ProviderError) as failure:
         list(lane.stream("m", {}))
 
-    assert slept, "the wait the station asked for was not passed through at all"
-    assert all(delay <= lane.backoff_max_seconds for delay in slept), slept
+    assert failure.value.retry_after == 3600.0
+    assert slept == []
 
 
 def test_a_named_short_wait_is_honoured_exactly(slept: list[float]) -> None:

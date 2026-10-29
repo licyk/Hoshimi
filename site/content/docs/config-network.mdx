@@ -161,3 +161,27 @@ curl -s http://127.0.0.1:10600/api/v1/network/diagnostics \
 | `upstream_error` | 上游服务错误 | 其他错误状态码 |
 
 `challenge`、`edge_rejected`、`invalid_response`、`client_restricted`、`region_restricted` 和 `signature_rejected` 会在处理令牌之前被识别出来：它们不会让账号的刷新令牌作废，也不会触发换账号或标记模型失效。单纯的 HTTP 403 也不会被当作令牌过期。遇到这些情况，先检查线路（换代理或直连）、地区和站点状态。更多排查步骤见[故障排查](/docs/advanced-troubleshooting)。
+
+## 渠道并发与等待
+
+每个渠道实例的推理请求共享并发上限：默认 2，Zcode 默认 1。流式请求直到结束或关闭才释放名额。通过 `providers.<id>.options.admission` 调整并发数、发出请求的最小间隔和排队等待上限：
+
+```json
+{
+  "providers": {
+    "opencode": {
+      "options": {
+        "admission": {
+          "max_concurrency": 2,
+          "min_interval_seconds": 0,
+          "queue_timeout_seconds": 8
+        }
+      }
+    }
+  }
+}
+```
+
+`max_concurrency` 必须是正整数，其余两个值是非负且有限的秒数。上游要求的等待时间会被保留；超过当前请求重试预算时，返回错误及 `Retry-After`，不会缩短时间后提前重试。限制保存在实例内存中，不在多个进程之间共享。
+
+OpenCode 免费额度和 Cline 每日模型额度按账号与模型暂缓；Zcode 并发限制和 Qoder 排队不会使凭据失效。账号级额度错误仍暂停整个账号。额度耗尽但未给出恢复时间时，保守等待一小时。

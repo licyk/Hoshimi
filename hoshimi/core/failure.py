@@ -593,14 +593,14 @@ class AccountCooler:
 
     def __init__(self, *, policy_block_seconds: float = 1800.0) -> None:
         self.policy_block_seconds = float(policy_block_seconds)
-        self._holds: dict[tuple[str, str], tuple[float, str]] = {}
+        self._holds: dict[tuple[str, str, str], tuple[float, str]] = {}
         self._lock = threading.Lock()
 
-    def hold(self, provider: str, account: str, seconds: float, *, reason: str = "", now: float | None = None) -> float:
+    def hold(self, provider: str, account: str, seconds: float, *, reason: str = "", now: float | None = None, model: str = "") -> float:
         """Hide this account for ``seconds``. Returns the moment it comes back."""
         moment = time.time() if now is None else now
         until = moment + max(0.0, float(seconds))
-        key = (str(provider), str(account))
+        key = (str(provider), str(account), model)
         with self._lock:
             current = self._holds.get(key)
             # Never shorten a hold that is already running: two refusals in
@@ -610,17 +610,17 @@ class AccountCooler:
             self._holds[key] = (until, str(reason))
             return until
 
-    def blocked(self, provider: str, account: str, *, now: float | None = None) -> bool:
+    def blocked(self, provider: str, account: str, *, now: float | None = None, model: str = "") -> bool:
         """Is this account still held back?"""
         moment = time.time() if now is None else now
         with self._lock:
-            entry = self._holds.get((str(provider), str(account)))
-            if entry is None:
-                return False
-            if entry[0] <= moment:
-                del self._holds[(str(provider), str(account))]
-                return False
-            return True
+            for key in {(str(provider), str(account), ""), (str(provider), str(account), model)}:
+                entry = self._holds.get(key)
+                if entry is not None:
+                    if entry[0] > moment:
+                        return True
+                    del self._holds[key]
+            return False
 
     def clear(self, provider: str, account: str | None = None) -> int:
         """Let accounts back in. None clears the whole lane. Returns the count."""
@@ -630,7 +630,10 @@ class AccountCooler:
                 for key in [key for key in self._holds if key[0] == str(provider)]:
                     del self._holds[key]
                 return dropped
-            return 1 if self._holds.pop((str(provider), str(account)), None) else 0
+            keys = [key for key in self._holds if key[:2] == (str(provider), str(account))]
+            for key in keys:
+                del self._holds[key]
+            return len(keys)
 
     def snapshot(self, *, now: float | None = None) -> list[dict[str, Any]]:
         """What is held, for a diagnostics surface."""
@@ -642,10 +645,11 @@ class AccountCooler:
                 {
                     "provider": provider,
                     "account": account,
+                    **({"model": model} if model else {}),
                     "reason": reason,
                     "seconds_left": round(until - moment, 3),
                 }
-                for (provider, account), (until, reason) in items
+                for (provider, account, model), (until, reason) in items
             ),
             key=lambda row: (row["provider"], row["account"]),
         )

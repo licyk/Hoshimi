@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from hoshimi.core.catalog import ModelSpec, zcode_spec
+from hoshimi.core.failure import parse_retry_after
 from hoshimi.core.providers.base import Account, Provider
 from hoshimi.core.providers.openai_compat import raise_for_status
 from hoshimi.core.quota import observe_response
@@ -61,6 +62,7 @@ VALID_EFFORTS = ("low", "high", "max")
 
 
 class ZcodeProvider(Provider):
+    max_concurrency = 1
     id = "zcode"
     display_name = "ZCode (智谱)"
 
@@ -188,4 +190,4 @@ class ZcodeProvider(Provider):
             observe_response(self.id, response)
             if response.status_code >= 400:
                 raise_for_status(response, provider=self.id)
-            yield from iter_anthropic_chunks(response.iter_lines())
+            yield from iter_anthropic_chunks(response.iter_lines(), provider=self.id, retry_after=parse_retry_after(response.headers.get("retry-after")))

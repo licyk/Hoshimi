@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Iterator
 from typing import Any
 
 from hoshimi.core.context import Services
 from hoshimi.core.effort import requested_level, resolve_level
 from hoshimi.core.errors import ValidationError
+from hoshimi.core.net.identity import InferenceIdentity, identified_chunks
 
 
 def prepare_request(services: Services, body: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -19,7 +19,6 @@ def prepare_request(services: Services, body: dict[str, Any]) -> tuple[str, dict
         raise ValidationError("Missing 'model' field.")
     body = dict(body)
     body["model"] = model
-    body.setdefault("prompt_cache_key", f"hoshimi-{int(time.time())}")
     return model, body
 
 
@@ -30,6 +29,7 @@ def tracked_chunks(
     *,
     origin: str,
     stream: bool | None = None,
+    identity: InferenceIdentity | None = None,
 ) -> Iterator[dict[str, Any]]:
     """The upstream stream with this call's usage, latency and outcome recorded.
 
@@ -48,4 +48,4 @@ def tracked_chunks(
     except BaseException as exc:
         turn.fail(exc)
         raise
-    return turn.wrap(upstream)
+    return turn.wrap(identified_chunks(upstream, identity)) if identity is not None else turn.wrap(upstream)

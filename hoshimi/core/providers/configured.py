@@ -8,6 +8,7 @@ from dataclasses import replace
 from typing import Any
 
 from hoshimi.core.catalog import ModelSpec
+from hoshimi.core.net.identity import identity
 from hoshimi.core.provider_definitions import CANONICAL_PROVIDERS, REGULAR_PROVIDER_IDS, ProviderDefinition
 from hoshimi.core.providers.base import Account
 from hoshimi.core.providers.catalog_profiles import CATALOG_PROFILES, catalog_url
@@ -84,7 +85,9 @@ class ConfiguredProvider(KeyedProvider):
             from hoshimi.core.translate.gemini import iter_gemini_chunks
 
             headers = self.build_headers(account, model)
-            headers["x-opencode-session"] = session_for_conversation(str(body.get("session_id") or body.get("user") or "global"))
+            headers["x-opencode-session"] = identity.get().session or session_for_conversation(str(body.get("session_id") or body.get("user") or "global"))
+            if identity.get().user_agent:
+                headers["User-Agent"] = identity.get().user_agent
             url = f"{self.endpoint_base(account)}/models/{model}:streamGenerateContent?alt=sse"
             with self.client.stream("POST", url, headers=headers, json=gemini_payload(body, model)) as response:
                 raise_for_status(response, provider=self.id)
@@ -125,7 +128,11 @@ class ConfiguredProvider(KeyedProvider):
         if self.id == "opencode-go":
             from hoshimi.core.providers.opencode import session_for_conversation
 
-            headers["x-opencode-session"] = session_for_conversation(str(body.get("session_id") or body.get("user") or "global"))
+            headers["x-opencode-session"] = identity.get().session or session_for_conversation(str(body.get("session_id") or body.get("user") or "global"))
+            if identity.get().user_agent:
+                headers["User-Agent"] = identity.get().user_agent
+            if wire != "messages":
+                payload["prompt_cache_key"] = headers["x-opencode-session"]
         yield from stream_http(self.client, provider=self.id, url=f"{self.endpoint_base(account)}{suffix}", headers=headers, payload=payload, wire=wire)
 
     def messages_endpoint(self, account: Account, model: str, *, count_only: bool = False) -> str | None:

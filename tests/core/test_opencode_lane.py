@@ -177,9 +177,9 @@ def test_session_seed_prefers_the_explicit_conversation() -> None:
     assert _session_seed({"user": "u-1"}) == "u-1"
     assert _session_seed({"messages": [{"role": "user", "content": "hello"}]}) == "hello"
     assert _session_seed({}) == "global"
-    assert provider.endpoint_url("chat") == "https://opencode.ai/inference/v1/chat/completions"
-    assert provider.endpoint_url("responses") == "https://opencode.ai/inference/v1/responses"
-    assert provider.endpoint_url("messages") == "https://opencode.ai/inference/v1/messages"
+    assert provider.endpoint_url("chat") == "https://opencode.ai/inference/openai/v1/chat/completions"
+    assert provider.endpoint_url("responses") == "https://opencode.ai/inference/openai/v1/responses"
+    assert provider.endpoint_url("messages") == "https://opencode.ai/inference/anthropic/v1/messages"
 
 
 def test_endpoint_split_per_model() -> None:
@@ -269,7 +269,7 @@ def test_stream_sends_v2_headers_restores_tool_aliases_and_isolates_accounts() -
     sessions = [request.headers["x-opencode-session"] for request in requests]
     assert sessions[0] == sessions[1] != sessions[2]
     for request in requests:
-        assert request.url.path == "/inference/v1/chat/completions"
+        assert request.url.path == "/inference/openai/v1/chat/completions"
         assert request.headers["User-Agent"] == "opencode/latest/2.0.26/cli"
         assert request.headers["x-opencode-client"] == "cli"
         assert "x-opencode-request" not in request.headers

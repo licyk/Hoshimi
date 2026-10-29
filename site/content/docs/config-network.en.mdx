@@ -161,3 +161,27 @@ A row holds only the operation, host, route source, time, status and error categ
 | `upstream_error` | Upstream service error | Any other error status |
 
 `challenge`, `edge_rejected`, `invalid_response`, `client_restricted`, `region_restricted` and `signature_rejected` are recognised before any token handling: they never invalidate an account's refresh token, rotate accounts or mark a model as gone. A bare HTTP 403 is not treated as an expired token either. When you see one of these, check the route first (another proxy, or direct), the region and the station's status. More steps are in [Troubleshooting](/docs/advanced-troubleshooting).
+
+## Provider concurrency and waiting
+
+Inference requests share a concurrency limit per provider instance: two by default, one for Zcode. A stream holds its slot until it finishes or closes. Configure `providers.<id>.options.admission` to change the limit, minimum dispatch interval, or maximum queue wait:
+
+```json
+{
+  "providers": {
+    "opencode": {
+      "options": {
+        "admission": {
+          "max_concurrency": 2,
+          "min_interval_seconds": 0,
+          "queue_timeout_seconds": 8
+        }
+      }
+    }
+  }
+}
+```
+
+`max_concurrency` must be a positive integer; the other values are finite, nonnegative seconds. Server-declared waits are preserved: a wait longer than the request's retry budget returns an error with `Retry-After` instead of sending an early retry. These limits are in memory per instance; separate processes do not share them.
+
+OpenCode free limits and Cline daily model limits hold the account/model pair. Zcode concurrency errors and Qoder queue responses wait without invalidating credentials. Account-wide quota errors still hold the whole account. When no reset time is supplied for an exhausted quota, the conservative fallback is one hour.

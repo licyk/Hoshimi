@@ -238,6 +238,8 @@ def iter_anthropic_chunks(
     lines: Iterable[str],
     *,
     supports_thinking: bool = True,
+    provider: str = "upstream",
+    retry_after: float | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Consume Anthropic Messages SSE and yield normalized chunks."""
     blocks: dict[int, dict[str, Any]] = {}
@@ -262,6 +264,9 @@ def iter_anthropic_chunks(
         kind = frame.get("type") or event_name
 
         if kind == "error":
+            from hoshimi.core.providers.refusals import raise_provider_refusal
+
+            raise_provider_refusal(provider, frame, retry_after=retry_after)
             error = frame.get("error")
             message = (
                 error.get("message")

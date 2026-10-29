@@ -16,6 +16,7 @@ from hoshimi.core.catalog import ModelSpec, default_spec
 from hoshimi.core.errors import UpstreamError
 from hoshimi.core.failure import AccountCooler, is_recoverable, parse_reset_after
 from hoshimi.core.modelsdev import enrich_spec
+from hoshimi.core.net.admission import AdmissionDelayed, ProviderAdmission
 from hoshimi.core.net.client import operation
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class ProviderError(UpstreamError):
         # retryable and names no time, a 401 names none either, and only a
         # rate limit speaks about both.
         self.retry_after = retry_after
+        self.scope = "account"
         self.response_body: bytes | None = None
         self.response_headers: dict[str, str] = {}
         self.should_retry: bool | None = None
@@ -52,6 +54,12 @@ class QuotaExceeded(ProviderError):
     """Rate limit / quota exhausted — the pool should rotate accounts."""
 
     code = "quota_exceeded"
+
+
+class RequestThrottled(ProviderError):
+    """Temporary capacity pressure: wait without disabling credentials."""
+
+    code = "rate_limited"
 
 
 class ContextOverflow(ProviderError):
@@ -259,6 +267,7 @@ class Provider(ABC):
     backoff_base_seconds: ClassVar[float] = 0.25
     backoff_max_seconds: ClassVar[float] = 8.0
     backoff_retries: ClassVar[int] = 2
+    max_concurrency: ClassVar[int] = 2
     max_retries: int
 
     def __init__(
@@ -282,6 +291,7 @@ class Provider(ABC):
         self.catalog_retry_at = 0.0
         self.catalog_source = "fallback"
         self.cooler = AccountCooler()
+        self.admission = ProviderAdmission({"max_concurrency": self.max_concurrency, **(self.options.get("admission") or {})})
 
     # -- credentials ------------------------------------------------------ #
     @classmethod
@@ -467,7 +477,7 @@ class Provider(ABC):
         asked = 0
 
         while True:
-            account = self._pick_account(tried, candidates)
+            account = self._pick_account(tried, candidates, model=model)
             if account is None:
                 # The pool has nothing left to ask. A transient refusal is
                 # the one answer that time can change, so the pool gets
@@ -483,7 +493,7 @@ class Provider(ABC):
                 retries_left -= 1
                 self._backoff(attempt, last_error)
                 tried.clear()
-                account = self._pick_account(tried, candidates)
+                account = self._pick_account(tried, candidates, model=model)
                 if account is None:
                     break
             elif len(tried) >= attempts:
@@ -491,7 +501,15 @@ class Provider(ABC):
             tried.add(account.id)
             asked += 1
             iterator: Iterator[dict[str, Any]] | None = None
+            admitted = False
             try:
+                try:
+                    self.admission.acquire((account.id, model))
+                except AdmissionDelayed as delay:
+                    error = RequestThrottled(429, f"{self.id}: waiting for provider capacity", retry_after=delay.seconds)
+                    error.should_retry = False
+                    raise error from None
+                admitted = True
                 # Consume lazily; quota errors can also surface mid-stream.
                 revision = account.auth_revision
                 iterator = send(account, model, body)
@@ -518,6 +536,16 @@ class Provider(ABC):
             except ProviderError as exc:
                 last_error = exc
                 stop = emitted or exc.should_retry is False
+                if isinstance(exc, RequestThrottled):
+                    if admitted:
+                        self.admission.defer((account.id, model), exc.retry_after if exc.retry_after is not None else 1.0)
+                    if stop or retries_left <= 0:
+                        raise
+                    if exc.retry_after is not None and exc.retry_after > self.admission.timeout:
+                        raise
+                    retries_left -= 1
+                    tried.discard(account.id)
+                    continue
                 if isinstance(exc, PolicyBlocked):
                     # Account-scoped, and the credential is not the problem:
                     # rotate, do not renew, and hold the account back or the
@@ -554,6 +582,7 @@ class Provider(ABC):
                         account.id,
                         self.quota_hold_seconds if held is None else held,
                         reason="rate_limited",
+                        model=model if exc.scope == "account_model" else "",
                     )
                     if stop:
                         raise
@@ -569,14 +598,26 @@ class Provider(ABC):
                 # so burning the pool on it only makes the refusal slower.
                 if not is_recoverable(exc.status):
                     break
+                if exc.retry_after is not None:
+                    self.admission.defer(None, exc.retry_after)
+                    if exc.retry_after > self.backoff_max_seconds:
+                        raise
                 continue
             finally:
                 close = getattr(iterator, "close", None)
-                if close is not None:
-                    close()
+                try:
+                    if close is not None:
+                        close()
+                finally:
+                    if admitted:
+                        self.admission.release()
 
         if last_error is not None:
             raise last_error
+        held = [row for row in self.cooler.snapshot() if row["provider"] == self.id and row["account"] in {a.id for a in candidates}
+                and row.get("model", model) == model and row["reason"] == "rate_limited"]
+        if held:
+            raise QuotaExceeded(429, f"{self.id}: accounts are cooling down for this model", retry_after=min(row["seconds_left"] for row in held))
         raise ProviderError(502, f"Provider {self.id!r} exhausted all accounts.")
 
     def _backoff(self, attempt: int, exc: ProviderError) -> None:
@@ -584,8 +625,8 @@ class Provider(ABC):
 
         The station's own number wins where it gave one — `Retry-After` is
         the standard spelling of "not now", and the reset time in the prose
-        is a dialect of it. Both are capped: a request path that parks for
-        an hour is a worse answer than a failure the caller can route
+        is a dialect of it. Long waits are returned to the caller: parking for
+        an hour is less useful than a failure the caller can route
         elsewhere, and the header is a claim about the station's own limiter
         rather than a licence to block a caller's turn.
 
@@ -598,18 +639,20 @@ class Provider(ABC):
         if declared is None:
             declared = parse_reset_after(exc.body)
         if declared is not None:
-            delay = min(declared, self.backoff_max_seconds)
+            if declared > self.backoff_max_seconds:
+                raise exc
+            delay = declared
         else:
             ceiling = min(self.backoff_max_seconds, self.backoff_base_seconds * (2**attempt))
             delay = random.uniform(0.0, ceiling)
         if delay > 0:
             time.sleep(delay)
 
-    def _pick_account(self, exclude: set[str], candidates: list[Account] | None = None) -> Account | None:
+    def _pick_account(self, exclude: set[str], candidates: list[Account] | None = None, *, model: str = "") -> Account | None:
         for account in candidates if candidates is not None else self.accounts:
             if account.id in exclude or account.needs_login:
                 continue
-            if self.cooler.blocked(self.id, account.id):
+            if self.cooler.blocked(self.id, account.id, model=model):
                 # Held back by a refusal of its own; the pool works from the
                 # accounts that have not just said no.
                 continue

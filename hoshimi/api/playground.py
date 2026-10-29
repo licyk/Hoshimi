@@ -87,6 +87,7 @@ from hoshimi.core.context import Services
 from hoshimi.core.conversations import Attachment, ChatMessage, Conversation, ConversationStore, Status, path_to
 from hoshimi.core.errors import ConflictError, HoshimiError, ValidationError
 from hoshimi.core.failure import context_limit_in, is_context_overflow
+from hoshimi.core.net.identity import InferenceIdentity
 from hoshimi.core.providers.base import ContextOverflow
 
 logger = logging.getLogger(__name__)
@@ -210,6 +211,7 @@ class Run:
     """A reply as it is made: its steps in order, the round of tool calls it is in, what it has taken, and how long it has worked."""
 
     steps: list[dict[str, Any]] = field(default_factory=list)
+    conversation_id: str = ""
     round: int = 0
     usage_last: dict[str, int] = field(default_factory=dict)
     usage_total: dict[str, int] = field(default_factory=dict)
@@ -444,11 +446,11 @@ class PlaygroundRunner:
             return {"reasoning_effort": spec.efforts[0]}
         return {}
 
-    def _ask(self, model: str, messages: list[dict[str, Any]], *, origin: str) -> str:
+    def _ask(self, model: str, messages: list[dict[str, Any]], *, origin: str, conversation_id: str = "") -> str:
         """One whole answer from ``model``, not streamed."""
         body = {"model": model, "messages": messages, "stream": False, **self._quiet(model)}
         text: list[str] = []
-        for chunk in tracked_chunks(self.services, model, body, origin=origin, stream=False):
+        for chunk in tracked_chunks(self.services, model, body, origin=origin, stream=False, identity=InferenceIdentity(session=conversation_id)):
             kind = chunk.get("type")
             if kind == "text_delta":
                 text.append(str(chunk.get("text") or ""))
@@ -457,12 +459,12 @@ class PlaygroundRunner:
         return "".join(text).strip()
 
     # -- images and files ---------------------------------------------------- #
-    def describe(self, attachment: Attachment, model: str) -> str:
+    def describe(self, attachment: Attachment, model: str, *, conversation_id: str = "") -> str:
         """What ``model`` sees in an image; kept with it, so it is asked once."""
         if attachment.description:
             return attachment.description
         url = f"data:{attachment.mime};base64,{base64.b64encode(attachment.data).decode()}"
-        text = self._ask(model, [{"role": "user", "content": [{"type": "text", "text": VISION_PROMPT}, {"type": "image_url", "image_url": {"url": url}}]}], origin="playground-vision")
+        text = self._ask(model, [{"role": "user", "content": [{"type": "text", "text": VISION_PROMPT}, {"type": "image_url", "image_url": {"url": url}}]}], origin="playground-vision", conversation_id=conversation_id)
         if text:
             self.store.describe(attachment.id, text)
         return text
@@ -510,7 +512,7 @@ class PlaygroundRunner:
                     prepared.notices.append({"kind": "image-omitted", "name": attachment.name})
                     continue
                 try:
-                    description = self.describe(attachment, describer) if ask else attachment.description
+                    description = self.describe(attachment, describer, conversation_id=conversation.id) if ask else attachment.description
                 except HoshimiError as exc:
                     logger.info("could not describe %s with %s: %s", attachment.name, describer, exc)
                     description = ""
@@ -621,7 +623,7 @@ class PlaygroundRunner:
         busy = self.services.agent.busy
         busy.start(conversation_id)
         path = path_to(conversation.messages, parent_id)
-        run = Run()
+        run = Run(conversation_id=conversation_id)
         notices: list[dict[str, Any]] = []
         status: Status = "complete"
         error = ""
@@ -897,7 +899,7 @@ class PlaygroundRunner:
         for attempt in range(2):
             body = {"model": reviewer, "stream": True, "messages": review_messages(compaction.fit(entries, max(2_000, room)), action)}
             try:
-                text = self._collect(reviewer, body, request.ctx.cancel, origin="playground-review", deadline=started + REVIEW_TIMEOUT)
+                text = self._collect(reviewer, body, request.ctx.cancel, origin="playground-review", deadline=started + REVIEW_TIMEOUT, conversation_id=request.ctx.conversation_id)
             except Stopped:
                 raise Cancelled() from None
             except HoshimiError as exc:
@@ -913,7 +915,7 @@ class PlaygroundRunner:
         """One round: the reply's words and reasoning as events; returns the calls it made, their arguments complete."""
         calls: list[dict[str, Any]] = []
         by_index: dict[int, dict[str, Any]] = {}
-        for chunk in tracked_chunks(self.services, model, body, origin="playground", stream=True):
+        for chunk in tracked_chunks(self.services, model, body, origin="playground", stream=True, identity=InferenceIdentity(session=run.conversation_id)):
             kind = chunk.get("type")
             if kind == "text_delta":
                 piece = str(chunk.get("text") or "")
@@ -974,7 +976,7 @@ class PlaygroundRunner:
         zone = [m for m in live.messages if m is not live.system and m is not live.question]
         started = time.monotonic()
         try:
-            summary, writer = self._summarise(model, zone, cancel)
+            summary, writer = self._summarise(model, zone, cancel, conversation_id=run.conversation_id)
         except Stopped:
             record.update(status="stopped", ms=round((time.monotonic() - started) * 1000))
             yield event("compaction", step=record)
@@ -993,7 +995,7 @@ class PlaygroundRunner:
         yield event("compaction", step=record)
         return rebuilt
 
-    def _summarise(self, model: str, messages: list[dict[str, Any]], cancel: threading.Event, *, instructions: str = "") -> tuple[str, str]:
+    def _summarise(self, model: str, messages: list[dict[str, Any]], cancel: threading.Event, *, instructions: str = "", conversation_id: str = "") -> tuple[str, str]:
         """A handoff summary of ``messages``, and the model that wrote it (``playground.compact_model``, or ``model``).
 
         The conversation is fitted to the writer's window first, its oldest
@@ -1012,7 +1014,7 @@ class PlaygroundRunner:
                 "messages": [{"role": "system", "content": compaction.COMPACT_PROMPT}, {"role": "user", "content": ask.format(transcript=compaction.fit(entries, max(2_000, room)))}],
             }
             try:
-                summary = self._collect(writer, body, cancel, origin="playground-compact")
+                summary = self._collect(writer, body, cancel, origin="playground-compact", conversation_id=conversation_id)
             except HoshimiError as exc:
                 if attempt < 2 and overflowed(exc):
                     self._learn(writer, exc)
@@ -1024,9 +1026,9 @@ class PlaygroundRunner:
             return summary, writer
         raise HoshimiError(TOO_LONG.format(model=writer))  # pragma: no cover - the last attempt returns or raises
 
-    def _collect(self, model: str, body: dict[str, Any], cancel: threading.Event, *, origin: str, deadline: float | None = None) -> str:
+    def _collect(self, model: str, body: dict[str, Any], cancel: threading.Event, *, origin: str, deadline: float | None = None, conversation_id: str = "") -> str:
         """A streamed answer's text, whole; :class:`Stopped` as soon as ``cancel`` is set, an error past ``deadline`` (a :func:`time.monotonic`)."""
-        chunks = tracked_chunks(self.services, model, body, origin=origin, stream=True)
+        chunks = tracked_chunks(self.services, model, body, origin=origin, stream=True, identity=InferenceIdentity(session=conversation_id))
         text: list[str] = []
         try:
             for chunk in chunks:
@@ -1090,7 +1092,7 @@ class PlaygroundRunner:
         try:
             yield event("checkpoint", message=checkpoint)
             try:
-                summary, writer = self._summarise(model, zone, cancel, instructions=instructions)
+                summary, writer = self._summarise(model, zone, cancel, instructions=instructions, conversation_id=conversation.id)
             except Stopped:
                 return
             except HoshimiError as exc:
@@ -1160,7 +1162,7 @@ class PlaygroundRunner:
             return conversation
         exchange = f"User: {question.content[:2000]}" + (f"\n\nAssistant: {answer.content[:2000]}" if answer else "")
         try:
-            raw = self._ask(model, [{"role": "system", "content": TITLE_PROMPT}, {"role": "user", "content": exchange}], origin="playground-title")
+            raw = self._ask(model, [{"role": "system", "content": TITLE_PROMPT}, {"role": "user", "content": exchange}], origin="playground-title", conversation_id=conversation_id)
         except HoshimiError as exc:
             logger.info("could not title %s with %s: %s", conversation_id, model, exc)
             return conversation

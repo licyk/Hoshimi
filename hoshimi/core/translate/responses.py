@@ -349,6 +349,7 @@ def iter_responses_chunks(
     lines: Iterable[str],
     *,
     provider: str = "upstream",
+    retry_after: float | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Consume an OpenAI Responses SSE stream into normalized chunks."""
     tool_calls: dict[int, dict[str, Any]] = {}
@@ -371,6 +372,9 @@ def iter_responses_chunks(
         kind = frame.get("type")
 
         if kind == "error" or (frame.get("error") is not None and kind != "response.failed"):
+            from hoshimi.core.providers.refusals import raise_provider_refusal
+
+            raise_provider_refusal(provider, frame, retry_after=retry_after)
             error = frame.get("error") or frame
             message = (
                 error.get("message")
@@ -431,6 +435,10 @@ def iter_responses_chunks(
                 if _is_object(details) and isinstance(details.get("reason"), str):
                     incomplete_reason = details["reason"]
                 failure = response.get("error")
+                if failure is not None:
+                    from hoshimi.core.providers.refusals import raise_provider_refusal
+
+                    raise_provider_refusal(provider, failure, retry_after=retry_after)
                 if _is_object(failure) and isinstance(failure.get("message"), str):
                     error_message = failure["message"]
             if kind == "response.failed" and not error_message:

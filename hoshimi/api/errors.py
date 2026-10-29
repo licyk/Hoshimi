@@ -7,6 +7,7 @@ management routes answer Hoshimi's ``{code, message, detail}``.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -86,16 +87,29 @@ def error_response(status: int, code: str, message: str, detail: dict[str, Any] 
     return JSONResponse(status_code=status, content={"code": code, "message": message, "detail": detail or {}}, headers=headers)
 
 
+def upstream_error_metadata(exc: HoshimiError) -> dict[str, Any]:
+    """Carry typed refusals and wait times through protocol-shaped errors."""
+    metadata = {key: exc.detail[key] for key in ("upstream_type", "scope") if key in exc.detail}
+    if isinstance(exc, ProviderError) and exc.retry_after is not None and math.isfinite(exc.retry_after):
+        metadata["retry_after"] = max(0, math.ceil(exc.retry_after))
+    return metadata
+
+
 async def _domain_error(request: Request, exc: Exception) -> Response:
     assert isinstance(exc, HoshimiError)
+    metadata = upstream_error_metadata(exc)
+    headers = {"retry-after": str(metadata["retry_after"])} if "retry_after" in metadata else {}
     if is_messages_path(route_path(request.scope)):
         if isinstance(exc, ProviderError) and exc.response_body is not None:
-            return Response(content=exc.response_body, status_code=exc.http_status, headers=exc.response_headers)
-        return JSONResponse(status_code=exc.http_status, content=anthropic_error(exc.message, exc.http_status))
+            return Response(content=exc.response_body, status_code=exc.http_status, headers={**exc.response_headers, **headers})
+        payload = anthropic_error(exc.message, exc.http_status)
+        payload["error"].update(metadata)
+        return JSONResponse(status_code=exc.http_status, content=payload, headers=headers)
     if route_path(request.scope).startswith("/v1/"):
         payload = openai_error(exc.message, error_type_for(exc), code=exc.code if exc.code != "internal_error" else None)
-        return JSONResponse(status_code=exc.http_status, content=payload)
-    return error_response(exc.http_status, exc.code, exc.message, exc.detail)
+        payload["error"].update(metadata)
+        return JSONResponse(status_code=exc.http_status, content=payload, headers=headers)
+    return error_response(exc.http_status, exc.code, exc.message, exc.detail, headers=headers)
 
 
 def install_error_handlers(app: FastAPI) -> None:

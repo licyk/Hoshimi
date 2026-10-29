@@ -15,6 +15,7 @@ import httpx
 
 from hoshimi.core.errors import UpstreamError
 from hoshimi.core.failure import parse_retry_after
+from hoshimi.core.net.identity import InferenceIdentity
 from hoshimi.core.providers.base import Account, Provider, ProviderError
 from hoshimi.core.providers.openai_compat import raise_for_status
 from hoshimi.core.quota import observe_response
@@ -169,6 +170,13 @@ def stream_native_messages(provider: Provider, account: Account, model: str, con
         raise UpstreamError(f"{provider.id}: this account does not support native Messages.")
     # Adapter credentials are authoritative. Never forward incoming gateway keys.
     headers = provider.messages_headers(account, model)
+    if provider.id == "opencode-go":
+        from hoshimi.core.providers.opencode import session_for_conversation
+
+        caller = InferenceIdentity.from_headers(context.headers)
+        headers["x-opencode-session"] = caller.session or session_for_conversation(str(context.body.get("session_id") or context.body.get("user") or "global"))
+        if caller.user_agent:
+            headers["User-Agent"] = caller.user_agent
     required = headers.get("anthropic-beta", "")
     headers.update({key: value for key, value in context.headers.items() if key.startswith("anthropic-")})
     supplied = headers.get("anthropic-beta", "")
@@ -192,7 +200,7 @@ def stream_native_messages(provider: Provider, account: Account, model: str, con
             except ProviderError as exc:
                 exc.response_body = response.content
                 exc.response_headers = response_headers(response.headers)
-                exc.should_retry = {"true": True, "false": False}.get(response.headers.get("x-should-retry", ""))
+                exc.should_retry = {"true": True, "false": False}.get(response.headers.get("x-should-retry", ""), exc.should_retry)
                 raise
             stream = context.body.get("stream", False) and not context.count_only
             if stream:

@@ -12,6 +12,7 @@ import httpx
 from hoshimi.core.failure import body_says_model_gone, is_context_overflow, is_model_gone, is_model_saturation, is_policy_block, is_recoverable, parse_retry_after
 from hoshimi.core.net.responses import reject_interception
 from hoshimi.core.providers.base import Account, AuthFailed, ContextOverflow, ModelGone, ModelSaturated, PolicyBlocked, Provider, ProviderError, QuotaExceeded
+from hoshimi.core.providers.refusals import raise_provider_refusal
 from hoshimi.core.quota import observe_response
 from hoshimi.core.sse import iter_sse
 
@@ -97,6 +98,7 @@ def raise_for_status(response: httpx.Response, *, provider: str) -> None:
     if status < 400:
         return
     text = response.read().decode("utf-8", "replace")
+    raise_provider_refusal(provider, text, status=status, retry_after=parse_retry_after(response.headers.get("retry-after")))
     # Before the id and quota readings: "maximum context length" names the model and "limit exceeded" reads as quota.
     if is_context_overflow(status, text):
         raise ContextOverflow(status, f"{provider}: {text}")
@@ -130,7 +132,7 @@ def _classify_in_band(provider: str, message: str) -> None:
         raise QuotaExceeded(200, f"{provider}: {message}", retryable=True)
 
 
-def consume_openai_sse(lines: Iterable[str], *, provider: str) -> Iterator[dict[str, Any]]:
+def consume_openai_sse(lines: Iterable[str], *, provider: str, retry_after: float | None = None) -> Iterator[dict[str, Any]]:
     """Consume an OpenAI-style SSE stream into normalized chunks."""
     tool_calls: dict[int, dict[str, Any]] = {}
     finish_reason: str | None = None
@@ -152,6 +154,7 @@ def consume_openai_sse(lines: Iterable[str], *, provider: str) -> Iterator[dict[
             continue
 
         if frame.get("error") is not None:
+            raise_provider_refusal(provider, frame, retry_after=retry_after)
             error = frame["error"]
             message = str(error)
             if isinstance(error, dict) and isinstance(error.get("message"), str):
@@ -162,6 +165,7 @@ def consume_openai_sse(lines: Iterable[str], *, provider: str) -> Iterator[dict[
 
         # Non-SSE error envelopes some gateways return with 200.
         if "code" in frame and "message" in frame and "choices" not in frame:
+            raise_provider_refusal(provider, frame, retry_after=retry_after)
             message = str(frame.get("message"))
             _classify_in_band(provider, message)
             yield {"type": "error", "error": message}
@@ -424,15 +428,15 @@ def read_body(response: httpx.Response, *, provider: str) -> Iterator[dict[str, 
     first = next((line for line in lines if line.strip()), None)
     if first is None:
         raise ProviderError(502, f"{provider}: model stream returned no body")
-    if first.lstrip().startswith("data:"):
-        yield from consume_openai_sse(_chain(first, lines), provider=provider)
+    if first.lstrip().startswith(("data:", "event:", "id:", "retry:", ":")):
+        yield from consume_openai_sse(_chain(first, lines), provider=provider, retry_after=parse_retry_after(response.headers.get("retry-after")))
         return
     text = first + "".join(lines)
     try:
         json.loads(text)
     except ValueError:
         raise ProviderError(502, f"{provider}: unexpected non-stream response: {text[:200]}") from None
-    yield from consume_openai_sse([f"data: {text}", "", "data: [DONE]"], provider=provider)
+    yield from consume_openai_sse([f"data: {text}", "", "data: [DONE]"], provider=provider, retry_after=parse_retry_after(response.headers.get("retry-after")))
 
 
 def new_uuid() -> str:

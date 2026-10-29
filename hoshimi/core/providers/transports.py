@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 
+from hoshimi.core.failure import parse_retry_after
 from hoshimi.core.providers.openai_compat import raise_for_status, read_body
 from hoshimi.core.quota import observe_response
 from hoshimi.core.translate.anthropic import build_anthropic_body, iter_anthropic_chunks
@@ -47,9 +48,10 @@ def stream_http(client: httpx.Client, *, provider: str, url: str, headers: dict[
     with client.stream("POST", url, headers=headers, json=payload) as response:
         observe_response(provider, response)
         raise_for_status(response, provider=provider)
+        retry_after = parse_retry_after(response.headers.get("retry-after"))
         if wire == "messages":
-            yield from iter_anthropic_chunks(response.iter_lines())
+            yield from iter_anthropic_chunks(response.iter_lines(), provider=provider, retry_after=retry_after)
         elif wire == "responses":
-            yield from iter_responses_chunks(response.iter_lines(), provider=provider)
+            yield from iter_responses_chunks(response.iter_lines(), provider=provider, retry_after=retry_after)
         else:
             yield from read_body(response, provider=provider)

@@ -14,6 +14,7 @@ from typing import Any
 from hoshimi.core.agent.approval import APPROVAL_MODES, DEFAULT_APPROVAL, LEGACY_MODES
 from hoshimi.core.agent.terminals import SHELL_KINDS, shell_kind
 from hoshimi.core.agent.tools import GROUPS
+from hoshimi.core.net.admission import admission_options
 from hoshimi.core.net.policy import NetworkPolicy, parse_policy
 from hoshimi.core.paths import config_file_path
 
@@ -104,6 +105,7 @@ def validate_settings(settings: Settings) -> str | None:
         parse_policy(settings.network.as_dict())
         for cfg in settings.providers.values():
             parse_policy(cfg.options.get("network"), inherited=settings.network)
+            admission_options(cfg.options.get("admission"))
             if cfg.id == "cline" and cfg.options.get("client_profile", "sdk") not in ("sdk", "extension"):
                 return "cline client_profile must be sdk or extension"
     except (TypeError, ValueError) as exc:

@@ -80,9 +80,11 @@ hoshimi config set providers.opencode.enabled false
 
 匿名通道参考外部项目 dsh-our-free-model 的 `src/upstream.js`（快照 `f0b979f`）实现 v2 协议。这个快照标明移植基线，不表示刚刚对上游做过实测。
 
-- 请求发往 `/inference/v1` 下的端点，携带 `User-Agent: opencode/latest/2.0.26/cli` 和 `x-opencode-client: cli`，不发送旧的 `x-opencode-request`。
-- `x-opencode-session`、`x-opencode-session-id`、`x-session-affinity`、`x-session-id` 四个头取同一个会话 ID。会话 ID 按账号和对话稳定生成（降序编码），来源依次是请求体中的 `session_id`、`conversation_id`、`user`，没有时取第一条用户消息。两个开场白相同的独立对话，请各自发送不同的 `session_id`。
-- 端点按模型选择：`muse-spark-*` 走 `/v1/responses`，`union-alpha` 走 `/v1/messages`，其余走 `/v1/chat/completions`。
+- 请求发往 `/inference/openai/v1` 或 `/inference/anthropic/v1` 下的端点。未提供调用方标识时，携带 `User-Agent: opencode/latest/2.0.26/cli` 和 `x-opencode-client: cli`，不发送旧的 `x-opencode-request`。
+- API 入口保留调用方的会话头、`User-Agent` 和 `x-opencode-project`；上游凭据仍来自渠道配置。`x-opencode-session`、`x-opencode-session-id`、`x-session-affinity`、`x-session-id` 使用相同会话 ID，Chat Completions 和 Responses 的 `prompt_cache_key` 也与之保持一致。
+- Playground 使用实际会话 ID，压缩历史、工具调用和后续回复不会改变会话。其他调用未携带会话头时，依次从请求体的 `session_id`、`conversation_id`、`user` 或首条用户消息生成稳定 ID。相同开场白的独立对话应提供不同会话 ID。
+- 模型协议优先使用 `options.model_protocols`，其次使用目录声明，最后按已知模型推断。`deepseek-v4.1-flash-free` 使用 `/inference/openai/v1/chat/completions`，`muse-spark-*` 使用 `/inference/openai/v1/responses`，`union-alpha` 使用 `/inference/anthropic/v1/messages`。目录仍从 `/inference/v1/models` 获取。
+- HTTP 或流式响应中的 `FreeUsageLimitError`、`GoUsageLimitError` 按账号与模型暂缓调用，保留上游错误类型，不会当作登录失效。`FreeTierError` 表示客户端限制；协议对齐无法保证消除上游额度或访问策略限制。
 - 匿名请求会声明参考实现中的 `read` 和 `shell` 两个工具定义（上游会比对工具描述）。调用方自己的同名但定义不同的工具会改名（如 `read_client`）后发送，历史记录和强制选择中一致改名，响应中再还原。
 - 这两个注入的工具调用方并不能执行。模型只调用了调用方没有提供的工具时，网关回答它 `unsupported call: <name>` 并在同一会话中再问一次，最多两轮；模型仍坚持调用时返回 502 错误。调用方看到的只有文本和自己工具的调用。
 - 调用方设置 `tool_choice: "none"` 时，上游请求中省略该字段，由网关保证不把任何工具调用交给调用方。

@@ -13,7 +13,7 @@ from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from hoshimi.api.deps import ServicesDep
-from hoshimi.api.errors import ANTHROPIC_ERROR_RESPONSES, anthropic_error
+from hoshimi.api.errors import ANTHROPIC_ERROR_RESPONSES, anthropic_error, upstream_error_metadata
 from hoshimi.api.heartbeat import with_heartbeats
 from hoshimi.api.inference import prepare_request, tracked_chunks
 from hoshimi.core.chunks import UpstreamStreamFailure
@@ -21,6 +21,7 @@ from hoshimi.core.context import Services
 from hoshimi.core.errors import HoshimiError, UpstreamError
 from hoshimi.core.message_chunks import aggregate_messages, emit_messages_events, new_message_id
 from hoshimi.core.native_messages import MessagesRequest
+from hoshimi.core.net.identity import InferenceIdentity
 from hoshimi.core.record import Record
 from hoshimi.core.stats import Turn
 from hoshimi.core.translate.messages import estimate_input_tokens, messages_to_chat, validate_messages_request
@@ -66,7 +67,9 @@ def _sse(events: Iterator[dict[str, Any]], upstream: Iterator[dict[str, Any]]) -
         for event in events:
             yield _frame(event)
     except HoshimiError as exc:
-        yield _frame(anthropic_error(exc.message, exc.http_status))
+        payload = anthropic_error(exc.message, exc.http_status)
+        payload["error"].update(upstream_error_metadata(exc))
+        yield _frame(payload)
     except UpstreamStreamFailure as exc:
         yield _frame(anthropic_error(str(exc), 502))
     except (BrokenPipeError, ConnectionResetError):
@@ -93,7 +96,9 @@ def _native_sse(upstream: Iterator[dict[str, Any]]) -> Iterator[bytes]:
         if pending.strip():
             raise UpstreamError("Upstream Messages stream ended inside an SSE frame.")
     except HoshimiError as exc:
-        yield _frame(anthropic_error(exc.message, exc.http_status))
+        payload = anthropic_error(exc.message, exc.http_status)
+        payload["error"].update(upstream_error_metadata(exc))
+        yield _frame(payload)
     except (BrokenPipeError, ConnectionResetError):
         return
     except Exception:
@@ -175,7 +180,7 @@ def create_message(
         exc.message = f"{provider.id}: {exc.message}"
         raise
     model, chat = prepare_request(services, chat)
-    upstream = tracked_chunks(services, model, chat, origin="messages", stream=bool(body.get("stream", False)))
+    upstream = tracked_chunks(services, model, chat, origin="messages", stream=bool(body.get("stream", False)), identity=InferenceIdentity.from_headers(request.headers))
     message_id = new_message_id()
     headers = {"request-id": message_id}
     if not body.get("stream", False):

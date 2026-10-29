@@ -7,11 +7,11 @@ import time
 from collections.abc import Iterable, Iterator
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from hoshimi.api.deps import ServicesDep
-from hoshimi.api.errors import error_type_for, openai_error
+from hoshimi.api.errors import error_type_for, openai_error, upstream_error_metadata
 from hoshimi.api.inference import prepare_request, tracked_chunks
 from hoshimi.core.chunks import (
     UpstreamStreamFailure,
@@ -24,6 +24,7 @@ from hoshimi.core.chunks import (
 )
 from hoshimi.core.context import Services
 from hoshimi.core.errors import HoshimiError, UpstreamError, ValidationError
+from hoshimi.core.net.identity import InferenceIdentity
 from hoshimi.core.translate.responses import ResponsesRequestError, responses_to_chat
 
 router = APIRouter(prefix="/v1", tags=["openai"])
@@ -41,9 +42,11 @@ def _sse(events: Iterable[dict[str, Any]], *, kind: str) -> Iterator[bytes]:
             yield _frame(event)
     except HoshimiError as exc:
         if kind == "responses":
-            yield _frame({"error": {"message": exc.message, "type": error_type_for(exc), "code": exc.code}})
+            yield _frame({"error": {"message": exc.message, "type": error_type_for(exc), "code": exc.code, **upstream_error_metadata(exc)}})
         else:
-            yield _frame(openai_error(exc.message, error_type_for(exc), exc.code))
+            payload = openai_error(exc.message, error_type_for(exc), exc.code)
+            payload["error"].update(upstream_error_metadata(exc))
+            yield _frame(payload)
         return
     except (BrokenPipeError, ConnectionResetError):
         return
@@ -62,11 +65,12 @@ def _finish_non_stream(payload: dict[str, Any], status: int = 200) -> JSONRespon
 def create_chat_completion(
     services: ServicesDep,
     body: Annotated[dict[str, Any], Body(description="OpenAI Chat Completions request")],
+    request: Request,
 ) -> Any:
-    return chat_completion(services, body, origin="chat")
+    return chat_completion(services, body, origin="chat", identity=InferenceIdentity.from_headers(request.headers))
 
 
-def chat_completion(services: Services, body: dict[str, Any], *, origin: str) -> Any:
+def chat_completion(services: Services, body: dict[str, Any], *, origin: str, identity: InferenceIdentity | None = None) -> Any:
     """One Chat Completions turn; ``origin`` is what the usage stats file it under."""
     model, body = prepare_request(services, body)
     stream = bool(body.get("stream", True))
@@ -74,7 +78,7 @@ def chat_completion(services: Services, body: dict[str, Any], *, origin: str) ->
     completion_id = new_completion_id()
     created = int(time.time())
     chunks = emit_chat_chunks(
-        tracked_chunks(services, model, body, origin=origin, stream=stream),
+        tracked_chunks(services, model, body, origin=origin, stream=stream, identity=identity),
         model=model,
         completion_id=completion_id,
         created=created,
@@ -109,6 +113,7 @@ def chat_completion(services: Services, body: dict[str, Any], *, origin: str) ->
 def create_response(
     services: ServicesDep,
     body: Annotated[dict[str, Any], Body(description="OpenAI Responses request")],
+    request: Request,
 ) -> Any:
     try:
         chat_body = responses_to_chat(body)
@@ -119,7 +124,7 @@ def create_response(
 
     response_id = new_response_id()
     created = int(time.time())
-    chunks = tracked_chunks(services, model, chat_body, origin="responses", stream=stream)
+    chunks = tracked_chunks(services, model, chat_body, origin="responses", stream=stream, identity=InferenceIdentity.from_headers(request.headers))
 
     if not stream:
         try:
