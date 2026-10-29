@@ -45,7 +45,7 @@ def test_fingerprint_declares_exact_v2_tools_on_an_empty_tool_list() -> None:
     assert "tool_choice" not in body
     for tool in body["tools"]:
         fn = tool["function"]
-        assert fn == {"name": fn["name"], **FINGERPRINT_TOOL_DEFINITIONS[fn["name"]]}
+        assert fn == {"name": fn["name"], **FINGERPRINT_TOOL_DEFINITIONS[fn["name"]], "strict": False}
     assert "placeholders" in body["messages"][0]["content"]
 
 
@@ -136,7 +136,55 @@ def test_exact_tool_definitions_are_reused_and_duplicate_gate_names_dropped(styl
     body = {"tools": [fingerprint_tool("read", style), fingerprint_tool("read", style), fingerprint_tool("shell", style)]}
     assert apply_fingerprint(body, style) == {}
     assert _names(body["tools"]) == ["read", "shell"]
-    assert "system" not in body and "messages" not in body and "instructions" not in body
+    assert "<env>" in str(body)
+    assert "placeholders" not in str(body)
+
+
+@pytest.mark.parametrize("style", ["chat", "flat", "claude"])
+def test_existing_client_environment_is_preserved_without_gateway_context(style):
+    context = "<env>\nWorking directory: /client/project\nPlatform: windows\n</env>"
+    body = {"tools": [fingerprint_tool("read", style), fingerprint_tool("shell", style)]}
+    if style == "chat":
+        body["messages"] = [{"role": "system", "content": context}]
+    elif style == "flat":
+        body["instructions"] = context
+    else:
+        body["system"] = [{"type": "text", "text": context, "cache_control": {"type": "ephemeral"}}]
+    before = copy.deepcopy(body)
+    apply_fingerprint(body, style)
+    for key in ("messages", "instructions", "system"):
+        assert body.get(key) == before.get(key)
+    assert str(body).count("<env>") == 1
+
+
+def test_anonymous_sdk_identity_and_payload_use_opencode_wire_format():
+    from hoshimi.core.net.identity import InferenceIdentity, identity
+
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, text="data: [DONE]\n\n")
+
+    token = identity.set(InferenceIdentity(session="client-conversation", user_agent="python-openai/test", forwarded=True))
+    try:
+        with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+            provider = OpencodeProvider(client, [Account({"id": "anonymous"})])
+            body = {"messages": [{"role": "user", "content": "hello"}], "max_tokens": 64}
+            before = copy.deepcopy(body)
+            list(provider.stream("deepseek-v4.1-flash-free", body))
+            assert body == before
+    finally:
+        identity.reset(token)
+    request = requests[0]
+    assert request.extensions["hoshimi_transport"] == "bun"
+    assert request.headers["user-agent"] == CLIENT_UA
+    assert SESSION_RE.fullmatch(request.headers["x-opencode-session"])
+    payload = json.loads(request.content)
+    assert "max_tokens" not in payload and payload["max_completion_tokens"] == 64
+    assert payload["stream_options"]["include_usage"] is True
+    assert "prompt_cache_key" not in payload
+    assert "not provided by caller" in payload["messages"][0]["content"]
 
 
 @pytest.mark.parametrize("choice", ["none", {"type": "none"}])
@@ -159,9 +207,14 @@ def test_session_ids_are_stable_and_gateway_shaped() -> None:
     assert REQUEST_RE.match(mint_request_id())
 
 
-def test_sessions_match_reference_vectors_and_reencode_v1_ids() -> None:
-    assert session_for_conversation("hello") == "ses_c51d137aaffe2ss37XmkOuk1FJ"
-    assert session_for_conversation(None) == "ses_4c86fa44effe3A2voSQN7agsVR"
+def test_sessions_use_real_creation_time_and_reencode_v1_ids(monkeypatch) -> None:
+    timestamp = 1793259941000
+    monkeypatch.setattr("hoshimi.core.providers.opencode.time.time", lambda: timestamp / 1000)
+    session = session_for_conversation("timestamp-regression")
+    # The official six-byte prefix stores the low 36 timestamp bits, descending.
+    assert ((~int(session[4:16], 16)) & 0xFFFFFFFFFFFF) >> 12 == timestamp & 0xFFFFFFFFF
+    monkeypatch.setattr("hoshimi.core.providers.opencode.time.time", lambda: timestamp / 1000 + 100)
+    assert session_for_conversation("timestamp-regression") == session
     legacy = "ses_000000000000ABCDEFGHIJKLMN"
     assert SESSION_RE.fullmatch(legacy)
     assert session_for_conversation(legacy) != legacy
@@ -270,7 +323,7 @@ def test_stream_sends_v2_headers_restores_tool_aliases_and_isolates_accounts() -
     assert sessions[0] == sessions[1] != sessions[2]
     for request in requests:
         assert request.url.path == "/inference/openai/v1/chat/completions"
-        assert request.headers["User-Agent"] == "opencode/latest/2.0.26/cli"
+        assert request.headers["User-Agent"] == CLIENT_UA
         assert request.headers["x-opencode-client"] == "cli"
         assert "x-opencode-request" not in request.headers
         assert all(request.headers[key] == request.headers["x-opencode-session"] for key in ("x-opencode-session-id", "x-session-affinity", "x-session-id"))

@@ -42,7 +42,7 @@ def test_client_session_survives_all_protocol_entries(client, services, endpoint
         assert requests[0].headers["user-agent"] == "opencode/test/cli"
         assert requests[0].headers["x-opencode-project"] == "project-one"
         assert requests[0].headers["authorization"] == "Bearer upstream-key"
-        assert json.loads(requests[0].content)["prompt_cache_key"] == "ses_original_client_session"
+        assert "prompt_cache_key" not in json.loads(requests[0].content)
         assert identity.get().session == ""
     finally:
         provider.client.close()
@@ -58,7 +58,7 @@ def test_playground_sessions_stay_distinct_and_survive_compaction(services):
         sessions = [request.headers["x-opencode-session"] for request in requests]
         assert sessions[0] != sessions[1]
         assert sessions[0] == sessions[2]
-        assert all(json.loads(request.content)["prompt_cache_key"] == session for request, session in zip(requests, sessions, strict=True))
+        assert all("prompt_cache_key" not in json.loads(request.content) for request in requests)
     finally:
         provider.client.close()
 

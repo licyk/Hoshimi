@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 
+from hoshimi.core.net.bun import BunTransport, BunUnavailable, runtime_path
 from hoshimi.core.net.policy import NetworkPolicy, parse_policy, proxy_route
 from hoshimi.core.net.profiles import request_operation
 from hoshimi.core.net.responses import failure_kind, reject_interception
@@ -52,8 +53,8 @@ class _Stream(httpx.SyncByteStream):
 
 
 class _Pool:
-    def __init__(self, proxy: str | None):
-        self.transport = httpx.HTTPTransport(proxy=proxy, retries=0, trust_env=True)
+    def __init__(self, proxy: str | None, backend: str = "httpx"):
+        self.transport = BunTransport(proxy=proxy) if backend == "bun" else httpx.HTTPTransport(proxy=proxy, retries=0, trust_env=True)
         self.active = 0
         self.retired = False
 
@@ -64,13 +65,19 @@ class RoutingTransport(httpx.BaseTransport):
     def __init__(self, client: NetworkClient):
         self.client = client
         self.lock = threading.RLock()
-        self.pools: dict[str | None, _Pool] = {}
+        self.pools: dict[tuple[str | None, str], _Pool] = {}
         self.generation: NetworkPolicy | None = None
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         policy = self.client.policy
         proxy, route = proxy_route(request.url, policy)
         request.extensions["hoshimi_route"] = route
+        requested = request.extensions.get("hoshimi_transport")
+        backend = "bun" if requested == "bun" and runtime_path() is not None else "httpx"
+        request.extensions["hoshimi_actual_transport"] = backend
+        if requested == "bun" and backend == "httpx":
+            request.extensions["hoshimi_transport_fallback"] = "bun_unavailable"
+        key = (proxy, backend)
         with self.lock:
             if policy != self.generation:
                 for pool in self.pools.values():
@@ -79,9 +86,9 @@ class RoutingTransport(httpx.BaseTransport):
                         pool.transport.close()
                 self.pools.clear()
                 self.generation = policy
-            pool = self.pools.get(proxy)
+            pool = self.pools.get(key)
             if pool is None:
-                pool = self.pools[proxy] = _Pool(proxy)
+                pool = self.pools[key] = _Pool(proxy, backend)
             pool.active += 1
 
         def release() -> None:
@@ -158,6 +165,10 @@ class NetworkClient(httpx.Client):
                 "operation": stage, "kind": kind, "status": status, "at": time.time(),
                 "host": request.url.host, "route": request.extensions.get("hoshimi_route", "custom_transport"),
             }
+            if "hoshimi_actual_transport" in request.extensions:
+                self.observations[stage]["transport"] = request.extensions["hoshimi_actual_transport"]
+            if "hoshimi_transport_fallback" in request.extensions:
+                self.observations[stage]["transport_fallback"] = request.extensions["hoshimi_transport_fallback"]
 
     def send(self, request: httpx.Request, **kwargs: Any) -> httpx.Response:
         # Exceptions never include a credential-bearing URL in public diagnostics.
@@ -167,6 +178,9 @@ class NetworkClient(httpx.Client):
             request.headers["Accept"] = "application/json"
         try:
             return super().send(request, **kwargs)
+        except BunUnavailable:
+            self._record(stage, "transport_unavailable", request)
+            raise
         except httpx.HTTPError as exc:
             kind = "timeout" if isinstance(exc, httpx.TimeoutException) else "proxy_error" if isinstance(exc, httpx.ProxyError) else "connection_error"
             self._record(stage, kind, request)

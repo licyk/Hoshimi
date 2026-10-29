@@ -1,7 +1,7 @@
 """OpenCode inference: API-key accounts and the anonymous v2 free lane.
 
-The anonymous path follows dsh-our-free-model's src/upstream.js at f0b979f:
-v2 client headers, descending session encoding, and exact read/shell declarations.
+The anonymous path aligns with OpenCode v2.2.1's captured requests: Bun transport,
+timestamp-based sessions, context envelopes, and read/shell declarations.
 Caller tools keep their own definitions through aliases and historical replay.
 
 The read/shell declarations are there for the lane's gate, not for the caller:
@@ -19,7 +19,10 @@ import copy
 import hashlib
 import os
 import re
+import threading
+import time
 from collections.abc import Iterator
+from functools import lru_cache
 from typing import Any, ClassVar
 
 from hoshimi.core.catalog import ModelSpec, opencode_spec
@@ -44,7 +47,7 @@ from hoshimi.core.translate.responses import chat_to_responses, iter_responses_c
 
 OPENCODE_BASE_URL = "https://opencode.ai/inference"
 
-CLIENT_UA = "opencode/latest/2.0.26/cli"
+CLIENT_UA = "opencode/latest/2.2.1/cli"
 
 # Models served by /inference/openai/v1/responses instead of /chat/completions.
 RESPONSES_MODELS = frozenset({"muse-spark-1.2-contributor-free", "muse-spark-1.3-contributor-free"})
@@ -57,6 +60,7 @@ SESSION_RE = re.compile(r"^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$")
 SESSION_DESCENDING_RE = re.compile(r"^[0-9a-f]{9}f[c-f][0-9a-f]$")
 REQUEST_RE = re.compile(r"^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$")
 _BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+_SESSION_LOCK = threading.Lock()
 _MUSE_SPARK_RE = re.compile(r"^muse[-_]?spark(?:$|[-_:.\s])", re.IGNORECASE)
 
 DEFAULT_MAX_TOKENS = 8192
@@ -77,23 +81,24 @@ def mint_request_id() -> str:
 
 
 def session_for_conversation(seed: str | None, *, namespace: str = "") -> str:
-    """Encode a stable, descending v2 session without persisting upstream identities.
+    """Keep a real timestamp-based v2 session for each account/conversation.
 
-    Account namespaces keep concurrent accounts isolated. Canonical incoming ids
-    can pass through only when the caller has not requested a separate namespace.
+    Hashing the timestamp creates a syntactically valid but unusable session.
+    Cache only the seed digest, never credentials, and do not rotate on refusals.
     """
     value = seed.strip() if isinstance(seed, str) else ""
     if not namespace and SESSION_RE.fullmatch(value) and SESSION_DESCENDING_RE.fullmatch(value[4:16]):
         return value
     signal = f"{namespace}\0{value or 'global'}" if namespace else value or "global"
     digest = hashlib.sha256(f"ses\0{signal}".encode()).digest()
-    timestamp = int.from_bytes(digest[:5], "big") >> 4
-    descending = (~((timestamp << 12) | 1)) & 0xFFFFFFFFFFFF
-    number = int.from_bytes(digest[6:16], "big")
-    tail = ""
-    for _ in range(14):
-        number, digit = divmod(number, 62)
-        tail = _BASE62[digit] + tail
+    with _SESSION_LOCK:
+        return _session_for_digest(digest)
+
+
+@lru_cache(maxsize=8192)
+def _session_for_digest(digest: bytes) -> str:
+    descending = (~((int(time.time() * 1000) << 12) | 1)) & 0xFFFFFFFFFFFF
+    tail = "".join(_BASE62[byte % 62] for byte in digest[6:20])
     return f"ses_{descending:012x}{tail}"
 
 
@@ -264,6 +269,8 @@ class OpencodeProvider(OpenAiCompatProvider):
             "x-opencode-client": "cli",
             "x-opencode-project": identity.get().project or str(account.get("project_id") or "global"),
         }
+        if self._api_key(account) == "public" and not headers["User-Agent"].startswith("opencode/"):
+            headers["User-Agent"] = self.user_agent or CLIENT_UA
         if session:
             for name in ("x-opencode-session", "x-opencode-session-id", "x-session-affinity", "x-session-id"):
                 headers[name] = session
@@ -273,6 +280,9 @@ class OpencodeProvider(OpenAiCompatProvider):
         out = super().build_body(body, model)
         out.pop("session_id", None)
         out.pop("conversation_id", None)
+        if "max_tokens" in out:
+            out.setdefault("max_completion_tokens", out.pop("max_tokens"))
+        out["stream_options"] = {**(out.get("stream_options") or {}), "include_usage": True}
         return out
 
     def stream_raw(self, account: Account, model: str, body: dict[str, Any]) -> Any:
@@ -339,7 +349,8 @@ class OpencodeProvider(OpenAiCompatProvider):
         wire = self.model_wire(model)
         context = identity.get()
         seed = context.session or _session_seed(body)
-        session = context.session if context.forwarded and context.session else session_for_conversation(seed, namespace=f"{account.id}\0{self._api_key(account)}")
+        passthrough = context.forwarded and context.session and (not anonymous or SESSION_RE.fullmatch(context.session))
+        session = context.session if passthrough else session_for_conversation(seed, namespace=f"{account.id}\0{self._api_key(account)}")
 
         if wire == "responses":
             payload = chat_to_responses(body, model=model)
@@ -350,8 +361,8 @@ class OpencodeProvider(OpenAiCompatProvider):
         else:
             payload = self.build_body(body, model)
             style = "chat"
-        if wire != "messages":
-            payload["prompt_cache_key"] = session
+        if wire == "responses":
+            payload.setdefault("prompt_cache_key", session)
 
         # The fingerprint gate belongs to the anonymous lane; a keyed account
         # sees the caller's tools exactly as declared.
@@ -374,6 +385,7 @@ class OpencodeProvider(OpenAiCompatProvider):
             self.endpoint_url(wire),
             json=payload,
             headers=headers,
+            extensions={"hoshimi_transport": "bun"} if anonymous else {},
         ) as response:
             observe_response(self.id, response)
             if response.status_code >= 400:

@@ -79,7 +79,7 @@ def fingerprint_tool(name: str, style: str) -> dict[str, Any]:
     definition = copy.deepcopy(FINGERPRINT_TOOL_DEFINITIONS[name])
     if style == "claude":
         return {"name": name, "description": definition["description"], "input_schema": definition["parameters"]}
-    fn = {"name": name, **definition}
+    fn = {"name": name, **definition, "strict": False}
     return {"type": "function", **fn} if style == "flat" else {"type": "function", "function": fn}
 
 
@@ -119,6 +119,10 @@ def _note_injected(body: dict[str, Any], style: str, names: list[str]) -> None:
     noun = "tools; they are placeholders" if len(names) > 1 else "tool; it is a placeholder"
     action = "do" if len(names) > 1 else "does"
     note = f"Do not call the {label} {noun} that {action} nothing. Use the other tools you have been given instead."
+    _append_system(body, style, note)
+
+
+def _append_system(body: dict[str, Any], style: str, note: str) -> None:
     if style == "flat":
         instructions = body.get("instructions")
         body["instructions"] = f"{instructions}\n\n{note}" if isinstance(instructions, str) and instructions else note
@@ -178,6 +182,16 @@ def apply_fingerprint(body: dict[str, Any], style: str) -> dict[str, str]:
     _alias_history(body, aliases)
     if injected:
         _note_injected(body, style, injected)
+    if style == "flat":
+        systems = [body.get("instructions", "")]
+    elif style == "claude":
+        systems = [body.get("system", "")]
+    else:
+        systems = [message.get("content", "") for message in body.get("messages", []) if message.get("role") in ("system", "developer")]
+    if not any("<env>" in str(value) for value in systems):
+        # Keep the upstream context envelope without inventing client filesystem
+        # access or exposing this gateway's working directory, skills or files.
+        _append_system(body, style, "<env>\n  Working directory: not provided by caller\n  Platform: unknown\n</env>")
     if choice == "none" or (isinstance(choice, dict) and choice.get("type") == "none"):
         body.pop("tool_choice", None)
     if style == "flat" and not body.get("tool_choice"):
