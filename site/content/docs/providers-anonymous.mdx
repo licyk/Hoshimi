@@ -78,10 +78,10 @@ hoshimi config set providers.opencode.enabled false
 
 ### 协议处理
 
-匿名通道按 OpenCode v2.2.1 的实际请求对齐。2026-10-29 对 `deepseek-v4.1-flash-free` 的实测中，相同官方请求经 Bun 返回 200，经 Python/httpx 返回 `FreeUsageLimitError`；其他出口和后续配额仍以上游响应为准。
+匿名通道按 OpenCode v2.2.1 的实际请求对齐。2026-10-29 对 `deepseek-v4.1-flash-free` 的实测中，默认 Python/httpx 返回 `FreeUsageLimitError`；将 TLS 1.2 和 TLS 1.3 的密码套件列表及顺序与 Bun 对齐后，Python 传输返回 200。该调整不等于复制完整的 Bun TLS 指纹，其他出口和后续配额仍以上游响应为准。
 
-- 匿名推理优先使用已安装的 Bun，也能通过 `BUN_BE_BUN=1` 使用 OpenCode 内置的 Bun。检测 PATH 和默认安装目录，两者均不存在时，在发送前回退到 httpx，网络诊断记录 `transport: httpx`、`transport_fallback: bun_unavailable`。回退不保证消除上游限制；收到 429 或网络错误后不会换传输重发。目录查询、API 密钥账号和其他提供商继续使用原有传输。
-- Bun 传输沿用公共并发控制、代理策略、读取超时和流关闭处理，关闭流时回收子进程。支持 HTTP/HTTPS 代理；遇到 SOCKS 代理会明确报错，不会绕过代理直连。凭据和正文通过 stdin 传递，不写入命令参数或临时文件。
+- 匿名推理由 Python 进程内的 pyOpenSSL 传输处理，无需安装 Bun 或 OpenCode，也不启动子进程。依赖随 Hoshimi 安装，网络诊断记录 `transport: pyopenssl`。收到 429 或网络错误后不会换传输重发。目录查询、API 密钥账号和其他提供商继续使用原有传输。
+- 传输沿用公共并发控制、代理策略和 httpcore 连接池，支持 HTTP/HTTPS、SOCKS5/SOCKS5H 代理、增量流式响应、连接及读写超时，提前关闭流会释放连接。TLS 保留证书链与主机名校验；信任根沿用 HTTPX 的默认 CA，或 `SSL_CERT_FILE` / `SSL_CERT_DIR` 配置。不修改进程全局 SSL 配置。
 - 请求发往 `/inference/openai/v1` 或 `/inference/anthropic/v1`。匿名调用保留 OpenCode 的 `User-Agent`，其他客户端使用 `opencode/latest/2.2.1/cli`；发送 `x-opencode-client: cli`，不发送旧的 `x-opencode-request`。
 - 保留调用方的 OpenCode 会话 ID 和 `x-opencode-project`，凭据仍来自渠道配置。四个会话及 affinity 头使用同一 ID。Chat Completions 使用 `max_completion_tokens`，请求流式 usage，不再自动注入 `prompt_cache_key`；Responses 仍默认使用会话 ID 作为缓存键。
 - Playground 会话以及其他调用的 `session_id`、`conversation_id`、`user` 或首条用户消息映射到带真实创建时间的降序 ID，按账号隔离，进程内缓存最多 8192 个映射。压缩历史和后续回复沿用该 ID；重启或缓存淘汰后重新生成。相同开场白的独立对话应提供不同会话 ID。

@@ -193,7 +193,8 @@ def test_authoritative_empty_catalogue_eventually_removes_old_models():
         assert provider.models() == []
 
 
-def test_proxy_change_does_not_close_an_active_stream(monkeypatch):
+@pytest.mark.parametrize("extensions", [{}, {"hoshimi_transport": "opencode"}])
+def test_proxy_change_does_not_close_an_active_stream(monkeypatch, extensions):
     from hoshimi.core.net import client as networking
 
     transports = []
@@ -211,10 +212,11 @@ def test_proxy_change_does_not_close_an_active_stream(monkeypatch):
             self.closed = True
 
     monkeypatch.setattr(networking.httpx, "HTTPTransport", Transport)
+    monkeypatch.setattr(networking, "OpenCodeTransport", Transport)
     with NetworkClient(network=NetworkPolicy("proxy", "http://first:8080")) as client:
-        with client.stream("POST", "https://upstream.test/chat") as stream:
+        with client.stream("POST", "https://upstream.test/chat", extensions=extensions) as stream:
             client.network = NetworkPolicy("proxy", "http://second:8080")
-            client.get("https://upstream.test/models")
+            client.get("https://upstream.test/models", extensions=extensions)
             assert [t.proxy for t in transports] == ["http://first:8080", "http://second:8080"]
             assert not transports[0].closed
             assert stream.read() == b"data: hello\n\n"

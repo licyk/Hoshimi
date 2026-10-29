@@ -21,6 +21,10 @@ dependencies = [
     "rich",
     # The providers' own HTTP calls; also what FastAPI's TestClient needs.
     "httpx[socks]",
+    # OpenCode TLS runs in Python; httpcore retains pooling and proxy handling.
+    "httpcore[socks]>=1.0,<2",
+    "pyOpenSSL>=25.2.0",
+    "service-identity>=24.1.0",
     # CodeArts' DPoP proof on the token exchange is an ES256 JWS.
     "cryptography",
 ]

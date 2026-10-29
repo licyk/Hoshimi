@@ -1,6 +1,6 @@
 """OpenCode inference: API-key accounts and the anonymous v2 free lane.
 
-The anonymous path aligns with OpenCode v2.2.1's captured requests: Bun transport,
+The anonymous path aligns with OpenCode v2.2.1's captured requests: TLS ciphers,
 timestamp-based sessions, context envelopes, and read/shell declarations.
 Caller tools keep their own definitions through aliases and historical replay.
 
@@ -385,7 +385,7 @@ class OpencodeProvider(OpenAiCompatProvider):
             self.endpoint_url(wire),
             json=payload,
             headers=headers,
-            extensions={"hoshimi_transport": "bun"} if anonymous else {},
+            extensions={"hoshimi_transport": "opencode"} if anonymous else {},
         ) as response:
             observe_response(self.id, response)
             if response.status_code >= 400:

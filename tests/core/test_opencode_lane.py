@@ -177,7 +177,7 @@ def test_anonymous_sdk_identity_and_payload_use_opencode_wire_format():
     finally:
         identity.reset(token)
     request = requests[0]
-    assert request.extensions["hoshimi_transport"] == "bun"
+    assert request.extensions["hoshimi_transport"] == "opencode"
     assert request.headers["user-agent"] == CLIENT_UA
     assert SESSION_RE.fullmatch(request.headers["x-opencode-session"])
     payload = json.loads(request.content)
