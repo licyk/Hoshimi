@@ -89,7 +89,7 @@ def error_response(status: int, code: str, message: str, detail: dict[str, Any] 
 
 def upstream_error_metadata(exc: HoshimiError) -> dict[str, Any]:
     """Carry typed refusals and wait times through protocol-shaped errors."""
-    metadata = {key: exc.detail[key] for key in ("upstream_type", "scope") if key in exc.detail}
+    metadata = {key: exc.detail[key] for key in ("upstream_type", "upstream_code", "scope") if key in exc.detail}
     if isinstance(exc, ProviderError) and exc.retry_after is not None and math.isfinite(exc.retry_after):
         metadata["retry_after"] = max(0, math.ceil(exc.retry_after))
     return metadata

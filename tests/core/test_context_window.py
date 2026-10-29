@@ -11,7 +11,7 @@ from hoshimi.api.compaction import SUMMARY_PREFIX, fit, prefix, recent_user_text
 from hoshimi.core.agent.context_window import IMAGE_TOKENS, LearnedWindows, budget, estimate, message_tokens, text_tokens
 from hoshimi.core.catalog import FALLBACK_CONTEXT_WINDOW, default_spec
 from hoshimi.core.failure import body_says_model_gone, context_limit_in, is_context_overflow
-from hoshimi.core.providers.base import ContextOverflow, ProviderError, QuotaExceeded
+from hoshimi.core.providers.base import ContextOverflow, ProviderError, RequestThrottled
 from hoshimi.core.providers.openai_compat import _classify_in_band, raise_for_status
 
 
@@ -81,7 +81,7 @@ def test_an_overflow_is_not_read_as_quota_and_a_healthy_answer_is_not_an_overflo
     # "limit exceeded" reads as quota, which would hold the account back for a request no account can take.
     with pytest.raises(ContextOverflow):
         raise_for_status(httpx.Response(400, content=b"context length limit exceeded"), provider="lane")
-    with pytest.raises(QuotaExceeded):
+    with pytest.raises(RequestThrottled):
         raise_for_status(httpx.Response(429, content=b"rate limit exceeded"), provider="lane")
     assert not is_context_overflow(200, "the context window of this model is large")
     assert not is_context_overflow(500, "maximum context length")

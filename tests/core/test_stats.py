@@ -727,7 +727,7 @@ class RotatingProvider(Provider):
 
     def stream_raw(self, account: Account, model: str, body: dict[str, Any]) -> Iterator[dict[str, Any]]:
         if account.id == "first":
-            raise_for_status(httpx.Response(429, content=b"slow down"), provider=self.id)
+            raise_for_status(httpx.Response(429, json={"error": {"code": "insufficient_quota", "message": "quota exhausted"}}), provider=self.id)
         yield {"type": "text_delta", "text": "ok"}
         yield {"type": "finish", "reason": "stop"}
 

@@ -18,6 +18,7 @@ from hoshimi.core.failure import parse_retry_after
 from hoshimi.core.net.identity import InferenceIdentity
 from hoshimi.core.providers.base import Account, Provider, ProviderError
 from hoshimi.core.providers.openai_compat import raise_for_status
+from hoshimi.core.providers.refusals import provider_refusal
 from hoshimi.core.quota import observe_response
 
 
@@ -211,7 +212,12 @@ def stream_native_messages(provider: Provider, account: Account, model: str, con
                 for data in response.iter_bytes():
                     if context.cancellation.cancelled.is_set():
                         return
-                    yield from observer.feed(data)
+                    for chunk in observer.feed(data):
+                        if chunk.get("type") == "error":
+                            failure = provider_refusal(provider.id, {"error": chunk.get("error")}, retry_after=parse_retry_after(response.headers.get("retry-after")))
+                            if failure is not None:
+                                provider.defer_failure(account, model, failure)
+                        yield chunk
                     yield {"type": "messages_bytes", "data": data}
                 if not observer.terminal and not context.cancellation.cancelled.is_set():
                     raise UpstreamError("Upstream Messages stream ended without message_stop or error.")
@@ -221,13 +227,19 @@ def stream_native_messages(provider: Provider, account: Account, model: str, con
                     message = json.loads(data)
                 except ValueError:
                     raise UpstreamError(f"{provider.id}: expected an upstream Messages JSON response.") from None
+                failure = provider_refusal(provider.id, message, retry_after=parse_retry_after(response.headers.get("retry-after")))
+                if failure is not None:
+                    provider.defer_failure(account, model, failure)
                 yield {"type": "messages_response", "status": response.status_code, "headers": response_headers(response.headers)}
                 if not context.count_only and isinstance(message, dict):
                     if message.get("content"):
                         yield {"type": "text_delta"}
                     if isinstance(message.get("usage"), dict):
                         yield usage_chunk(message["usage"])
-                    yield {"type": "error", "error": message["error"]} if message.get("type") == "error" else {"type": "finish"}
+                    if failure is not None or message.get("type") == "error":
+                        yield {"type": "error", "error": message.get("error") or (failure.message if failure else "Upstream Messages error")}
+                    else:
+                        yield {"type": "finish"}
                 yield {"type": "messages_bytes", "data": data}
         except httpx.HTTPError:
             if context.cancellation.cancelled.is_set():

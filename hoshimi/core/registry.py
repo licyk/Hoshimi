@@ -149,7 +149,7 @@ class Registry:
 
         def guarded() -> Iterator[dict[str, Any]]:
             try:
-                for chunk in provider.stream_using(upstream_model, context.body, send, candidates=candidates, on_route=on_route):
+                for chunk in provider.stream_using(upstream_model, context.body, send, candidates=candidates, on_route=on_route, cancel=context.cancellation.cancelled):
                     if chunk.get("type") == "messages_response" and not context.count_only:
                         self.dead_models.clear(provider.id, upstream_model)
                     yield chunk
@@ -280,6 +280,13 @@ class Registry:
             kept = previous.get(provider_id)
             before = previous_inputs.get(provider_id)
             after = inputs[provider_id]
+            if kept is not None:
+                replacement = rebuilt[provider_id]
+                kept.admission.reconfigure(
+                    {"max_concurrency": replacement.max_concurrency, **(replacement.options.get("admission") or {})},
+                    reset_accounts=before is None or before[0] != after[0],
+                )
+                replacement.admission = kept.admission
             route_only = before is not None and before[0] == after[0] and (
                 {key: value for key, value in before[1].items() if key != "network"}
                 == {key: value for key, value in after[1].items() if key != "network"}

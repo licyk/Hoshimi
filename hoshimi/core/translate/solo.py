@@ -118,7 +118,7 @@ def _normalize_tools(body: dict[str, Any]) -> None:
     body["tools"] = out
 
 
-def iter_solo_chunks(lines: Iterable[str]) -> Iterator[dict[str, Any]]:
+def iter_solo_chunks(lines: Iterable[str], *, retry_after: float | None = None) -> Iterator[dict[str, Any]]:
     """Consume TRAE SOLO SSE and yield normalized chunks."""
     tool_count = 0
     usage_input = 0
@@ -186,6 +186,9 @@ def iter_solo_chunks(lines: Iterable[str]) -> Iterator[dict[str, Any]]:
                     finish_reason = "stop"
 
         elif event == "error":
+            from hoshimi.core.providers.refusals import raise_provider_refusal
+
+            raise_provider_refusal("trae", raw, retry_after=retry_after)
             message = raw.get("message") or f"TRAE error {raw.get('code')}"
             yield {"type": "error", "error": str(message)}
             return

@@ -56,6 +56,31 @@ def install(services, handle, accounts=None, options=None):
     return lane
 
 
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("error_type", ["insufficient_quota", "rate_limit_error"])
+def test_native_business_errors_preserve_bytes_and_hold_followup_requests(services, stream, error_type):
+    payload = {"type": "error", "error": {"type": error_type, "message": "wait"}, "request_id": "original"}
+    raw = (f"event: error\ndata: {json.dumps(payload)}\n\n" if stream else json.dumps(payload)).encode()
+    calls = []
+
+    def handle(upstream):
+        calls.append(upstream)
+        return httpx.Response(200, content=raw, headers={"content-type": "text/event-stream" if stream else "application/json", "retry-after": "60"})
+
+    lane = install(services, handle, options={"admission": {"queue_timeout_seconds": 0}})
+    with TestClient(create_app(services, serve_ui=False), base_url="http://localhost") as client:
+        first = client.post("/v1/messages", json=request(stream=stream), headers={"x-api-key": "gateway-key"})
+        assert first.status_code == 200
+        assert first.content == raw
+        assert services.stats.calls(limit=1)[0][0]["ok"] is False
+        second = client.post("/v1/messages", json=request(stream=stream), headers={"x-api-key": "gateway-key"})
+        assert second.status_code == 429
+        assert 59 <= int(second.headers["retry-after"]) <= 60
+    assert len(calls) == 1
+    assert lane.admission.active == 0
+    assert not lane.accounts[0].needs_login
+
+
 def test_native_extensions_and_error_metadata_are_not_rebuilt(services):
     body = request(
         system=[{"type": "text", "text": "attribution"}, {"type": "text", "text": "system", "cache_control": {"type": "ephemeral", "ttl": "1h"}}],

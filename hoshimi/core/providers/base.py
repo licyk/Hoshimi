@@ -16,7 +16,7 @@ from hoshimi.core.catalog import ModelSpec, default_spec
 from hoshimi.core.errors import UpstreamError
 from hoshimi.core.failure import AccountCooler, is_recoverable, parse_reset_after
 from hoshimi.core.modelsdev import enrich_spec
-from hoshimi.core.net.admission import AdmissionDelayed, ProviderAdmission
+from hoshimi.core.net.admission import AdmissionCancelled, AdmissionDelayed, ProviderAdmission
 from hoshimi.core.net.client import operation
 
 logger = logging.getLogger(__name__)
@@ -454,6 +454,7 @@ class Provider(ABC):
         *,
         candidates: list[Account] | None = None,
         on_route: RouteCallback | None = None,
+        cancel: threading.Event | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Share credential rotation and retry policy between inference protocols.
 
@@ -499,18 +500,25 @@ class Provider(ABC):
             elif len(tried) >= attempts:
                 break
             tried.add(account.id)
-            asked += 1
             iterator: Iterator[dict[str, Any]] | None = None
             admitted = False
             try:
                 try:
-                    self.admission.acquire((account.id, model))
+                    self.admission.acquire((account.id, model), cancel=cancel)
+                except AdmissionCancelled:
+                    error = ProviderError(499, f"{self.id}: request cancelled while waiting for provider capacity")
+                    error.code = "cancelled"
+                    error.should_retry = False
+                    raise error from None
                 except AdmissionDelayed as delay:
                     error = RequestThrottled(429, f"{self.id}: waiting for provider capacity", retry_after=delay.seconds)
                     error.should_retry = False
                     raise error from None
                 admitted = True
+                if self.cooler.blocked(self.id, account.id, model=model):
+                    continue
                 # Consume lazily; quota errors can also surface mid-stream.
+                asked += 1
                 revision = account.auth_revision
                 iterator = send(account, model, body)
                 answered = False
@@ -527,18 +535,19 @@ class Provider(ABC):
                             on_route(self.id, account.id, asked)
                     yield chunk
                 return
-            except ModelSaturated:
+            except ModelSaturated as exc:
                 # The model, not the account: every candidate meets the same
                 # wall, so standing the pool down is both faster and the true
                 # answer. Rotating would end as "every account is limited",
                 # which is slower and untrue.
+                self.defer_failure(account, model, exc)
                 raise
             except ProviderError as exc:
                 last_error = exc
                 stop = emitted or exc.should_retry is False
                 if isinstance(exc, RequestThrottled):
                     if admitted:
-                        self.admission.defer((account.id, model), exc.retry_after if exc.retry_after is not None else 1.0)
+                        self.defer_failure(account, model, exc)
                     if stop or retries_left <= 0:
                         raise
                     if exc.retry_after is not None and exc.retry_after > self.admission.timeout:
@@ -574,16 +583,7 @@ class Provider(ABC):
                     # spelling of this answer, the prose is a station's own
                     # dialect, and where both exist the standard one is the
                     # one the operator actually configured.
-                    held = exc.retry_after
-                    if held is None:
-                        held = parse_reset_after(exc.body)
-                    self.cooler.hold(
-                        self.id,
-                        account.id,
-                        self.quota_hold_seconds if held is None else held,
-                        reason="rate_limited",
-                        model=model if exc.scope == "account_model" else "",
-                    )
+                    self.defer_failure(account, model, exc)
                     if stop:
                         raise
                     continue
@@ -619,6 +619,17 @@ class Provider(ABC):
         if held:
             raise QuotaExceeded(429, f"{self.id}: accounts are cooling down for this model", retry_after=min(row["seconds_left"] for row in held))
         raise ProviderError(502, f"Provider {self.id!r} exhausted all accounts.")
+
+    def defer_failure(self, account: Account, model: str, exc: ProviderError) -> None:
+        """Share failure holds with transports that must forward original bytes."""
+        if isinstance(exc, QuotaExceeded):
+            held = exc.retry_after if exc.retry_after is not None else parse_reset_after(exc.body)
+            self.cooler.hold(self.id, account.id, self.quota_hold_seconds if held is None else held,
+                             reason="rate_limited", model=model if exc.scope == "account_model" else "")
+        elif isinstance(exc, (RequestThrottled, ModelSaturated)):
+            scope = "model" if isinstance(exc, ModelSaturated) else exc.scope
+            key = {"provider": None, "account": (account.id, ""), "model": ("", model)}.get(scope, (account.id, model))
+            self.admission.defer(key, exc.retry_after if exc.retry_after is not None else 1.0)
 
     def _backoff(self, attempt: int, exc: ProviderError) -> None:
         """Wait before asking the same station again.

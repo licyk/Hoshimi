@@ -33,7 +33,7 @@ import httpx
 
 from hoshimi.core.db import Database, open_store_database, retire_legacy_file
 from hoshimi.core.net.client import NetworkClient
-from hoshimi.core.providers.base import Provider, QuotaExceeded
+from hoshimi.core.providers.base import ModelSaturated, Provider, QuotaExceeded, RequestThrottled
 
 STATE_AVAILABLE = "available"
 STATE_REGION_BLOCKED = "region-blocked"
@@ -112,7 +112,7 @@ def _state_from_message(message: str, status: Any) -> str:
 def state_from_error(exc: BaseException) -> tuple[str, str]:
     """Classify a raised failure as (state, detail)."""
     message = _detail(getattr(exc, "message", None) or exc)
-    if isinstance(exc, QuotaExceeded):
+    if isinstance(exc, (QuotaExceeded, RequestThrottled, ModelSaturated)):
         return STATE_THROTTLED, message
     status = getattr(exc, "status", None)
     if not isinstance(status, int):
@@ -182,6 +182,8 @@ def _clone(provider: Provider, client: httpx.Client) -> Provider:
     minutes for an answer is not an answer.
     """
     clone = type(provider)(client, provider.accounts, provider.options)
+    clone.admission = provider.admission
+    clone.cooler = provider.cooler
     clone.max_retries = getattr(provider, "max_retries", 1)  # type: ignore[attr-defined]
     return clone
 

@@ -153,8 +153,11 @@ def consume_openai_sse(lines: Iterable[str], *, provider: str, retry_after: floa
         if not isinstance(frame, dict):
             continue
 
-        if frame.get("error") is not None:
+        # A successful HTTP stream may contain only a provider business error.
+        if any(key in frame for key in ("error", "code", "error_code", "base_resp")) or frame.get("type") == "error":
             raise_provider_refusal(provider, frame, retry_after=retry_after)
+
+        if frame.get("error") is not None:
             error = frame["error"]
             message = str(error)
             if isinstance(error, dict) and isinstance(error.get("message"), str):
@@ -164,9 +167,8 @@ def consume_openai_sse(lines: Iterable[str], *, provider: str, retry_after: floa
             return
 
         # Non-SSE error envelopes some gateways return with 200.
-        if "code" in frame and "message" in frame and "choices" not in frame:
-            raise_provider_refusal(provider, frame, retry_after=retry_after)
-            message = str(frame.get("message"))
+        if "code" in frame and ("message" in frame or "msg" in frame) and "choices" not in frame:
+            message = str(frame.get("message") or frame.get("msg"))
             _classify_in_band(provider, message)
             yield {"type": "error", "error": message}
             return

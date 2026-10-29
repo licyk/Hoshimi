@@ -8,7 +8,7 @@ import pytest
 
 from hoshimi.core.errors import ValidationError
 from hoshimi.core.providers import build_providers
-from hoshimi.core.providers.base import Account, AuthFailed, QuotaExceeded
+from hoshimi.core.providers.base import Account, AuthFailed, RequestThrottled
 from hoshimi.core.providers.nvidia import NvidiaProvider
 
 
@@ -45,7 +45,7 @@ def test_nim_preserves_ids_capabilities_and_normalizes_requests():
         assert {chunk["type"] for chunk in chunks} == {"reasoning_delta", "tool_call_start", "usage", "finish"}
 
 
-@pytest.mark.parametrize("status,error", [(401, AuthFailed), (429, QuotaExceeded)])
+@pytest.mark.parametrize("status,error", [(401, AuthFailed), (429, RequestThrottled)])
 def test_nim_refusals_use_the_existing_error_taxonomy(status, error):
     with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(status, text="refused"))) as client:
         lane = NvidiaProvider(client, [Account({"api_key": "key"})])

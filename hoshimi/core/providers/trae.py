@@ -103,7 +103,9 @@ class TraeProvider(Provider):
             observe_response(self.id, response)
             if response.status_code >= 400:
                 raise_for_status(response, provider=self.id)
-            yield from iter_solo_chunks(response.iter_lines())
+            from hoshimi.core.failure import parse_retry_after
+
+            yield from iter_solo_chunks(response.iter_lines(), retry_after=parse_retry_after(response.headers.get("retry-after")))
 
     def refresh_account(self, account: Account) -> bool:
         refresh_token = account.get("refresh_token")

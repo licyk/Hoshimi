@@ -185,3 +185,22 @@ Inference requests share a concurrency limit per provider instance: two by defau
 `max_concurrency` must be a positive integer; the other values are finite, nonnegative seconds. Server-declared waits are preserved: a wait longer than the request's retry budget returns an error with `Retry-After` instead of sending an early retry. These limits are in memory per instance; separate processes do not share them.
 
 OpenCode free limits and Cline daily model limits hold the account/model pair. Zcode concurrency errors and Qoder queue responses wait without invalidating credentials. Account-wide quota errors still hold the whole account. When no reset time is supplied for an exhausted quota, the conservative fallback is one hour.
+
+### Shared capacity and business errors
+
+Within one gateway, chat, native Messages and availability probes share provider capacity; probes also share account quota holds. Reconfiguring a provider preserves occupied slots. Lower limits take effect as existing streams finish. Cancelling a queued native Messages request prevents dispatch. Changing accounts or credentials clears account-specific temporary waits while retaining provider and model waits.
+
+Waits can affect a provider, account, model, or account/model pair. Quotas are checked again after admission. Native Messages preserves original HTTP 200 and SSE business-error responses while recording limits for subsequent requests.
+
+| Provider | Handling |
+| --- | --- |
+| MiniMax Agent / API | Temporary limits such as `1002`, `1039`, `1041`; account quotas such as `1008`, `2056`; authentication errors `1004`, `2049`. Supports `base_resp.status_code`; unknown nonzero values remain errors |
+| Zhipu / Z.AI | Separates rate limits (`1302`, `1305`), quotas (`1113`, `1308`, `1310` and related codes), expired credentials (`1003`), and context overflow (`1261`). Plan permissions and fair-use restrictions are not retried automatically |
+| TRAE | `4008` exhausted credits; `1005` with plan wording indicates plan allowance; `4011` is temporary throttling |
+| LobsterAI / Loomy / Raccoon | Recognizes insufficient credits/balance and business code `402`; LobsterAI `40100` / `40101` enter credential recovery |
+| ZCode | `1002` rejects credentials; `3007` verification failures and `3012` risk rejections return without automatic retries |
+| Qoder | `105` authentication, `110` quota. Queue waits use the longer delay when both header and body specify one |
+
+Standard compatible error types such as `rate_limit_error`, `insufficient_quota` and `overloaded_error` also use shared recovery. An untyped HTTP 429 is temporary throttling unless the response explicitly reports an exhausted quota.
+
+Mappings follow the [MiniMax error reference](https://platform.minimax.io/docs/api-reference/errorcode), [Z.AI error reference](https://docs.z.ai/api-reference/api-code), and the local dsh-our-free-model reference. These are local recovery policies, not confirmation of live upstream availability.

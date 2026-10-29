@@ -104,7 +104,9 @@ def test_the_header_reaches_the_error_that_needs_it() -> None:
     assert classify({}) .retry_after is None
     assert classify({"retry-after": "120"}).retry_after == 120.0
     # And it rides the classification the body earned, not a new one.
-    assert isinstance(classify({"retry-after": "120"}), QuotaExceeded)
+    from hoshimi.core.providers.base import RequestThrottled
+
+    assert isinstance(classify({"retry-after": "120"}), RequestThrottled)
 
 
 def test_the_header_is_read_off_a_refusal_that_needs_no_body() -> None:

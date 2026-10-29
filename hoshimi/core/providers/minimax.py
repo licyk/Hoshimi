@@ -9,6 +9,7 @@ import httpx
 
 from hoshimi.core.catalog import ModelSpec, minimax_efforts_for, minimax_spec
 from hoshimi.core.expiry import set_from_seconds
+from hoshimi.core.failure import parse_retry_after
 from hoshimi.core.net.responses import refresh_token_rejected
 from hoshimi.core.providers.base import (
     CLAIM_ALREADY,
@@ -94,7 +95,7 @@ class MinimaxProvider(Provider):
                 from hoshimi.core.providers.openai_compat import raise_for_status
 
                 raise_for_status(response, provider=self.id)
-            yield from iter_anthropic_chunks(response.iter_lines())
+            yield from iter_anthropic_chunks(response.iter_lines(), provider=self.id, retry_after=parse_retry_after(response.headers.get("retry-after")))
 
     def refresh_account(self, account: Account) -> bool:
         refresh_token = account.get("refresh_token")

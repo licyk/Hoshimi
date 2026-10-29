@@ -13,6 +13,10 @@ class AdmissionDelayed(Exception):
         self.seconds = seconds
 
 
+class AdmissionCancelled(Exception):
+    """The caller disconnected while waiting for capacity."""
+
+
 def admission_options(raw: Any) -> tuple[int, float, float]:
     if raw is None:
         return 2, 0.0, 8.0
@@ -37,25 +41,37 @@ class ProviderAdmission:
         self.next_dispatch = 0.0
         self.cooldowns: dict[tuple[str, str] | None, float] = {}
 
+    def reconfigure(self, options: Any, *, reset_accounts: bool = False) -> None:
+        limits = admission_options(options)
+        with self.condition:
+            self.maximum, self.interval, self.timeout = limits
+            if reset_accounts:
+                self.cooldowns = {key: until for key, until in self.cooldowns.items() if key is None or not key[0]}
+            self.condition.notify_all()
+
     def defer(self, key: tuple[str, str] | None, seconds: float) -> None:
         with self.condition:
             self.cooldowns[key] = max(self.cooldowns.get(key, 0.0), time.monotonic() + seconds)
             self.condition.notify_all()
 
-    def acquire(self, key: tuple[str, str]) -> None:
+    def acquire(self, key: tuple[str, str], *, cancel: threading.Event | None = None) -> None:
         deadline = time.monotonic() + self.timeout
         with self.condition:
             while True:
+                if cancel is not None and cancel.is_set():
+                    raise AdmissionCancelled()
                 now = time.monotonic()
                 self.cooldowns = {k: until for k, until in self.cooldowns.items() if until > now}
-                ready = max(self.next_dispatch, self.cooldowns.get(None, 0.0), self.cooldowns.get(key, 0.0))
+                scopes = (None, (key[0], ""), ("", key[1]), key)
+                ready = max(self.next_dispatch, *(self.cooldowns.get(scope, 0.0) for scope in scopes))
                 if ready > deadline or (now >= deadline and (ready > now or self.active >= self.maximum)):
                     raise AdmissionDelayed(max(ready - now, 0.1))
                 if self.active < self.maximum and ready <= now:
                     self.active += 1
                     self.next_dispatch = now + self.interval
                     return
-                self.condition.wait(min(deadline - now, ready - now) if ready > now else deadline - now)
+                wait = min(deadline - now, ready - now) if ready > now else deadline - now
+                self.condition.wait(min(wait, 0.1) if cancel is not None else wait)
 
     def release(self) -> None:
         with self.condition:

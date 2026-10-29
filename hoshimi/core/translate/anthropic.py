@@ -263,10 +263,11 @@ def iter_anthropic_chunks(
             continue
         kind = frame.get("type") or event_name
 
-        if kind == "error":
+        if kind == "error" or any(key in frame for key in ("error", "base_resp", "code")):
             from hoshimi.core.providers.refusals import raise_provider_refusal
 
             raise_provider_refusal(provider, frame, retry_after=retry_after)
+        if kind == "error":
             error = frame.get("error")
             message = (
                 error.get("message")
