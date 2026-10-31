@@ -89,6 +89,7 @@ hoshimi config set providers.opencode.enabled false
 - 模型协议优先使用 `options.model_protocols`，其次使用目录声明，最后按已知模型推断。`deepseek-v4.1-flash-free` 使用 `/inference/openai/v1/chat/completions`，`muse-spark-*` 使用 `/inference/openai/v1/responses`，`union-alpha` 使用 `/inference/anthropic/v1/messages`。目录仍从 `/inference/v1/models` 获取。
 - HTTP 或流式响应中的 `FreeUsageLimitError`、`GoUsageLimitError` 按账号与模型暂缓调用，保留上游错误类型，不会当作登录失效。`FreeTierError` 表示客户端限制；协议对齐无法保证消除上游额度或访问策略限制。
 - 匿名请求会声明参考实现中的 `read` 和 `shell` 两个工具定义（上游会比对工具描述）。调用方自己的同名但定义不同的工具会改名（如 `read_client`）后发送，历史记录和强制选择中一致改名，响应中再还原。
+- 匿名通道将 `exec_command`、`write_stdin`、`kill_session` 映射为 `terminal_execute`、`terminal_send`、`terminal_stop`，避免上游将该工具组合拒绝为 `FreeUsageLimitError`。工具描述、参数和执行功能保留，历史调用及强制选择同步映射，返回调用方时恢复原名；与调用方现有名称冲突时使用数字后缀。API 密钥账号不使用此映射。
 - 这两个注入的工具调用方并不能执行。模型只调用了调用方没有提供的工具时，网关回答它 `unsupported call: <name>` 并在同一会话中再问一次，最多两轮；模型仍坚持调用时返回 502 错误。调用方看到的只有文本和自己工具的调用。
 - 调用方设置 `tool_choice: "none"` 时，上游请求中省略该字段，由网关保证不把任何工具调用交给调用方。
 - 带 API 密钥的账号不做以上工具处理，调用方的工具按原样发送。

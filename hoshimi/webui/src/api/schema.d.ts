@@ -2563,6 +2563,8 @@ export interface components {
             route: string;
             /** Status */
             status: number | null;
+            /** Transport */
+            transport: string | null;
         };
         /** NetworkView */
         NetworkView: {

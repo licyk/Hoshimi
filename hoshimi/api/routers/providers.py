@@ -31,6 +31,7 @@ class NetworkDiagnostic(Record):
     at: float
     host: str
     route: str
+    transport: str | None = None
 
 
 @router.get("/network/diagnostics", operation_id="network_diagnostics")

@@ -92,41 +92,43 @@ def test_fingerprint_keeps_caller_tools_and_leaves_tool_choice_alone() -> None:
 
 
 @pytest.mark.parametrize("style", ["chat", "flat", "claude"])
-def test_tool_aliases_retarget_history_and_forced_choice_without_losing_metadata(style: str) -> None:
+@pytest.mark.parametrize("name,alias", [("read", "read_client"), ("exec_command", "terminal_execute"), ("write_stdin", "terminal_send"), ("kill_session", "terminal_stop")])
+def test_tool_aliases_retarget_history_and_forced_choice_without_losing_metadata(style: str, name: str, alias: str) -> None:
     custom = fingerprint_tool("read", style)
     definition = custom.get("function", custom)
+    definition["name"] = name
     definition["description"] = "The caller's own read tool"
     occupied = copy.deepcopy(custom)
     if "function" in occupied:
-        occupied["function"]["name"] = "read_client"
+        occupied["function"]["name"] = alias
     else:
-        occupied["name"] = "read_client"
+        occupied["name"] = alias
     message = {"role": "assistant", "content": "", "tool_calls": [
-        {"id": "call_1", "type": "function", "function": {"name": "read", "arguments": '{"path":"file"}'}, "extra_content": {"signature": "opaque"}},
+        {"id": "call_1", "type": "function", "function": {"name": name, "arguments": '{"path":"file"}'}, "extra_content": {"signature": "opaque"}},
     ]}
-    body = {"tools": [custom, occupied], "messages": [message], "tool_choice": {"type": "function", "function": {"name": "read"}}}
+    body = {"tools": [custom, occupied], "messages": [message], "tool_choice": {"type": "function", "function": {"name": name}}}
     if style == "flat":
-        body["input"] = [{"type": "function_call", "name": "read", "call_id": "call_1", "arguments": "{}", "extra_content": {"signature": "opaque"}}]
-        body["tool_choice"] = {"type": "function", "name": "read"}
+        body["input"] = [{"type": "function_call", "name": name, "call_id": "call_1", "arguments": "{}", "extra_content": {"signature": "opaque"}}]
+        body["tool_choice"] = {"type": "function", "name": name}
     elif style == "claude":
-        body["messages"] = [{"role": "assistant", "content": [{"type": "tool_use", "id": "call_1", "name": "read", "input": {}, "signature": "opaque"}]}]
-        body["tool_choice"] = {"type": "tool", "name": "read"}
+        body["messages"] = [{"role": "assistant", "content": [{"type": "tool_use", "id": "call_1", "name": name, "input": {}, "signature": "opaque"}]}]
+        body["tool_choice"] = {"type": "tool", "name": name}
         body["system"] = [{"type": "text", "text": "Original instruction", "cache_control": {"type": "ephemeral"}}]
     before = copy.deepcopy(body)
-    assert apply_fingerprint(body, style) == {"read_client2": "read"}
-    assert _names(body["tools"]) == ["read_client2", "read_client", "read", "shell"]
+    assert apply_fingerprint(body, style) == {f"{alias}2": name}
+    assert _names(body["tools"]) == [f"{alias}2", alias, "read", "shell"]
     assert body["tools"][0].get("function", body["tools"][0])["description"] == "The caller's own read tool"
     if style == "flat":
-        assert body["tool_choice"]["name"] == "read_client2"
-        assert body["input"][0] == {**before["input"][0], "name": "read_client2"}
+        assert body["tool_choice"]["name"] == f"{alias}2"
+        assert body["input"][0] == {**before["input"][0], "name": f"{alias}2"}
     elif style == "claude":
-        assert body["tool_choice"]["name"] == "read_client2"
-        assert body["messages"][0]["content"][0] == {**before["messages"][0]["content"][0], "name": "read_client2"}
+        assert body["tool_choice"]["name"] == f"{alias}2"
+        assert body["messages"][0]["content"][0] == {**before["messages"][0]["content"][0], "name": f"{alias}2"}
         assert body["system"][0] == before["system"][0]
     else:
-        assert body["tool_choice"]["function"]["name"] == "read_client2"
+        assert body["tool_choice"]["function"]["name"] == f"{alias}2"
         call = body["messages"][1]["tool_calls"][0]
-        assert call["function"]["name"] == "read_client2"
+        assert call["function"]["name"] == f"{alias}2"
         assert call["extra_content"] == {"signature": "opaque"}
         assert message == before["messages"][0]
 
@@ -298,26 +300,27 @@ def test_explicit_public_key_is_still_anonymous_and_catalog_failure_retains_cach
     assert provider.models() == ["deepseek-v4.1-flash-free"]
 
 
-def test_stream_sends_v2_headers_restores_tool_aliases_and_isolates_accounts() -> None:
+@pytest.mark.parametrize("name,alias", [("read", "read_client"), ("exec_command", "terminal_execute"), ("write_stdin", "terminal_send"), ("kill_session", "terminal_stop")])
+def test_stream_sends_v2_headers_restores_tool_aliases_and_isolates_accounts(name, alias) -> None:
     requests: list[httpx.Request] = []
 
     def handle(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        name = "read_client" if request.headers["Authorization"] == "Bearer public" else "read"
+        sent_name = alias if request.headers["Authorization"] == "Bearer public" else name
         return httpx.Response(200, text="\n".join(_frames(json.dumps({"choices": [{"delta": {"tool_calls": [
-            {"index": 0, "id": "call_1", "type": "function", "function": {"name": name, "arguments": "{}"}},
+            {"index": 0, "id": "call_1", "type": "function", "function": {"name": sent_name, "arguments": "{}"}},
         ]}, "finish_reason": "tool_calls"}]}))), headers={"Content-Type": "text/event-stream"})
 
     anonymous = Account({"id": "anon"}, provider_id="opencode")
     keyed = Account({"id": "keyed", "api_key": "key"}, provider_id="opencode")
     provider = OpencodeProvider(httpx.Client(transport=httpx.MockTransport(handle)), [keyed, anonymous])
     body = {"messages": [{"role": "user", "content": "read a file"}], "session_id": "conversation", "tools": [
-        {"type": "function", "function": {"name": "read", "description": "Custom", "parameters": {"type": "object"}}},
-    ], "tool_choice": {"type": "function", "function": {"name": "read"}}}
+        {"type": "function", "function": {"name": name, "description": "Custom", "parameters": {"type": "object"}}},
+    ], "tool_choice": {"type": "function", "function": {"name": name}}}
     original = copy.deepcopy(body)
     for account in (anonymous, anonymous, keyed):
         chunks = list(provider.stream_raw(account, "mimo-v2.6-flash-free", body))
-        assert next(chunk for chunk in chunks if chunk["type"] == "tool_call_start")["name"] == "read"
+        assert next(chunk for chunk in chunks if chunk["type"] == "tool_call_start")["name"] == name
     assert body == original
     sessions = [request.headers["x-opencode-session"] for request in requests]
     assert sessions[0] == sessions[1] != sessions[2]
@@ -330,7 +333,7 @@ def test_stream_sends_v2_headers_restores_tool_aliases_and_isolates_accounts() -
         payload = json.loads(request.content)
         assert "session_id" not in payload and payload["stream"] is True
     assert json.loads(requests[-1].content)["tools"] == body["tools"]
-    assert json.loads(requests[0].content)["tool_choice"]["function"]["name"] == "read_client"
+    assert json.loads(requests[0].content)["tool_choice"]["function"]["name"] == alias
 
 
 def _chat_reply(*, text: str = "", calls: list[tuple[str, str]] = (), tokens: tuple[int, int] = (3, 2)) -> str:

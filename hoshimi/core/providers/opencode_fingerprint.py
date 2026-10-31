@@ -10,6 +10,10 @@ import copy
 from typing import Any
 
 FINGERPRINT_TOOLS = ("read", "shell")
+# The free lane rejects the exec_command/write_stdin combination with
+# FreeUsageLimitError, even when each tool alone succeeds. Keep the caller's
+# schemas and execution semantics under provider-local names, including history.
+_TERMINAL_ALIASES = {"exec_command": "terminal_execute", "write_stdin": "terminal_send", "kill_session": "terminal_stop"}
 FINGERPRINT_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     "read": {
         "description": "Read the contents of a file or directory. Supports text files, images, and PDFs. Images and PDFs are presented directly to the model. Each text "
@@ -152,20 +156,21 @@ def apply_fingerprint(body: dict[str, Any], style: str) -> dict[str, str]:
     out: list[Any] = []
     for tool in tools:
         name = tool_name(tool)
-        if name not in FINGERPRINT_TOOLS:
+        if name not in FINGERPRINT_TOOLS and name not in _TERMINAL_ALIASES:
             out.append(tool)
             continue
         if name in seen:
             continue
         seen.add(name)
-        if _carries_definition(tool, name, style):
+        if name in FINGERPRINT_TOOLS and _carries_definition(tool, name, style):
             present.add(name)
             out.append(tool)
             continue
-        alias = f"{name}_client"
+        base_alias = _TERMINAL_ALIASES.get(name, f"{name}_client")
+        alias = base_alias
         index = 2
         while alias in taken:
-            alias = f"{name}_client{index}"
+            alias = f"{base_alias}{index}"
             index += 1
         taken.add(alias)
         rename[alias] = name

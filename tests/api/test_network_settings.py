@@ -3,6 +3,25 @@
 from hoshimi.core.net.client import NetworkClient
 
 
+def test_diagnostics_preserve_actual_transport(client, services):
+    import httpx
+
+    network = NetworkClient(provider="fake", transport=httpx.MockTransport(lambda _: httpx.Response(429)))
+    old = services.registry.providers["fake"].client
+    services.registry.providers["fake"].client = network
+    try:
+        network.post("https://upstream.test/chat", extensions={
+            "hoshimi_actual_transport": "pyopenssl", "hoshimi_route": "environment_proxy",
+        })
+        row = client.get("/api/v1/network/diagnostics").json()[0]
+        assert row["transport"] == "pyopenssl"
+        assert row["route"] == "environment_proxy"
+        assert row["status"] == 429
+    finally:
+        services.registry.providers["fake"].client = old
+        network.close()
+
+
 def test_network_settings_are_validated_and_redacted(client, services):
     result = client.patch("/api/v1/settings", json={"network": {"mode": "proxy"}})
     assert result.status_code == 400
