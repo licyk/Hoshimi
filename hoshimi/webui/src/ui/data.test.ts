@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import ChipInput from '@/ui/ChipInput.vue';
 import DataTable from '@/ui/DataTable.vue';
@@ -49,6 +49,27 @@ describe('DataTable', () => {
     const shown = w.findAll('[role="row"].body').length;
     expect(shown).toBeGreaterThan(0);
     expect(shown).toBeLessThan(100);
+  });
+
+  it('replaces virtual rows without reading departing rows for an exit animation', async () => {
+    const many = Array.from({ length: 1000 }, (_, i) => ({ id: String(i), name: `n${i}`, calls: i }));
+    const w = mount(DataTable, {
+      props: { columns, rows: many, rowKey: (r: unknown) => (r as { id: string }).id, label: 'Things' },
+      global: { stubs: { 'transition-group': false } },
+    });
+    const departing = w.find('[role="row"].body').element as HTMLElement;
+    const offset = vi.spyOn(departing, 'offsetTop', 'get');
+    try {
+      const box = w.find('.scroll-area');
+      box.element.scrollTop = 5200;
+      await box.trigger('scroll');
+      expect(cells(w, 0)[0]).toBe('n92');
+      expect(w.findAll('[role="row"].body').length).toBeLessThan(100);
+      expect(offset).not.toHaveBeenCalled();
+    } finally {
+      offset.mockRestore();
+      w.unmount();
+    }
   });
 });
 

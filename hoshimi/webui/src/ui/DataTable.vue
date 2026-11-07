@@ -1,5 +1,5 @@
 <script setup lang="ts" generic="T">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { TransitionGroup, computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AppIcon from '@/ui/AppIcon.vue';
 import { ArrowDown, ArrowUp } from '@/ui/icons';
 import { TRANSITIONS, keepLeavingInPlace } from '@/ui/motion/transitions';
@@ -114,7 +114,7 @@ watch(sort, () => scroller.value?.box?.scrollTo({ top: 0 }));
 
 <template>
   <div ref="root" class="data-table" role="table" :aria-label="label" :aria-rowcount="rows.length + 1" :style="{ '--cols': template, '--row-h': `${rowHeight}px` }">
-    <ScrollArea ref="scroller" class="frame" :class="{ busy }" :max-height="maxHeight" @end="emit('end')">
+    <ScrollArea ref="scroller" class="frame" :class="{ busy, windowed }" :max-height="maxHeight" @end="emit('end')">
       <template #header>
         <div class="row head" role="row">
           <div v-for="c in visible" :key="c.key" class="cell type-label-medium" :class="[c.align ?? 'start']" role="columnheader" :aria-sort="ariaSort(c)">
@@ -127,14 +127,14 @@ watch(sort, () => scroller.value?.box?.scrollTo({ top: 0 }));
         </div>
       </template>
       <div v-if="!rows.length" class="empty type-body-medium muted"><slot name="empty">{{ emptyText }}</slot></div>
-      <TransitionGroup
+      <!-- Virtual rows leave on every scroll. Neither exit hooks nor move transitions belong here:
+           their layout reads can make scroll anchoring compensate for an unfinished window update. -->
+      <component
         v-else
-        tag="div"
+        :is="windowed ? 'div' : TransitionGroup"
         class="rowgroup"
         role="rowgroup"
-        :name="TRANSITIONS.list"
-        :css="!windowed"
-        v-bind="keepLeavingInPlace"
+        v-bind="windowed ? {} : { tag: 'div', name: TRANSITIONS.list, ...keepLeavingInPlace }"
         :style="windowed ? { paddingTop: `${range.from * rowHeight}px`, paddingBottom: `${(sorted.length - range.to) * rowHeight}px` } : undefined"
       >
         <div
@@ -155,7 +155,7 @@ watch(sort, () => scroller.value?.box?.scrollTo({ top: 0 }));
             </slot>
           </div>
         </div>
-      </TransitionGroup>
+      </component>
       <slot name="footer" />
     </ScrollArea>
   </div>
@@ -168,6 +168,8 @@ watch(sort, () => scroller.value?.box?.scrollTo({ top: 0 }));
 .data-table { min-width: 0; }
 .frame { transition: opacity var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard); }
 .frame.busy { opacity: 0.6; }
+/* The virtual window owns its offsets; browser anchor corrections would fight its spacers. */
+.frame.windowed { overflow-anchor: none; }
 /* The scroller's lane comes out of the rows' end padding, all but the step a sort button reaches past its cell. */
 .row { display: grid; grid-template-columns: var(--cols); gap: var(--app-space-3); align-items: center; padding: 0 var(--app-space-3); padding-inline-end: max(var(--app-space-1), calc(var(--app-space-3) - var(--app-scroll-lane))); }
 .head { min-height: 40px; color: var(--md-sys-color-on-surface-variant); border-bottom: 1px solid var(--md-sys-color-outline-variant); }
