@@ -159,10 +159,13 @@ const retry = () => props.provider && begin(props.provider);
         <p v-if="session.expires_at" class="type-body-small muted">{{ t('channels.loginExpires', { when: new Date(session.expires_at * 1000).toLocaleTimeString() }) }}</p>
       </template>
       <p v-if="step === 'done'" class="type-body-medium ok-text">{{ t('channels.loginDone', { id: session?.account_id ?? '' }) }}</p>
-      <ErrorNotice v-if="error" :message="error" announcement="assertive" />
+      <ErrorNotice v-if="error" :message="error" announcement="assertive">
+        <template #actions>
+          <AppButton variant="text" :icon="icons.RotateCcw" @click="retry">{{ t('common.retry') }}</AppButton>
+        </template>
+      </ErrorNotice>
     </div>
     <template #actions>
-      <AppButton v-if="error" variant="tonal" :icon="icons.RotateCcw" @click="retry">{{ t('common.retry') }}</AppButton>
       <AppButton :variant="step === 'done' ? 'filled' : 'text'" @click="open = false">{{ step === 'done' ? t('common.done') : t('common.cancel') }}</AppButton>
     </template>
   </AppDialog>

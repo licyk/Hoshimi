@@ -111,6 +111,7 @@ describe('signing a channel in', () => {
     await w.setProps({ open: true });
     await flushPromises();
     expect(w.find('.dialog').text()).toContain('Cannot start login');
+    expect(w.find('.error-notice .actions button').text()).toBe('Retry');
     state.start.mockResolvedValue({ id: 'session', provider: 'kilo', status: 'pending' });
     state.poll.mockRejectedValueOnce(new Error('Network unavailable'));
     await button('Retry').trigger('click');

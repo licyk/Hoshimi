@@ -38,15 +38,22 @@ withDefaults(defineProps<{
 
 <style scoped>
 .error-notice {
-  display: flex; align-items: flex-start; flex-wrap: wrap; gap: var(--app-space-3); min-width: 0;
+  display: flex; align-items: flex-start; gap: var(--app-space-3); min-width: 0;
   padding: var(--app-space-3) var(--app-space-4); border-radius: var(--md-sys-shape-corner-medium);
   background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container);
 }
 .icon { flex: none; margin-block-start: var(--app-space-1); }
-.content { display: flex; flex: 1 1 160px; flex-direction: column; gap: var(--app-space-1); min-width: 0; overflow-wrap: anywhere; }
+.content { display: flex; flex: 1; flex-direction: column; gap: var(--app-space-1); min-width: 0; overflow-wrap: anywhere; }
 .title, .message, .hint { margin: 0; white-space: pre-wrap; }
 .meta { display: flex; flex-wrap: wrap; gap: var(--app-space-2); }
-.actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--app-space-1); margin-inline-start: auto; max-width: 100%; }
+/* Text yields to actions, which stay inside the notice beside it. Multiple actions can wrap in
+   their own column instead of moving the whole group below the error. */
+.actions {
+  display: flex; flex: 0 1 auto; align-self: center; align-items: center; justify-content: flex-end; flex-wrap: wrap;
+  gap: var(--app-space-1); min-width: 0; max-width: 50%;
+  --md-text-button-label-text-color: var(--md-sys-color-on-error-container);
+  --md-text-button-icon-color: var(--md-sys-color-on-error-container);
+}
 .compact { padding: var(--app-space-2) var(--app-space-3); gap: var(--app-space-2); border-radius: var(--md-sys-shape-corner-small); }
 .compact .icon { margin-block-start: 0; }
 </style>

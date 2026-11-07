@@ -16,16 +16,23 @@ const failures = computed(() => catalog.data.value?.providers.filter((p) => p.st
   <div v-if="catalog.isFetching.value || failures.length || catalog.isError.value" class="catalog-status">
     <span v-if="catalog.isFetching.value" role="status">{{ t('catalog.loading', { loaded, total }) }}</span>
     <CatalogFailure
-      v-for="p in failures" :key="p.id"
+      v-for="(p, i) in failures" :key="p.id"
       :title="t('catalog.failed', { providers: p.id })"
       :kind="p.error ?? (p.status === 'timeout' ? 'timeout' : 'catalog_failed')" :status="p.diagnostic?.status" :host="p.diagnostic?.host"
-    />
-    <ErrorNotice v-if="catalog.isError.value" :message="t('catalog.interrupted')" />
-    <div v-if="!catalog.isFetching.value" class="actions"><AppButton variant="text" @click="catalog.refetch()">{{ t('common.retry') }}</AppButton></div>
+    >
+      <!-- Refetch restarts the whole catalogue: keep its single action in the final error notice. -->
+      <template v-if="!catalog.isFetching.value && !catalog.isError.value && i === failures.length - 1" #actions>
+        <AppButton variant="text" @click="catalog.refetch()">{{ t('common.retry') }}</AppButton>
+      </template>
+    </CatalogFailure>
+    <ErrorNotice v-if="catalog.isError.value" :message="t('catalog.interrupted')">
+      <template v-if="!catalog.isFetching.value" #actions>
+        <AppButton variant="text" @click="catalog.refetch()">{{ t('common.retry') }}</AppButton>
+      </template>
+    </ErrorNotice>
   </div>
 </template>
 
 <style scoped>
 .catalog-status { display: flex; flex-direction: column; gap: var(--app-space-2); min-width: 0; color: var(--md-sys-color-on-surface-variant); font-size: var(--md-sys-typescale-body-small-size); }
-.actions { align-self: flex-start; }
 </style>

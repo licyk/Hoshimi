@@ -7,7 +7,10 @@ import CatalogStatus from '@/components/CatalogStatus.vue';
 import { usePreferencesStore } from '@/stores/preferences';
 
 const catalog = ref({ providers: [] as Record<string, unknown>[] });
-vi.mock('@/api/catalog', () => ({ useCatalog: () => ({ data: catalog, isFetching: ref(false), isError: ref(false), refetch: vi.fn() }) }));
+const isFetching = ref(false);
+const isError = ref(false);
+const refetch = vi.fn();
+vi.mock('@/api/catalog', () => ({ useCatalog: () => ({ data: catalog, isFetching, isError, refetch }) }));
 vi.mock('@/ui', async () => ({
   ErrorNotice: (await import('@/ui/ErrorNotice.vue')).default,
   AppButton: { template: '<button><slot /></button>' },
@@ -18,6 +21,9 @@ describe('catalogue failure explanations', () => {
     setActivePinia(createPinia());
     usePreferencesStore().prefs.locale = 'zh-CN';
     catalog.value = { providers: [] };
+    isFetching.value = false;
+    isError.value = false;
+    refetch.mockClear();
   });
 
   it('shows the endpoint, status and manual-model remedy', () => {
@@ -46,5 +52,28 @@ describe('catalogue failure explanations', () => {
     expect(w.text()).toContain('slow');
     expect(w.text()).toContain('连接超时');
     expect(w.text()).toContain('网络出口');
+  });
+
+  it('keeps a single catalogue retry inside the last failure and hides it while fetching', async () => {
+    catalog.value.providers = [{ id: 'one', status: 'failed' }, { id: 'two', status: 'timeout' }];
+    const w = mount(CatalogStatus);
+    expect(w.findAll('button')).toHaveLength(1);
+    const notices = w.findAll('.error-notice');
+    expect(notices[0].find('button').exists()).toBe(false);
+    await notices[1].find('.actions button').trigger('click');
+    expect(refetch).toHaveBeenCalledOnce();
+    isFetching.value = true;
+    await w.vm.$nextTick();
+    expect(w.find('button').exists()).toBe(false);
+  });
+
+  it.each([false, true])('places the stream retry inside its error, with provider failures: %s', async (withFailures) => {
+    if (withFailures) catalog.value.providers = [{ id: 'one', status: 'failed' }];
+    isError.value = true;
+    const w = mount(CatalogStatus);
+    expect(w.findAll('button')).toHaveLength(1);
+    const last = w.findAll('.error-notice').at(-1)!;
+    await last.find('.actions button').trigger('click');
+    expect(refetch).toHaveBeenCalledOnce();
   });
 });
