@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { useModelSpecs, useModels, useProbe, useProviders, useStartProbe } from '@/api/queries/app';
+import { modelKey } from '@/api/catalog';
+import { useModelSpecs, useProbe, useProviders, useStartProbe } from '@/api/queries/app';
 import { PROBE_STATES, contextWindow, probeTone } from '@/format';
 import { useI18n } from '@/i18n';
 import { useWindowClass } from '@/theme/breakpoints';
@@ -10,8 +11,7 @@ import { AppButton, AppIcon, AppMenu, Badge, DataTable, EmptyState, IconButton, 
 
 const { t } = useI18n();
 const router = useRouter();
-const models = useModels();
-const specs = useModelSpecs();
+const models = useModelSpecs();
 const providers = useProviders();
 const probe = useProbe();
 const startProbe = useStartProbe();
@@ -19,6 +19,7 @@ const snackbar = useSnackbar();
 
 /** One row: what a client may call, and what the last round decided about it. */
 interface Row {
+  key: string;
   id: string;
   owner: string;
   name: string;
@@ -34,33 +35,20 @@ interface Row {
   unavailable: boolean;
 }
 
-const rows = computed<Row[]>(() => {
-  const byId = new Map((specs.data.value?.data ?? []).map((s) => [s.id, s]));
-  const toRow = (id: string, owner: string): Row => {
-    const s = byId.get(id);
-    return {
-      id,
-      owner,
-      name: s?.name ?? '',
-      vision: s?.vision ?? false,
-      reasoning: s?.reasoning ?? false,
-      tools: s?.tools ?? null,
-      // Not `?? false`: an unstated price is not a paid price, and a badge the
-      // gateway cannot back would be a promise about the operator's money.
-      free: s?.free ?? null,
-      context: s?.context_window ?? 0,
-      efforts: s?.efforts.length ?? 0,
-      state: s?.probe?.state ?? null,
-      unavailable: s?.unavailable ?? false,
-    };
-  };
-  const out = (models.data.value?.data ?? []).map((m) => toRow(m.id, m.owned_by));
-  const listed = new Set(out.map((r) => r.id));
-  // A spec the OpenAI catalogue has not listed yet still exists: keep it visible rather than
-  // hide a model the gateway would answer for.
-  for (const s of specs.data.value?.data ?? []) if (!listed.has(s.id)) out.push(toRow(s.id, s.provider));
-  return out;
-});
+const rows = computed<Row[]>(() => (models.data.value?.data ?? []).map((s) => ({
+  key: modelKey(s),
+  id: s.id,
+  owner: s.provider,
+  name: s.name,
+  vision: s.vision,
+  reasoning: s.reasoning,
+  tools: s.tools,
+  free: s.free,
+  context: s.context_window,
+  efforts: s.efforts.length,
+  state: s.probe?.state ?? null,
+  unavailable: s.unavailable,
+})));
 const available = computed(() => rows.value.filter((r) => r.state === 'available').length);
 
 const query = ref('');
@@ -175,7 +163,7 @@ const tableValue = (m: Row, key: string): unknown => (key === 'state' ? stateVal
       </div>
       <EmptyState v-else-if="!rows.length" :icon="icons.Layers" :title="t('models.empty')" :text="t('models.emptyText')" />
       <EmptyState v-else-if="!visible.length" :icon="icons.Search" :title="t('models.none')" :text="t('models.noneText')" />
-      <DataTable v-else v-model:sort="sort" :columns="columns" :rows="visible" :row-key="(m) => m.id" :value="tableValue" :label="t('models.title')" :row-height="56">
+      <DataTable v-else v-model:sort="sort" :columns="columns" :rows="visible" :row-key="(m) => m.key" :value="tableValue" :label="t('models.title')" :row-height="56">
         <template #cell-id="{ row }">
           <span class="name-cell">
             <span class="text mono" :title="row.id">{{ row.id }}</span>
@@ -183,7 +171,8 @@ const tableValue = (m: Row, key: string): unknown => (key === 'state' ? stateVal
               <!-- On a phone a verdict is the badge before the name; a model no round has reached shows none. -->
               <Badge v-if="phone && verdict(row)" :tone="verdict(row)!.tone" :value="verdict(row)!.label" class="verdict" />
               <span class="type-body-small muted text">
-                <template v-if="row.name && row.name !== row.id">{{ row.name }}</template>
+                <template v-if="phone">{{ displayName(row.owner) || row.owner }}</template>
+                <template v-if="row.name && row.name !== row.id">{{ phone ? ' · ' : '' }}{{ row.name }}</template>
                 <template v-if="row.free === true"> · {{ t('models.free') }}</template>
               </span>
             </span>
@@ -202,12 +191,12 @@ const tableValue = (m: Row, key: string): unknown => (key === 'state' ? stateVal
           <span v-else class="type-body-small muted">{{ t('models.states.none') }}</span>
         </template>
         <template #cell-actions="{ row }">
-          <AppMenu v-if="phone" :items="rowMenu" @select="onRowMenu($event, row.id)">
+          <AppMenu v-if="phone" :items="rowMenu" @select="onRowMenu($event, row.key)">
             <template #default="{ toggle }"><IconButton :icon="icons.MoreVertical" :label="t('common.more')" @click="toggle" /></template>
           </AppMenu>
           <template v-else>
-            <IconButton :icon="icons.Copy" :label="t('models.copyId')" @click="copy(row.id)" />
-            <IconButton :icon="icons.Sparkles" :label="t('models.use')" @click="openInPlayground(row.id)" />
+            <IconButton :icon="icons.Copy" :label="t('models.copyId')" @click="copy(row.key)" />
+            <IconButton :icon="icons.Sparkles" :label="t('models.use')" @click="openInPlayground(row.key)" />
           </template>
         </template>
       </DataTable>

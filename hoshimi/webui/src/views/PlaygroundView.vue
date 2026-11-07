@@ -2,6 +2,7 @@
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, provide, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { BASE_URL } from '@/api/baseUrl';
+import { findModelSpec } from '@/api/catalog';
 import { conversationsApi, rememberAttachment, useRefreshConversations } from '@/api/conversations';
 import { useModelSpecs, useModels, useSettings } from '@/api/queries/app';
 import { APPROVAL_MODES, TOOL_GROUPS, type ApprovalDecision, type ApprovalMode, type AttachmentView, type CompactionStep, type ContextView, type ConversationSummary, type MessageView, type ToolStep } from '@/api/types';
@@ -75,7 +76,7 @@ watch(
   },
   { immediate: true },
 );
-const spec = computed(() => specs.data.value?.data.find((m) => m.id === chat.model));
+const spec = computed(() => findModelSpec(specs.data.value?.data ?? [], chat.model));
 const effortOptions = computed(() => [{ value: '', label: t('playground.effortAuto') }, ...(spec.value?.efforts ?? []).map((o) => ({ value: o.id, label: o.name }))]);
 const effortText = computed(() => (chat.effort ? effortOptions.value.find((o) => o.value === chat.effort)?.label : t('playground.effortAutoShort')));
 

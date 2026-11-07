@@ -11,13 +11,27 @@ export interface CatalogSnapshot {
   done: boolean;
 }
 
+/** A callable ID that keeps the channel even when another channel has the same model. */
+export const modelKey = (model: Pick<S['ModelSpecObject'], 'provider' | 'id'>): string => `${model.provider}/${model.id}`;
+
+/** Older conversations and settings can still carry bare upstream model IDs. */
+export function findModelSpec(models: S['ModelSpecObject'][], id: string | null): S['ModelSpecObject'] | undefined {
+  if (!id) return undefined;
+  const qualified = models.find((model) => modelKey(model) === id);
+  if (qualified) return qualified;
+  const separator = id.indexOf('/');
+  if (separator > 0 && models.some((model) => model.provider === id.slice(0, separator))) return undefined;
+  return models.find((model) => model.id === id);
+}
+
 export function catalogSpecs(snapshot: CatalogSnapshot): S['ModelSpecList'] {
   const seen = new Set<string>();
   return {
     levels: snapshot.levels,
     data: snapshot.providers.flatMap((p) => p.data).filter((model) => {
-      if (seen.has(model.id)) return false;
-      seen.add(model.id);
+      const key = modelKey(model);
+      if (seen.has(key)) return false;
+      seen.add(key);
       return true;
     }),
   };

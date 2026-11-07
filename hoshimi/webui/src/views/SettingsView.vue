@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { BASE_URL } from '@/api/baseUrl';
+import { modelKey } from '@/api/catalog';
 import { useMeta, useModelSpecs, useModels, useSettings, useUpdateSettings, useVersion } from '@/api/queries/app';
 import { useChannels } from '@/api/queries/channels';
 import { APPROVAL_MODES, TOOL_GROUPS, type ToolGroup } from '@/api/types';
@@ -67,7 +68,7 @@ const defaultModel = computed({
 const catalogOptions = computed(() => modelOptions.value.filter((o) => o.value !== NO_MODEL));
 const titleModelOptions = computed(() => [{ value: '', label: t('settings.titleModelSame') }, ...catalogOptions.value]);
 const visionModelOptions = computed(() => {
-  const seeing = new Set((specs.data.value?.data ?? []).filter((m) => m.vision).map((m) => m.id));
+  const seeing = new Set((specs.data.value?.data ?? []).filter((m) => m.vision).map(modelKey));
   return [
     { value: 'auto', label: t('settings.visionAuto'), description: t('settings.visionAutoHelp') },
     { value: 'off', label: t('settings.visionOff'), description: t('settings.visionOffHelp') },

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
 import { api, unwrap } from '@/api/client';
-import { catalogSpecs, useCatalog } from '@/api/catalog';
+import { catalogSpecs, modelKey, useCatalog } from '@/api/catalog';
 import { keys } from '@/api/queries/keys';
 import type { ModelList, SettingsView } from '@/api/types';
 import { useAuthStore } from '@/stores/auth';
@@ -52,7 +52,7 @@ export function useStartProbe() {
   });
 }
 
-export const useModels = () => useCatalog<ModelList>((snapshot) => ({ object: 'list', data: catalogSpecs(snapshot).data.map((s) => ({ id: s.id, object: 'model', created: 0, owned_by: s.provider, free: s.free, display_name: s.name })) }));
+export const useModels = () => useCatalog<ModelList>((snapshot) => ({ object: 'list', data: catalogSpecs(snapshot).data.map((s) => ({ id: modelKey(s), object: 'model', created: 0, owned_by: s.provider, free: s.free, display_name: s.name })) }));
 
 export function useUpdateSettings() {
   const qc = useQueryClient();

@@ -3,7 +3,7 @@ import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, h } from 'vue';
-import { catalogSpecs, readCatalog, useCatalog, type CatalogSnapshot } from '@/api/catalog';
+import { catalogSpecs, findModelSpec, modelKey, readCatalog, useCatalog, type CatalogSnapshot } from '@/api/catalog';
 import { useModels, useModelSpecs } from '@/api/queries/app';
 import { useAuthStore } from '@/stores/auth';
 import type { S } from '@/api/types';
@@ -34,14 +34,14 @@ describe('incremental provider catalogues', () => {
     const wrapper = mount(view, { global: { plugins: [createPinia(), [VueQueryPlugin, { queryClient: qc }]] } });
     source.enqueue(event(snapshot()));
     source.enqueue(event({ type: 'provider', provider: { id: 'fast', status: 'ready', data: [model('星辰')] } }));
-    await vi.waitFor(() => expect(wrapper.find('p').text()).toBe('星辰'));
+    await vi.waitFor(() => expect(wrapper.find('p').text()).toBe('fast/星辰'));
     expect(wrapper.find('b').text()).toBe('true');
     expect(wrapper.find('span').text()).toBe('1');
     expect(fetch).toHaveBeenCalledOnce();
     source.enqueue(event({ type: 'provider', provider: { id: 'slow', status: 'timeout', data: [] } }));
     source.enqueue(event({ type: 'done' }));
     await vi.waitFor(() => expect(wrapper.find('b').text()).toBe('false'));
-    expect(wrapper.find('p').text()).toBe('星辰');
+    expect(wrapper.find('p').text()).toBe('fast/星辰');
     expect(stream.locked).toBe(false);
     wrapper.unmount();
     qc.clear();
@@ -76,14 +76,30 @@ describe('incremental provider catalogues', () => {
     expect(response.body!.locked).toBe(false);
   });
 
-  it('keeps registry priority for duplicate IDs regardless of completion order', () => {
+  it('keeps same-named models from each channel as their catalogues arrive', () => {
     const catalog: CatalogSnapshot = { levels: [], done: false, providers: [
       { id: 'slow', status: 'loading', data: [], error: null, last_success: null, retry_at: null, source: 'live', diagnostic: null },
       { id: 'fast', status: 'ready', data: [model('same', 'fast')], error: null, last_success: null, retry_at: null, source: 'live', diagnostic: null },
     ] };
     expect(catalogSpecs(catalog).data[0].provider).toBe('fast');
     catalog.providers[0] = { id: 'slow', status: 'ready', data: [model('same', 'slow')], error: null, last_success: null, retry_at: null, source: 'live', diagnostic: null };
-    expect(catalogSpecs(catalog).data.map((m) => m.provider)).toEqual(['slow']);
+    expect(catalogSpecs(catalog).data.map(modelKey)).toEqual(['slow/same', 'fast/same']);
+    catalog.providers[1].data.push(model('same', 'fast'));
+    expect(catalogSpecs(catalog).data.map(modelKey)).toEqual(['slow/same', 'fast/same']);
+  });
+
+  it('resolves channel-specific capabilities while preserving old bare model IDs', () => {
+    const first = { ...model('glm-5.3', 'buddy'), vision: false };
+    const second = { ...model('glm-5.3', 'openai'), vision: true, context_window: 1048576 };
+    const nested = model('org/model', 'openai');
+    const prefixed = model('openai/missing', 'buddy');
+    const models = [first, second, nested, prefixed];
+    expect(findModelSpec(models, 'glm-5.3')).toBe(first);
+    expect(findModelSpec(models, 'openai/glm-5.3')).toBe(second);
+    expect(findModelSpec(models, 'openai/org/model')).toBe(nested);
+    expect(findModelSpec(models, 'org/model')).toBe(nested);
+    expect(findModelSpec(models, 'openai/missing')).toBeUndefined();
+    expect(modelKey(prefixed)).toBe('buddy/openai/missing');
   });
 
   it('sends the tool key and opens login for management authentication failures', async () => {
