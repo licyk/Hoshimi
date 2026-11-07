@@ -30,5 +30,5 @@ const unparsed = computed(() => !props.pending && !Object.keys(props.args).lengt
 </template>
 
 <style scoped>
-.json { max-height: 320px; margin: 0; padding: var(--app-space-2) var(--app-space-3); white-space: pre-wrap; overflow-wrap: anywhere; }
+.json { max-height: 320px; margin: 0; padding: var(--app-space-2) var(--app-space-3); white-space: pre-wrap; overflow-wrap: anywhere; padding-inline-end: calc(var(--app-space-3) + var(--app-scroll-overlay)); }
 </style>

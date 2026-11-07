@@ -651,7 +651,7 @@ function onError(event: Event) {
 .markdown :deep(th), .markdown :deep(td) { padding: var(--app-space-1) var(--app-space-2); border: 1px solid var(--md-sys-color-outline-variant); text-align: start; overflow-wrap: normal; }
 .markdown :deep(th) { background: var(--md-sys-color-surface-container-high); font-weight: 600; }
 /* Math: a formula set apart scrolls sideways on its own when it is wider than the column. */
-.markdown :deep(.math-block) { margin: 0 0 var(--app-space-2); padding: var(--app-space-1) 0; --app-scroll-inset: var(--app-space-2); }
+.markdown :deep(.math-block) { margin: 0 0 var(--app-space-2); padding: var(--app-space-1) 0; --app-scroll-inset: var(--app-space-2); padding-block-end: calc(var(--app-space-1) + var(--app-scroll-overlay)); }
 .markdown :deep(.math-block .katex-display) { margin: 0; }
 .markdown :deep(.katex) { font-size: 1.1em; }
 .markdown :deep(.math-error) { color: var(--md-sys-color-error); }

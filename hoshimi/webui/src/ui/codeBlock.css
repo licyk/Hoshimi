@@ -53,7 +53,7 @@
 .code-copy.copied { color: var(--md-sys-color-primary); }
 
 /* The code: as it was written, scrolling sideways in a lane of its own rather than wrapping. */
-.code-block pre { margin: 0; padding: var(--app-space-2) var(--app-space-3); white-space: pre; overflow-wrap: normal; --app-scroll-inset: var(--app-space-2); }
+.code-block pre { margin: 0; padding: var(--app-space-2) var(--app-space-3); white-space: pre; overflow-wrap: normal; --app-scroll-inset: var(--app-space-2); padding-block-end: calc(var(--app-space-2) + var(--app-scroll-overlay)); }
 .code-block pre code, .code-mono {
   padding: 0; border-radius: 0; background: none; color: var(--md-sys-color-on-surface);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--md-sys-typescale-body-small-size); line-height: 1.5;

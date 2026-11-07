@@ -50,7 +50,7 @@ const toggle = () => morphHeight(box.value, () => (whole.value = !whole.value));
 </template>
 
 <style scoped>
-.page { max-height: 320px; padding: var(--app-space-2) var(--app-space-3) var(--app-space-3); color: var(--md-sys-color-on-surface); }
+.page { max-height: 320px; padding: var(--app-space-2) var(--app-space-3) var(--app-space-3); color: var(--md-sys-color-on-surface); padding-inline-end: calc(var(--app-space-3) + var(--app-scroll-overlay)); }
 .page.whole { max-height: none; }
 a.code-tool { color: inherit; text-decoration: none; }
 </style>

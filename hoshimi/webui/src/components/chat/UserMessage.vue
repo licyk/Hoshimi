@@ -137,6 +137,7 @@ function onKeydown(e: KeyboardEvent) {
 .box {
   display: block; width: 100%; min-height: 48px; max-height: 50vh; margin: 0; padding: var(--app-space-1) var(--app-space-2); border: 0; outline: none;
   background: transparent; color: var(--md-sys-color-on-surface); font: inherit; resize: none;
+  padding-inline-end: calc(var(--app-space-2) + var(--app-scroll-overlay));
 }
 .buttons { display: flex; justify-content: flex-end; gap: var(--app-space-2); }
 </style>

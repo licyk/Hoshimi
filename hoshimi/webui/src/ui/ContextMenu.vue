@@ -99,6 +99,7 @@ function choose(id: string) {
   /* Items stretch as flex items to the menu's width, whatever sets it. */
   position: fixed; display: flex; flex-direction: column; min-width: 220px; max-width: min(var(--app-width-menu), calc(100vw - 16px)); padding: var(--app-space-2) 0;
   background: var(--md-sys-color-surface-container); border-radius: var(--md-sys-shape-corner-extra-small); box-shadow: var(--app-elevation-2);
+  padding-inline-end: var(--app-scroll-overlay);
 }
 .item {
   display: flex; flex: none; align-items: center; gap: var(--app-space-3); height: 40px; padding: 0 var(--app-space-3);

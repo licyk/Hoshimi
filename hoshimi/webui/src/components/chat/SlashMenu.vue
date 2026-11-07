@@ -386,7 +386,7 @@ defineExpose({ onKey, reopen, toggle, combobox, open });
 /* The panes slide past one another inside it (shared-axis-x takes the one leaving out of the flow). */
 .body { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .pane { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
-.pane.status { padding: var(--app-space-1) var(--app-space-2) var(--app-space-2); }
+.pane.status { padding: var(--app-space-1) var(--app-space-2) var(--app-space-2); padding-inline-end: calc(var(--app-space-2) + var(--app-scroll-overlay)); }
 .pane.background { padding: var(--app-space-1) var(--app-space-2) var(--app-space-2); }
 .list { position: relative; display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-height: 0; }
 /* The highlight: one shape that slides to the row the arrows reach, rather than each row flashing. */

@@ -42,5 +42,5 @@ const { zIndex } = useLayer({ kind: 'sheet', modal: true, open: () => open.value
 .sheet.start { right: auto; left: 0; border-radius: 0 var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-large) 0; }
 .head { display: flex; align-items: center; gap: var(--app-space-1); padding: var(--app-space-3) var(--app-space-2) var(--app-space-2) var(--app-space-6); }
 .title { flex: 1; margin: 0; }
-.body { flex: 1; padding: 0 var(--app-space-4) var(--app-space-4); padding-inline-end: calc(var(--app-space-4) - var(--app-scroll-lane)); }
+.body { flex: 1; padding: 0 var(--app-space-4) var(--app-space-4); padding-inline-end: calc(var(--app-space-4) - var(--app-scroll-lane) + var(--app-scroll-overlay)); }
 </style>

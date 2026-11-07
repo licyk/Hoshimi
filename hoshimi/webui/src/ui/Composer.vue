@@ -143,6 +143,7 @@ defineExpose({ focus: () => input.value?.focus(), surface: () => input.value?.cl
 .input {
   display: block; width: 100%; min-height: 56px; max-height: min(40vh, 240px); margin: 0; padding: var(--app-space-4) var(--app-space-5) var(--app-space-1);
   border: 0; outline: none; background: transparent; color: var(--md-sys-color-on-surface); font: inherit; resize: none;
+  padding-inline-end: calc(var(--app-space-5) + var(--app-scroll-overlay));
 }
 .input::placeholder { color: var(--md-sys-color-on-surface-variant); opacity: 0.8; }
 .bar { display: flex; align-items: center; gap: var(--app-space-2); padding: var(--app-space-1) var(--app-space-2) var(--app-space-2) var(--app-space-3); min-width: 0; }

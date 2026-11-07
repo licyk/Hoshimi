@@ -20,6 +20,7 @@ defineProps<{ text: string; failed?: boolean }>();
   max-height: 320px; margin: 0; padding: var(--app-space-2) var(--app-space-3); border-radius: var(--md-sys-shape-corner-small);
   background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere;
+  padding-inline-end: calc(var(--app-space-3) + var(--app-scroll-overlay));
 }
-.raw-output.failed { padding: 0; background: transparent; color: inherit; }
+.raw-output.failed { padding: 0; background: transparent; color: inherit; padding-inline-end: var(--app-scroll-overlay); }
 </style>

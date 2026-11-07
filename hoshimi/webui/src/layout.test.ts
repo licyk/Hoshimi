@@ -60,8 +60,8 @@ describe('lists that can grow without bound', () => {
  * Every scrolling area wears ``.app-scroll`` (tokens.css), which gives its scrollbar a lane of its
  * own beside the content instead of floating over it. A component that scrolls by its own
  * ``overflow: auto`` would bring the overlay back; one that sets ``scrollbar-width`` or
- * ``scrollbar-color`` would switch the lane off in Chromium (which then ignores the styled
- * scrollbar). Only the rail hides its scrollbar on purpose.
+ * ``scrollbar-color`` would change the measured scrollbar mode in Chromium (which then ignores
+ * the styled scrollbar). Only the rail hides its scrollbar on purpose.
  */
 const VUE_FILES = (readdirSync(SRC, { recursive: true }) as string[]).filter((f) => f.endsWith('.vue'));
 const HIDDEN_SCROLLBAR = new Set(['ui/NavigationRail.vue']);
@@ -138,7 +138,8 @@ describe('components a pane switch moves', () => {
 /**
  * A scrollbar's lane sits at an area's end side only (tokens.css), so the areas that keep it pad
  * their end by ``--app-scroll-lane`` less than their start: otherwise content sits a lane further from
- * the end edge than from the start. Menus and pickers (``app-scroll-auto``) give the lane up instead.
+ * the end edge than from the start. Menus and pickers (``app-scroll-auto``) give the native lane up
+ * when it is not needed; overlay padding remains reserved.
  */
 const FILL_PAGES = new Set(['views/PlaygroundView.vue']);
 const LANE_PADDED: [file: string, selector: string][] = [

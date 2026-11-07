@@ -36,7 +36,7 @@ const model = defineModel<T>({ required: true });
 </template>
 
 <style scoped>
-.stepper { display: flex; align-items: center; gap: 0; margin: 0; padding: 0; list-style: none; }
+.stepper { display: flex; align-items: center; gap: 0; margin: 0; padding: 0; list-style: none; padding-block-end: calc(0px + var(--app-scroll-overlay)); }
 .item { display: flex; align-items: center; flex: 1 1 0; min-width: 0; }
 .item:last-child { flex: 0 1 auto; }
 .step { display: flex; align-items: center; gap: var(--app-space-2); padding: var(--app-space-2) var(--app-space-3); border: 0; background: transparent; color: var(--md-sys-color-on-surface-variant); border-radius: var(--md-sys-shape-corner-full); cursor: pointer; font: inherit; min-width: 0; }

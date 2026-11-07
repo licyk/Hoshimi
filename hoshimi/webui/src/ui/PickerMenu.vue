@@ -124,7 +124,7 @@ function onBlur(e: FocusEvent) {
 .name, .meta { overflow-wrap: anywhere; }
 .popover { position: absolute; z-index: var(--app-z-dropdown); top: calc(100% + 4px); left: 0; right: 0; display: flex; flex-direction: column; gap: var(--app-space-2); padding: var(--app-space-3); background: var(--md-sys-color-surface-container); border-radius: var(--md-sys-shape-corner-medium); box-shadow: var(--app-elevation-2); }
 .popover.above { top: auto; bottom: calc(100% + 4px); }
-.list { margin: 0; padding: 0; list-style: none; max-height: 360px; }
+.list { margin: 0; padding: 0; list-style: none; max-height: 360px; padding-inline-end: var(--app-scroll-overlay); }
 .option { display: flex; align-items: center; gap: var(--app-space-2); width: 100%; padding: var(--app-space-2) var(--app-space-3); border: 0; border-radius: var(--md-sys-shape-corner-small); background: transparent; color: var(--md-sys-color-on-surface); font: inherit; text-align: start; cursor: pointer; min-width: 0; }
 .option[aria-selected='true'] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
 .option.unavailable { opacity: var(--app-disabled-content-opacity); cursor: default; }

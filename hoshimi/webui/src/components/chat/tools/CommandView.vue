@@ -62,7 +62,7 @@ const exitTag = computed(() => {
 <style scoped>
 /* Commands and output wrap rather than scroll sideways; long output scrolls down. */
 .command, .terminal { margin: 0; padding: var(--app-space-2) var(--app-space-3); white-space: pre-wrap; overflow-wrap: anywhere; }
-.terminal { max-height: 320px; }
+.terminal { max-height: 320px; padding-inline-end: calc(var(--app-space-3) + var(--app-scroll-overlay)); }
 .cmd-line { display: grid; grid-template-columns: 2ch minmax(0, 1fr); }
 .prompt { color: var(--md-sys-color-on-surface-variant); white-space: pre; user-select: none; }
 .keys { letter-spacing: 0.02em; }

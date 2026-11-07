@@ -32,7 +32,7 @@ const found = computed(() => (props.failed ? null : parseSearch(props.output)));
 </template>
 
 <style scoped>
-.results { display: flex; flex-direction: column; max-height: 420px; margin: 0; padding: 0; list-style: none; }
+.results { display: flex; flex-direction: column; max-height: 420px; margin: 0; padding: 0; list-style: none; padding-inline-end: var(--app-scroll-overlay); }
 .results li { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: var(--app-space-2) var(--app-space-3); }
 .results li + li { border-top: 1px solid var(--md-sys-color-outline-variant); }
 .title { color: var(--md-sys-color-primary); font-weight: 500; text-decoration: none; overflow-wrap: anywhere; }

@@ -89,13 +89,14 @@
 
   /* Scrollbars have a lane of their own (.app-scroll below): content never runs under the thumb. */
   --app-scrollbar-size: 12px;
-  /* The width the lane actually takes at an area's end side: what applyScrollbars measures (a thin
-     Firefox scrollbar is narrower than the size above), and 0 where scrollbars float over the
-     content and take no room. An area that scrolls takes it out of its own end padding, so its
+  /* Total space reserved at the scrolling edge: native gutter or a padding lane for overlays.
+     applyScrollbars measures the native gutter and sets the overlay compensation when absent.
+     An area that scrolls takes the total out of its own end padding, so its
      content sits as far from either side; where that padding is no wider than the lane, it keeps
      --app-space-1, the step a control reaches past its box (a table's sort button), so that
      control is not cut at the lane. */
   --app-scroll-lane: var(--app-scrollbar-size);
+  --app-scroll-overlay: 0px;
   --app-scrollbar-thumb: color-mix(in srgb, var(--md-sys-color-on-surface) 26%, transparent);
   --app-scrollbar-thumb-hover: color-mix(in srgb, var(--md-sys-color-on-surface) 46%, transparent);
 
@@ -169,22 +170,21 @@ html, body {
 
 /* Every scrolling area wears this class. Its scrollbar sits in a lane of its own beside the content
    rather than over it:
-   - Chromium and WebKit: a styled scrollbar always takes layout space, even where the system draws
-     overlay scrollbars (macOS, Windows 11, GTK). The thumb is inset in its lane and rounded. These
-     engines ignore ::-webkit-scrollbar once scrollbar-width or scrollbar-color is set, so neither is
+   - Chromium and WebKit: a styled scrollbar normally takes layout space. The thumb is inset in
+     its lane and rounded. These engines ignore ::-webkit-scrollbar once scrollbar-width or scrollbar-color is set, so neither is
      set for them, here or in a component.
-   - Firefox: thin and in the theme's colours. Where its scrollbars float (applyScrollbars sets
-     data-scrollbars="overlay" and the lane to 0), the thumb passes over the content's end padding
-     while it scrolls, as a native app's does. Nothing here touches the content to make room: a
-     rule that set margins on whatever an area held overrode the components' own, and each one it
-     met in turn (a page, a menu item, the Playground's column) overflowed.
+   - Firefox: thin and in the theme's colours.
+   When measured scrollbars float, scrollbar-gutter has no effect. Reserve --app-scroll-overlay
+   in the scroller's padding instead, including menus with auto gutters. Components with their
+   own padding add it at the scrolling edge; children keep their own widths and margins.
    An area scrolls in one direction. ``app-scroll`` scrolls down and clips sideways, so nothing a
    control reaches past its box (a 48px touch target round a 40px button, a hover pill) can give a
    page, a list or a menu a scrollbar it was never meant to have; content that is wider than its
    column on purpose (a code block, a table, a row of steps) scrolls sideways in its own
    ``app-scroll app-scroll-x``, and never down.
    The gutter is kept while nothing overflows, so content does not shift when a scrollbar appears;
-   ``app-scroll-auto`` (menus, pickers) gives the lane up until it is needed. The lane is on the end
+   ``app-scroll-auto`` (menus, pickers) gives the native lane up until it is needed; overlay padding
+   stays reserved. The lane is on the end
    side alone, so an area pads its end by ``--app-scroll-lane`` less than its start (or reaches into
    its parent's end padding by it). ``--app-scroll-head`` starts the vertical track below a sticky
    header; ``--app-scroll-inset`` keeps the thumb clear of rounded corners.
@@ -194,8 +194,9 @@ html, body {
    down inside another that does (a tool's output in the conversation) is ``app-scroll-chain``: a swipe
    past its end goes on to the one around it, as a wheel's does (``useScrollChain``). Menus, dialogs and
    sheets keep theirs, so the page behind them stays where it is. */
-.app-scroll { overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; overscroll-behavior: contain; }
-.app-scroll.app-scroll-x { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; overscroll-behavior-y: auto; }
+.app-scroll { overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; overscroll-behavior: contain; --app-scroll-edge: var(--app-scroll-overlay); padding-inline-end: var(--app-scroll-edge); }
+.app-scroll.app-scroll-x { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; overscroll-behavior-y: auto; --app-scroll-edge: 0px; }
+.app-scroll-x { padding-block-end: var(--app-scroll-overlay); }
 .app-scroll.app-scroll-auto { scrollbar-gutter: auto; }
 .app-scroll.app-scroll-chain { overscroll-behavior-y: auto; }
 @supports selector(::-webkit-scrollbar) {

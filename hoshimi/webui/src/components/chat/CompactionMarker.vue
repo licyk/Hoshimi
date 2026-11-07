@@ -100,6 +100,7 @@ button.head { cursor: pointer; }
 .summary {
   display: flex; flex-direction: column; gap: var(--app-space-2); max-height: 360px; padding: var(--app-space-3) var(--app-space-4);
   border-radius: var(--md-sys-shape-corner-medium); background: var(--md-sys-color-surface-container-low);
+  padding-inline-end: calc(var(--app-space-4) + var(--app-scroll-overlay));
 }
 .summary p { margin: 0; }
 .recent { display: flex; flex-direction: column; gap: var(--app-space-1); margin: 0; padding-inline-start: var(--app-space-5); white-space: pre-wrap; overflow-wrap: anywhere; }

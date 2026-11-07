@@ -39,5 +39,6 @@ code.value.number, code.value.boolean, code.value.null { color: var(--md-sys-col
 pre.value {
   max-height: 240px; margin: 0; padding: var(--app-space-2); border-radius: var(--md-sys-shape-corner-extra-small);
   background: var(--md-sys-color-surface-container-highest); white-space: pre-wrap;
+  padding-inline-end: calc(var(--app-space-2) + var(--app-scroll-overlay));
 }
 </style>

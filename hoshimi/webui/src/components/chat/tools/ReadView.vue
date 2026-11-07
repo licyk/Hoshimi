@@ -75,7 +75,7 @@ const fileIcon = (name: string) => FILE_ICONS[name.split('.').pop()?.toLowerCase
 
 <style scoped>
 /* Lines wrap rather than scroll sideways (an area scrolls one way), each beside its number. */
-.lines { max-height: 420px; padding: var(--app-space-1) 0; }
+.lines { max-height: 420px; padding: var(--app-space-1) 0; padding-inline-end: var(--app-scroll-overlay); }
 .file-line { display: grid; grid-template-columns: calc(var(--gutter) + var(--app-space-4)) minmax(0, 1fr); }
 .n {
   padding: 0 var(--app-space-2) 0 var(--app-space-2); color: var(--md-sys-color-on-surface-variant); opacity: 0.7; text-align: end; user-select: none;
@@ -90,6 +90,7 @@ const fileIcon = (name: string) => FILE_ICONS[name.split('.').pop()?.toLowerCase
 .entries {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 2px var(--app-space-3); max-height: 320px; margin: 0;
   padding: var(--app-space-2) var(--app-space-3); list-style: none;
+  padding-inline-end: calc(var(--app-space-3) + var(--app-scroll-overlay));
 }
 .entries li { display: flex; align-items: center; gap: var(--app-space-2); min-width: 0; color: var(--md-sys-color-on-surface); }
 .entries li :deep(svg) { flex: none; width: 16px; height: 16px; color: var(--md-sys-color-on-surface-variant); }
