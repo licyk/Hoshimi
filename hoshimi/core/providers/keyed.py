@@ -104,8 +104,8 @@ class KeyedProvider(OpenAiCompatProvider):
                 else:
                     continue
                 found = {row["id"]: row for row in rows if isinstance(row.get("id"), str) and row["id"] and self.accepts_row(row)}
-            except (httpx.HTTPError, ValueError, TypeError, ProviderError):
-                self.catalog_failed = True
+            except (httpx.HTTPError, ValueError, TypeError, ProviderError) as exc:
+                self.record_catalog_failure(exc)
                 # Keep this account's last complete catalog; another account's
                 # success must not discard its previously learned models.
                 continue

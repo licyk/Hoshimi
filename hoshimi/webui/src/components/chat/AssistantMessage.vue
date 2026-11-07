@@ -10,7 +10,7 @@ import VersionSwitcher from '@/components/chat/VersionSwitcher.vue';
 import { elapsed } from '@/format';
 import { useI18n } from '@/i18n';
 import { stepsOf, type Stage } from '@/stores/chat';
-import { AppButton, AppIcon, AppMenu, Tooltip, icons } from '@/ui';
+import { ErrorNotice, AppButton, AppIcon, AppMenu, Tooltip, icons } from '@/ui';
 // Not through '@/ui': markdown-it and highlight.js load with the Playground alone.
 import Markdown from '@/ui/Markdown.vue';
 
@@ -93,7 +93,6 @@ const noticeText = (n: Notice) =>
 const noticeIcon = (n: Notice) =>
   n.kind === 'image-described' ? icons.Image : n.kind === 'tools-unsupported' ? icons.Wrench : n.kind === 'step-limit' ? icons.AlertTriangle : n.kind === 'review-stopped' ? icons.ShieldX : icons.ImageOff;
 const more = computed(() => [{ id: 'request', label: t('playground.copyRequest'), icon: icons.FileText }]);
-const failure = computed(() => [t('playground.replyFailed'), props.message.error].filter(Boolean).join(' '));
 </script>
 
 <template>
@@ -129,11 +128,11 @@ const failure = computed(() => [t('playground.replyFailed'), props.message.error
     </template>
     <RunStatus v-if="streaming" :label="doing" :started-at="startedAt" :paused="waitingForApproval" :hint="last ? t('playground.escToStop') : ''" />
     <p v-if="message.status === 'stopped' && !worked" class="ended type-body-small muted">{{ t('playground.stopped') }}</p>
-    <div v-if="message.status === 'error'" class="failed type-body-medium" role="alert">
-      <AppIcon :icon="icons.AlertTriangle" :size="18" />
-      <span class="reason">{{ failure }}</span>
-      <AppButton variant="text" :icon="icons.RotateCcw" :disabled="busy || local" @click="emit('retry')">{{ t('playground.retry') }}</AppButton>
-    </div>
+    <ErrorNotice v-if="message.status === 'error'" :title="t('playground.replyFailed')" :message="message.error" announcement="assertive">
+      <template #actions>
+        <AppButton variant="text" :icon="icons.RotateCcw" :disabled="busy || local" @click="emit('retry')">{{ t('playground.retry') }}</AppButton>
+      </template>
+    </ErrorNotice>
     <ul v-if="message.notices.length" class="notices type-body-small muted">
       <li v-for="(n, i) in message.notices" :key="i"><AppIcon :icon="noticeIcon(n)" :size="18" />{{ noticeText(n) }}</li>
     </ul>
@@ -161,11 +160,6 @@ const failure = computed(() => [t('playground.replyFailed'), props.message.error
   border-radius: 20px; background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .ended { margin: 0; }
-.failed {
-  display: flex; align-items: center; flex-wrap: wrap; gap: var(--app-space-2); padding: var(--app-space-2) var(--app-space-2) var(--app-space-2) var(--app-space-3);
-  border-radius: var(--md-sys-shape-corner-medium); background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container);
-}
-.reason { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .notices { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
 .notices li { display: flex; align-items: flex-start; gap: var(--app-space-1); }
 .notices li :deep(svg) { flex: none; margin-top: 2px; }

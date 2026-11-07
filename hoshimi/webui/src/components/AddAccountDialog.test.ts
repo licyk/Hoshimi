@@ -17,9 +17,11 @@ vi.mock('@/api/queries/channels', () => ({
   }),
   useAddAccount: () => ({ mutate: state.add, isPending: { value: false } }),
 }));
-vi.mock('@/ui', () => {
+vi.mock('@/ui', async () => {
+  const { default: ErrorNotice } = await import('@/ui/ErrorNotice.vue');
   const slot = { template: '<div><slot /></div>' };
   return {
+    ErrorNotice,
     icons: {},
     SelectField: slot,
     SegmentedButton: slot,

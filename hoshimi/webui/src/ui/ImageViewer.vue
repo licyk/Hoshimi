@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import AppIcon from '@/ui/AppIcon.vue';
+import ErrorNotice from '@/ui/ErrorNotice.vue';
 import IconButton from '@/ui/IconButton.vue';
-import { ChevronLeft, ChevronRight, Download, ExternalLink, ImageOff, Scan, X, ZoomIn, ZoomOut } from '@/ui/icons';
+import { ChevronLeft, ChevronRight, Download, ExternalLink, Scan, X, ZoomIn, ZoomOut } from '@/ui/icons';
 import { useLayer } from '@/ui/layers';
 import { TRANSITIONS, containerFrom } from '@/ui/motion/transitions';
 
@@ -224,7 +224,7 @@ const openOriginal = () => current.value && window.open(current.value.src, '_bla
         >
           <Transition :name="motion" mode="out-in" appear>
             <div v-if="current" :key="index" ref="figure" class="figure" :style="motionStyle">
-              <p v-if="failed" class="failed type-body-medium"><AppIcon :icon="ImageOff" :size="24" />{{ label.failed }}</p>
+              <ErrorNotice v-if="failed" :message="label.failed" />
               <img v-else ref="picture" class="picture" :src="current.src" :alt="current.alt" :style="pictureStyle" draggable="false" @error="failed = true" />
             </div>
           </Transition>
@@ -253,7 +253,6 @@ const openOriginal = () => current.value && window.open(current.value.src, '_bla
   display: block; max-width: 100%; max-height: calc(100vh - 96px); max-height: calc(100dvh - 96px); object-fit: contain; user-select: none;
   border-radius: var(--md-sys-shape-corner-small); box-shadow: var(--app-elevation-3); background: var(--md-sys-color-surface-container-lowest);
 }
-.failed { display: flex; align-items: center; gap: var(--app-space-2); margin: 0; color: var(--md-sys-color-on-surface-variant); }
 .side { position: absolute; top: 50%; transform: translateY(-50%); }
 .previous { left: var(--app-space-3); }
 .next { right: var(--app-space-3); }

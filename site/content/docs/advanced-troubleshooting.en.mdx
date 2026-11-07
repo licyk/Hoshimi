@@ -116,6 +116,8 @@ A request without `model` and no `server.default_model` gets `model is required`
 - When a new list suddenly has fewer than half the models, the old list is kept for one cycle and the log says `the catalogue came back at N of M models (likely a partial answer)`; if the next cycle agrees, it is accepted and the log says `accepting it as the station's own answer`.
 - When the channel's network fails, the **Network** section of its **Channels** page shows errors for the **Model catalogue** operation.
 
+**Models** and **Channels › Network** show the failure reason, known HTTP status, target host and suggested action. HTTP 200 can still carry an invalid model list. For 404/405, check the API base URL; if the upstream has no model listing endpoint, enter model IDs on the account manually. Another account succeeding in the same channel does not clear the failed refresh; a complete successful refresh does. The UI and catalogue failure logs omit raw response bodies, full request URLs and keys.
+
 </Accordion>
 <Accordion title="503 model_unavailable: … is temporarily unavailable">
 

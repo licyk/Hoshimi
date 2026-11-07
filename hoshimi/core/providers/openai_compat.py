@@ -400,8 +400,8 @@ class OpenAiCompatProvider(Provider):
         headers["Accept"] = "application/json"
         try:
             response = self.client.get(url, headers=headers, timeout=30.0)
-        except httpx.HTTPError:
-            self.catalog_failed = True
+        except httpx.HTTPError as exc:
+            self.record_catalog_failure(exc)
             return []
         raise_for_status(response, provider=self.id)
         result = self.parse_models_response(response.json())

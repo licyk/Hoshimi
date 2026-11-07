@@ -606,8 +606,10 @@ describe('Playground chat', () => {
     expect(wrapper.find('.notices').text()).toContain('The image “dot.png” was described by seer');
     await ask(wrapper, 'again');
     await answer('', { status: 'error', error: 'the station is down' });
-    expect(wrapper.find('.failed').text()).toContain('This reply failed. the station is down');
-    await wrapper.findAll('.failed md-text-button, .failed button').at(-1)!.trigger('click');
+    const failure = wrapper.find('.assistant-message [role="alert"]');
+    expect(failure.text()).toContain('This reply failed.');
+    expect(failure.text()).toContain('the station is down');
+    await failure.findAll('md-text-button, button').at(-1)!.trigger('click');
     await flushPromises();
     expect(calls('POST', /\/retry$/)).toHaveLength(1);
     wrapper.unmount();

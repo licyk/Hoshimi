@@ -273,13 +273,13 @@ class AggProvider(OpenAiCompatProvider):
                 continue
             try:
                 base = self._base(account)
-            except ProviderError:
-                self.catalog_failed = True
+            except ProviderError as exc:
+                self.record_catalog_failure(exc)
                 continue
             try:
                 fetched = discover(self.client, base, station, self.build_headers(account, ""))
-            except (httpx.HTTPError, ValueError):
-                self.catalog_failed = True
+            except (httpx.HTTPError, ValueError, TypeError, ProviderError) as exc:
+                self.record_catalog_failure(exc)
                 continue
             rows = [row for row in fetched if is_chat_row(station, row)]
             for row in rows:

@@ -1501,6 +1501,7 @@ export interface components {
         CatalogProvider: {
             /** Data */
             data: components["schemas"]["ModelSpecObject"][];
+            diagnostic: components["schemas"]["NetworkDiagnostic"] | null;
             /** Error */
             error: string | null;
             /** Id */

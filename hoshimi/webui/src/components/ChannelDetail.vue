@@ -5,6 +5,7 @@ import { useUpdateSettings } from '@/api/queries/app';
 import { useClaimCredits, useDeleteAccount, useRefreshNow, type BalanceReport } from '@/api/queries/channels';
 import type { ChannelAccount, ChannelView } from '@/api/types';
 import AddAccountDialog from '@/components/AddAccountDialog.vue';
+import CatalogFailure from '@/components/CatalogFailure.vue';
 import LoginDialog from '@/components/LoginDialog.vue';
 import NetworkSettings from '@/components/NetworkSettings.vue';
 import { compact, percent, ratio, relative, when } from '@/format';
@@ -18,6 +19,7 @@ import {
   ConfirmDialog,
   DataList,
   EmptyState,
+  ErrorNotice,
   IconButton,
   Meter,
   PageSection,
@@ -25,7 +27,6 @@ import {
   SelectField,
   Switch,
   TRANSITIONS,
-  Tooltip,
   TweenNumber,
   icons,
   keepLeavingInPlace,
@@ -199,7 +200,7 @@ const today = computed(() => c.value.usage_today);
             <div class="account-text">
               <span class="type-body-large mono id" :title="a.id">{{ a.id }}</span>
               <span v-if="a.line" class="type-body-small muted line" :title="a.exact">{{ a.line }}</span>
-              <span v-if="a.state === 'failing'" class="type-body-small error-text line" :title="a.last_error ?? ''">{{ a.last_error }}</span>
+              <ErrorNotice v-if="a.state === 'failing'" :message="a.last_error" compact announcement="off" />
             </div>
             <div class="account-usage">
               <span class="type-label-large num">{{ compact(a.tokens) }}</span>
@@ -245,10 +246,11 @@ const today = computed(() => c.value.usage_today);
       <ul class="checkins">
         <li v-for="k in c.recent_checkins" :key="`${k.at}${k.account}`" class="checkin">
           <Badge :tone="k.ok ? 'primary' : 'error'" :value="k.ok ? t('channels.checkinOk') : t('channels.checkinFailed')" />
-          <span class="checkin-text">
+          <div class="checkin-text">
             <span class="type-body-medium mono id" :title="k.account">{{ k.account || '—' }}</span>
-            <span v-if="k.message" class="type-body-small muted line" :title="k.message">{{ k.message }}</span>
-          </span>
+            <ErrorNotice v-if="!k.ok && k.message" :message="k.message" compact announcement="off" />
+            <span v-else-if="k.message" class="type-body-small muted line" :title="k.message">{{ k.message }}</span>
+          </div>
           <span v-if="k.credits" class="type-label-large num">+{{ compact(k.credits) }}</span>
           <time class="type-body-small muted" :datetime="k.at" :title="when(k.at)">{{ relative(Date.parse(k.at) - Date.now(), locale) }}</time>
         </li>
@@ -265,10 +267,13 @@ const today = computed(() => c.value.usage_today);
         @update:model-value="save({ providers: { cline: { options: { client_profile: $event } } } })"
       />
       <ul v-if="failures.length" class="diagnostics">
-        <li v-for="d in failures" :key="d.operation" class="type-body-small">
-          <Tooltip :text="`${d.host} · ${d.route}`"><span class="diag-op">{{ t(`network.operations.${d.operation}`) }}</span></Tooltip>
-          <span class="error-text">{{ t(`network.errors.${d.kind}`) }}<template v-if="d.status"> · HTTP {{ d.status }}</template></span>
-          <span class="muted">{{ relative(d.at * 1000 - Date.now(), locale) }}</span>
+        <li v-for="d in failures" :key="d.operation">
+          <CatalogFailure v-if="d.operation === 'catalog'" :title="t(`network.operations.${d.operation}`)" :kind="d.kind" :status="d.status" :host="d.host" announcement="off">
+            <template #meta><span :title="d.route">{{ relative(d.at * 1000 - Date.now(), locale) }}</span></template>
+          </CatalogFailure>
+          <ErrorNotice v-else :title="t(`network.operations.${d.operation}`)" :message="[t(`network.errors.${d.kind}`), d.status ? `HTTP ${d.status}` : '', d.host].filter(Boolean).join(' · ')" announcement="off">
+            <template #meta><span :title="d.route">{{ relative(d.at * 1000 - Date.now(), locale) }}</span></template>
+          </ErrorNotice>
         </li>
       </ul>
     </PageSection>
@@ -320,9 +325,6 @@ const today = computed(() => c.value.usage_today);
 .today dd { margin: 0; }
 .quota { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--app-space-3); }
 .diagnostics { display: flex; flex-direction: column; gap: var(--app-space-1); margin: 0; padding: 0; list-style: none; }
-.diagnostics li { display: flex; flex-wrap: wrap; gap: var(--app-space-2); }
-.diag-op { font-weight: 500; }
-.error-text { color: var(--md-sys-color-error); }
 @container app-content (max-width: 599px) {
   .account-usage { display: none; }
 }

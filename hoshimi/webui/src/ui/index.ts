@@ -31,6 +31,7 @@ export type { Column, SortState } from '@/ui/DataTable.vue';
 export { default as DatePicker } from '@/ui/DatePicker.vue';
 export { default as Divider } from '@/ui/Divider.vue';
 export { default as EmptyState } from '@/ui/EmptyState.vue';
+export { default as ErrorNotice } from '@/ui/ErrorNotice.vue';
 export { default as ExpansionPanel } from '@/ui/ExpansionPanel.vue';
 export { default as Fab } from '@/ui/Fab.vue';
 export { default as FadeSwap } from '@/ui/FadeSwap.vue';

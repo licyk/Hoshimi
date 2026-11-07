@@ -4,7 +4,7 @@ import { conversationsApi } from '@/api/conversations';
 import type { TerminalView } from '@/api/types';
 import { elapsed } from '@/format';
 import { useI18n } from '@/i18n';
-import { AppButton, AppIcon, IconButton, TRANSITIONS, TweenNumber, icons, keepLeavingInPlace, staggerStyle } from '@/ui';
+import { ErrorNotice, AppButton, AppIcon, IconButton, TRANSITIONS, TweenNumber, icons, keepLeavingInPlace, staggerStyle } from '@/ui';
 
 /** Mounted for one conversation while /ps or /stop is open. Reads never consume tool output. */
 const props = defineProps<{ conversationId: string | null; mode: 'terminals' | 'stop'; query: string }>();
@@ -99,7 +99,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(timer); });
       <IconButton :icon="icons.RefreshCw" :label="t('common.refresh')" :disabled="refreshing || stopping" @pointerdown.prevent @click="refresh" />
     </div>
     <p v-if="mode === 'stop' && running.length" class="note type-body-small muted">{{ t('playground.background.stopHelp') }}</p>
-    <p v-if="error" role="alert" class="error type-body-small">{{ error }}</p>
+    <ErrorNotice v-if="error" :message="error" compact announcement="assertive" />
     <p v-if="!loaded && !error" role="status" class="empty type-body-medium muted">{{ t('playground.background.loading') }}</p>
     <Transition :name="TRANSITIONS.collapse">
       <p v-if="stopped" role="status" class="success type-body-medium"><AppIcon :icon="icons.CircleCheck" :size="18" />{{ t('playground.background.stopped') }}</p>
@@ -144,8 +144,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(timer); });
 .meta { display: flex; flex-wrap: wrap; gap: var(--app-space-3); font-variant-numeric: tabular-nums; }
 .live, .success { color: var(--md-sys-color-primary); }
 .success { display: flex; align-items: center; gap: var(--app-space-2); }
-.note, .error, .success { margin: 0; overflow-wrap: anywhere; flex: none; }
-.error { color: var(--md-sys-color-error); }
+.note, .success { margin: 0; overflow-wrap: anywhere; flex: none; }
 .empty { padding: var(--app-space-4) var(--app-space-2); margin: 0; text-align: center; }
 .actions { display: flex; justify-content: flex-end; flex: none; }
 </style>

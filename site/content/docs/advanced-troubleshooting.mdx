@@ -116,6 +116,8 @@ Model '…' not found. Use `provider/model` or see /v1/models.
 - 新列表突然只剩不到一半时，网关先保留旧列表一个周期，日志里有 `the catalogue came back at N of M models (likely a partial answer)`；再过一个周期仍然如此就接受，日志写 `accepting it as the station's own answer`。
 - 渠道的网络有问题时，**渠道** 页的 **网络** 部分会显示 **模型目录** 操作的错误。
 
+**模型** 页和 **渠道 › 网络** 会显示目录失败的原因、已知的 HTTP 状态码、目标主机和处理建议。HTTP 200 仍可能表示返回内容不是有效的模型列表。404/405 时检查 API 地址；如果上游不提供模型列表接口，可在账号中手动填写模型 ID。同一渠道的另一个账号请求成功不会清除本轮失败提示，完整刷新成功后才会清除。界面和目录失败日志不包含原始响应正文、完整请求 URL 或密钥。
+
 </Accordion>
 <Accordion title="503 model_unavailable：… is temporarily unavailable">
 

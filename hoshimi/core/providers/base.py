@@ -17,7 +17,8 @@ from hoshimi.core.errors import UpstreamError
 from hoshimi.core.failure import AccountCooler, is_recoverable, parse_reset_after
 from hoshimi.core.modelsdev import enrich_spec
 from hoshimi.core.net.admission import AdmissionCancelled, AdmissionDelayed, ProviderAdmission
-from hoshimi.core.net.client import operation
+from hoshimi.core.net.catalog_errors import catalog_failure
+from hoshimi.core.net.client import NetworkClient, operation
 
 logger = logging.getLogger(__name__)
 
@@ -287,6 +288,8 @@ class Provider(ABC):
         self.catalog_failed = False
         self.catalog_authoritative = False
         self.catalog_error: str | None = None
+        self.catalog_diagnostic: dict[str, Any] | None = None
+        self._catalog_started_at = 0.0
         self.catalog_last_success: float | None = None
         self.catalog_retry_at = 0.0
         self.catalog_source = "fallback"
@@ -327,6 +330,17 @@ class Provider(ABC):
         """Read the last catalogue without starting discovery or taking its lock."""
         return list(self._models_cache or [])
 
+    def record_catalog_failure(self, exc: Exception | None = None) -> None:
+        """Snapshot the failure before another account's success replaces HTTP diagnostics."""
+        observed = None
+        if isinstance(self.client, NetworkClient):
+            observed = next((row for row in self.client.diagnostics() if row["operation"] == "catalog" and row["at"] >= self._catalog_started_at), None)
+        self.catalog_failed = True
+        self.catalog_diagnostic = catalog_failure(exc, observed)
+        self.catalog_error = self.catalog_diagnostic["kind"]
+        logger.warning("%s: model catalogue failed (%s; HTTP %s; host %s)", self.id, self.catalog_error,
+                       self.catalog_diagnostic["status"] or "unknown", self.catalog_diagnostic["host"] or "unknown")
+
     def models(self) -> list[str]:
         now = time.time()
         cached = self._models_cache
@@ -339,12 +353,13 @@ class Provider(ABC):
             self.catalog_failed = False
             self.catalog_authoritative = False
             self.catalog_error = None
+            self.catalog_diagnostic = None
+            self._catalog_started_at = time.time()
             try:
                 with operation("catalog"):
                     fetched = self.fetch_models()
             except Exception as exc:  # noqa: BLE001 - model discovery is best-effort
-                self.catalog_failed = True
-                self.catalog_error = str(getattr(exc, "code", "invalid_response"))
+                self.record_catalog_failure(exc)
                 fetched = previous or []
             if self.catalog_failed and previous is not None:
                 fetched = previous
@@ -361,7 +376,8 @@ class Provider(ABC):
                 self._models_shrunk = False
             self._models_cache = fresh
             if self.catalog_failed:
-                self.catalog_error = self.catalog_error or "catalog_failed"
+                if self.catalog_diagnostic is None:
+                    self.record_catalog_failure()
                 self.catalog_retry_at = time.time() + 30.0
                 self._models_expires_at = self.catalog_retry_at
                 self.catalog_source = "cache" if previous is not None else "fallback"

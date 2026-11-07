@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { accountFromForm, AccountFormError } from '@/api/accountForms';
 import { useAddAccount, useProviderForms, useStations } from '@/api/queries/channels';
 import { useI18n } from '@/i18n';
-import { AppButton, AppDialog, PickerMenu, SegmentedButton, SelectField, TextField, icons, useSnackbar } from '@/ui';
+import { ErrorNotice, AppButton, AppDialog, PickerMenu, SegmentedButton, SelectField, TextField, icons, useSnackbar } from '@/ui';
 
 /**
  * Add one credential to a channel. The aggregator lane (``agg``) names a station from a long
@@ -144,7 +144,7 @@ function submit() {
         </template>
       </template>
       <TextField v-model="accountId" :label="t('channels.addAccountId')" :supporting-text="t('channels.addAccountIdHelp')" />
-      <p v-if="error" class="type-body-medium error-text" role="alert">{{ error }}</p>
+      <ErrorNotice v-if="error" :message="error" announcement="assertive" />
     </form>
     <template #actions>
       <AppButton variant="text" :disabled="add.isPending.value" @click="open = false">{{ t('common.cancel') }}</AppButton>
@@ -157,5 +157,4 @@ function submit() {
 .add { display: flex; flex-direction: column; gap: var(--app-space-3); }
 .method { display: flex; flex-direction: column; gap: var(--app-space-2); align-items: flex-start; }
 p { margin: 0; }
-.error-text { color: var(--md-sys-color-error); }
 </style>

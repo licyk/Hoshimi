@@ -191,15 +191,15 @@ class EacProvider(OpenAiCompatProvider):
         try:
             url = f"{self._base(account)}/models"
             headers = self._headers(account, method="GET", url=url, body="")
-        except (ProviderError, ValidationError):
-            self.catalog_failed = True
+        except (ProviderError, ValidationError) as exc:
+            self.record_catalog_failure(exc)
             return []
         try:
             response = self.client.get(url, headers=headers, timeout=30.0, follow_redirects=False)
-        except httpx.HTTPError:
-            self.catalog_failed = True
+        except httpx.HTTPError as exc:
+            self.record_catalog_failure(exc)
             return []
         if response.status_code >= 400:
-            self.catalog_failed = True
+            self.record_catalog_failure(ProviderError(response.status_code))
             return []
         return self.parse_models_response(response.json())

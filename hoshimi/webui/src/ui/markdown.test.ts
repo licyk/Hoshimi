@@ -356,7 +356,19 @@ describe('Markdown diagrams and previews', () => {
     await flushPromises();
     await flushPromises();
     expect(w.find('.diagram-error').text()).toBe('Couldn’t draw this diagram: Parse error on line 1');
+    expect(w.findAll('.error-notice')).toHaveLength(1);
     expect(w.find('pre').attributes('hidden')).toBeUndefined();
+    // A streaming edit can replace the generated HTML that hosts the Vue notice.
+    await w.setProps({ source: 'New paragraph\n\n```mermaid\nbroken diagram\n```' });
+    await flushPromises();
+    expect(w.findAll('.error-notice')).toHaveLength(1);
+    expect(w.find('.error-notice').text()).toContain('Parse error on line 1');
+    await w.setProps({ source: '```mermaid\ngraph LR; fixed-->diagram\n```' });
+    await flushPromises();
+    await flushPromises();
+    expect(w.find('.error-notice').exists()).toBe(false);
+    expect(w.find('.diagram-view svg').exists()).toBe(true);
+    w.unmount();
   });
 
   it('shows an SVG block as an image, where its scripts never run', () => {

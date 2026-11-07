@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ErrorNotice } from '@/ui';
 /**
  * A tool's words as they came, for what no view lays out: an error, a call's arguments that are not
  * an object, output in a shape the view does not know. Long output scrolls down, and a swipe past
@@ -8,7 +9,10 @@ defineProps<{ text: string; failed?: boolean }>();
 </script>
 
 <template>
-  <pre class="raw-output app-scroll app-scroll-chain app-scroll-auto type-body-small" :class="{ failed }">{{ text }}</pre>
+  <ErrorNotice v-if="failed" compact announcement="off">
+    <pre class="raw-output failed app-scroll app-scroll-chain app-scroll-auto type-body-small">{{ text }}</pre>
+  </ErrorNotice>
+  <pre v-else class="raw-output app-scroll app-scroll-chain app-scroll-auto type-body-small">{{ text }}</pre>
 </template>
 
 <style scoped>
@@ -17,5 +21,5 @@ defineProps<{ text: string; failed?: boolean }>();
   background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere;
 }
-.raw-output.failed { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+.raw-output.failed { padding: 0; background: transparent; color: inherit; }
 </style>

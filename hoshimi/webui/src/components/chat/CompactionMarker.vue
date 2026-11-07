@@ -3,7 +3,7 @@ import { computed, ref } from 'vue';
 import type { CompactionStep } from '@/api/types';
 import { compact, duration, elapsed } from '@/format';
 import { useI18n } from '@/i18n';
-import { AppIcon, Collapse, icons } from '@/ui';
+import { ErrorNotice, AppIcon, Collapse, icons } from '@/ui';
 import { useElapsed } from '@/ui/useElapsed';
 // Not through '@/ui': markdown-it and highlight.js load with the Playground alone.
 import Markdown from '@/ui/Markdown.vue';
@@ -44,7 +44,8 @@ const expandable = computed(() => status.value === 'done' && !!props.step.summar
 
 <template>
   <div class="compaction" :class="status" role="note">
-    <div class="rule">
+    <ErrorNotice v-if="status === 'failed'" :title="label" :message="step.error" compact announcement="off" />
+    <div v-else class="rule">
       <span class="line" aria-hidden="true" />
       <component
         :is="expandable ? 'button' : 'span'"
@@ -56,7 +57,7 @@ const expandable = computed(() => status.value === 'done' && !!props.step.summar
         @click="expandable && (open = !open)"
       >
         <span v-if="running" class="dot" aria-hidden="true" />
-        <AppIcon v-else :icon="status === 'failed' ? icons.AlertTriangle : icons.Layers" :size="18" />
+        <AppIcon v-else :icon="icons.Layers" :size="18" />
         <span class="label">{{ label }}</span>
         <span v-if="detail" class="detail type-body-small">{{ detail }}</span>
         <AppIcon v-if="expandable" :icon="icons.ChevronDown" :size="18" class="chevron" :class="{ open }" />
@@ -95,7 +96,6 @@ button.head { cursor: pointer; }
 .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--md-sys-color-tertiary); animation: compaction-pulse 1.5s ease-in-out infinite; }
 @keyframes compaction-pulse { 50% { opacity: 0.35; } }
 .done .head { color: var(--md-sys-color-on-surface); }
-.failed .head { border-color: color-mix(in srgb, var(--md-sys-color-error) 40%, transparent); color: var(--md-sys-color-error); }
 .stopped .head { opacity: 0.7; }
 .summary {
   display: flex; flex-direction: column; gap: var(--app-space-2); max-height: 360px; padding: var(--app-space-3) var(--app-space-4);

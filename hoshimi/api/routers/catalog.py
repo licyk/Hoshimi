@@ -13,6 +13,7 @@ from pydantic import Field
 
 from hoshimi.api.deps import ServicesDep
 from hoshimi.api.routers.probe import ProbeState
+from hoshimi.api.routers.providers import NetworkDiagnostic
 from hoshimi.core.catalog import ModelSpec
 from hoshimi.core.effort import LEVELS, efforts_for
 from hoshimi.core.record import Record
@@ -68,6 +69,7 @@ class CatalogProvider(Record):
     last_success: float | None = None
     retry_at: float | None = None
     source: str = "live"
+    diagnostic: NetworkDiagnostic | None = None
 
 
 class CatalogEvent(Record):
@@ -154,10 +156,11 @@ async def catalog_events(services) -> AsyncIterator[str]:
         try:
             data = _model_objects(services, (specs if specs is not None else discovery.cached(provider).specs).values())
         except Exception:  # noqa: BLE001 - malformed capabilities are isolated to their provider
-            return CatalogProvider(id=pid, status="failed", data=[])
+            return CatalogProvider(id=pid, status="failed", data=[], error="invalid_response")
         state = discovery.cached(provider)
-        return CatalogProvider(id=pid, status=status, data=data, error=state.error,
-                               last_success=state.last_success, retry_at=state.retry_at, source=state.source)
+        return CatalogProvider(id=pid, status=status, data=data, error="timeout" if status == "timeout" else state.error,
+                               last_success=state.last_success, retry_at=state.retry_at, source=state.source,
+                               diagnostic=NetworkDiagnostic(provider=pid, **state.diagnostic) if state.diagnostic and status != "timeout" else None)
 
     def event(value: CatalogEvent) -> str:
         return f"data: {value.model_dump_json()}\n\n"

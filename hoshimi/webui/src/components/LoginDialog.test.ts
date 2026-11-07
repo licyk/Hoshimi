@@ -12,9 +12,11 @@ vi.mock('@/api/queries/channels', () => ({
   submitLoginInput: state.submit,
   useLoginDone: () => state.done,
 }));
-vi.mock('@/ui', () => {
+vi.mock('@/ui', async () => {
+  const { default: ErrorNotice } = await import('@/ui/ErrorNotice.vue');
   const slot = { template: '<div><slot /></div>' };
   return {
+    ErrorNotice,
     icons: {},
     IconButton: slot,
     Stepper: { props: ['steps'], template: '<ol class="steps"><li v-for="s in steps" :key="s.id" :data-state="s.state">{{ s.label }}</li></ol>' },

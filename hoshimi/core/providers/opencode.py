@@ -408,8 +408,8 @@ class OpencodeProvider(OpenAiCompatProvider):
     def fetch_models(self) -> list[str]:
         try:
             ids = super().fetch_models()
-        except (TypeError, ValueError):
-            self.catalog_failed = True
+        except (TypeError, ValueError) as exc:
+            self.record_catalog_failure(exc)
             ids = []
         if ids and self._anonymous():
             ids = [model_id for model_id in ids if is_free_lane(model_id)]

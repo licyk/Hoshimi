@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { cancelLogin, pollLogin, startLogin, submitLoginInput, useLoginDone, type LoginSession } from '@/api/queries/channels';
 import { useI18n } from '@/i18n';
-import { AppButton, AppDialog, IconButton, Stepper, TextField, icons, useSnackbar, type StepItem } from '@/ui';
+import { ErrorNotice, AppButton, AppDialog, IconButton, Stepper, TextField, icons, useSnackbar, type StepItem } from '@/ui';
 
 /**
  * Sign a channel in through the station's own page. The steps say where the login stands:
@@ -159,7 +159,7 @@ const retry = () => props.provider && begin(props.provider);
         <p v-if="session.expires_at" class="type-body-small muted">{{ t('channels.loginExpires', { when: new Date(session.expires_at * 1000).toLocaleTimeString() }) }}</p>
       </template>
       <p v-if="step === 'done'" class="type-body-medium ok-text">{{ t('channels.loginDone', { id: session?.account_id ?? '' }) }}</p>
-      <p v-if="error" class="type-body-medium error-text" role="alert">{{ error }}</p>
+      <ErrorNotice v-if="error" :message="error" announcement="assertive" />
     </div>
     <template #actions>
       <AppButton v-if="error" variant="tonal" :icon="icons.RotateCcw" @click="retry">{{ t('common.retry') }}</AppButton>
@@ -177,6 +177,5 @@ p { margin: 0; }
 .code { font-size: var(--md-sys-typescale-headline-small-size); letter-spacing: 0.08em; }
 .manual { display: flex; flex-direction: column; gap: var(--app-space-2); align-items: flex-start; }
 .manual > :first-child { align-self: stretch; }
-.error-text { color: var(--md-sys-color-error); overflow-wrap: anywhere; }
 .ok-text { color: var(--md-sys-color-primary); }
 </style>

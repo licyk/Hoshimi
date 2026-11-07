@@ -45,6 +45,10 @@ def network_diagnostics(services: ServicesDep) -> list[NetworkDiagnostic]:
     if services.login is not None:
         rows.extend(NetworkDiagnostic(provider=pid, **row) for pid, row in services.login.diagnostics())
     latest = {(row.provider, row.operation): row for row in sorted(rows, key=lambda row: row.at)}
+    # A later successful account must not conceal a failed catalogue refresh.
+    for pid, provider in services.registry.ordered_providers():
+        if provider.catalog_failed and provider.catalog_diagnostic:
+            latest[pid, "catalog"] = NetworkDiagnostic(provider=pid, **provider.catalog_diagnostic)
     return list(latest.values())
 
 

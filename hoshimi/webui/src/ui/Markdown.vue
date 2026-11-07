@@ -194,7 +194,7 @@ function diagram(source: string, env: Env): Pick<BlockParts, 'body' | 'hideCode'
     diagramSources.set(key, source);
     return { body: `<div class="diagram pending" data-mermaid="${key}" role="status">${escape(env.labels.drawing)}</div>`, hideCode: true };
   }
-  if (drawing.error !== undefined) return { body: `<p class="diagram-error" role="note">${escape(fill(env.labels.diagramFailed, { reason: drawing.error }))}</p>` };
+  if (drawing.error !== undefined) return { body: `<div class="diagram-error" data-error-message="${escape(fill(env.labels.diagramFailed, { reason: drawing.error }))}"></div>` };
   const tool = (zoom: keyof typeof ZOOM_ICONS, label: string) =>
     `<button type="button" class="code-tool" data-zoom="${zoom}" aria-label="${escape(label)}" title="${escape(label)}">${ZOOM_ICONS[zoom]}</button>`;
   const actual = escape(env.labels.actualSize);
@@ -297,7 +297,8 @@ export const renderMarkdown = (source: string, copyLabel = 'Copy', options: Rend
 </script>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, shallowRef } from 'vue';
+import ErrorNotice from '@/ui/ErrorNotice.vue';
 import { listenToFrames, sizeFrames, themeKey, useMarkdownContext, watchThemeKey } from '@/ui/markdownRich';
 import { draw } from '@/ui/mermaid';
 
@@ -308,11 +309,16 @@ watchThemeKey();
 listenToFrames();
 const blocks = computed(() => renderBlocks(props.source, { copyLabel: props.copyLabel, labels: labels.value, remote: remoteMedia.value, theme: themeKey.value }));
 const root = ref<HTMLElement | null>(null);
+const errorTargets = shallowRef<HTMLElement[]>([]);
 
 // After each render: draw the diagrams it left a place for, lay out the ones drawn, and give previews their height back.
 function settle() {
   const el = root.value;
   if (!el) return;
+  // Render failures through Vue too, so generated diagram markup shares the app's error UI.
+  // Compare DOM targets to avoid an update loop when mounting the teleported notices.
+  const targets = Array.from(el.querySelectorAll<HTMLElement>('[data-error-message]'));
+  if (targets.length !== errorTargets.value.length || targets.some((target, i) => target !== errorTargets.value[i])) errorTargets.value = targets;
   for (const holder of el.querySelectorAll<HTMLElement>('[data-mermaid]')) {
     const key = holder.dataset.mermaid!;
     const source = diagramSources.get(key);
@@ -616,6 +622,9 @@ function onError(event: Event) {
     @pointercancel="onPointerUp"
   >
     <div v-for="(block, i) in blocks" :key="i" class="md-block" v-html="block" />
+    <Teleport v-for="(target, i) in errorTargets" :key="i" :to="target">
+      <ErrorNotice :message="target.dataset.errorMessage" compact announcement="off" />
+    </Teleport>
   </div>
 </template>
 
@@ -665,7 +674,7 @@ function onError(event: Event) {
 .markdown :deep(.diagram-frame.pannable .diagram-view) { cursor: grab; }
 .markdown :deep(.diagram-frame.dragging .diagram-view) { cursor: grabbing; }
 .markdown :deep(.diagram-frame.zoomed .diagram) { touch-action: none; }
-.markdown :deep(.diagram-error) { margin: 0; padding: var(--app-space-2) var(--app-space-3); color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small-size); }
+.markdown :deep(.diagram-error) { padding: var(--app-space-2) var(--app-space-3); }
 .markdown :deep(.html-preview) {
   display: block; width: 100%; height: 200px; border: 0; border-radius: 0 0 var(--md-sys-shape-corner-small) var(--md-sys-shape-corner-small);
   background: var(--md-sys-color-surface-container-lowest);

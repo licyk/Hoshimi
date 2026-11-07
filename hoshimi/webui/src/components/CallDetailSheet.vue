@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import type { CallRecord } from '@/api/types';
 import { duration, grouped, percent, ratio, when } from '@/format';
 import { useI18n } from '@/i18n';
-import { Badge, DataList, IconButton, Meter, SideSheet, TRANSITIONS, icons } from '@/ui';
+import { ErrorNotice, Badge, DataList, IconButton, Meter, SideSheet, TRANSITIONS, icons } from '@/ui';
 
 /**
  * Everything recorded about one call: where it went, every token count and every timing. The
@@ -54,7 +54,7 @@ const uncached = computed(() => (c.value ? Math.max(0, c.value.input - c.value.c
             <span class="type-title-medium name">{{ c.name || c.model }}</span>
             <Badge :tone="c.ok ? 'primary' : 'error'" :value="c.ok ? t('usage.served') : t('usage.failedOne')" />
           </div>
-          <p v-if="c.error_message" class="type-body-medium error-text">{{ c.error_code ? `${c.error_code}: ` : '' }}{{ c.error_message }}</p>
+          <ErrorNotice v-if="c.error_message" :title="c.error_code ?? undefined" :message="c.error_message" announcement="off" />
           <DataList
             :rows="[
               { label: t('usage.at'), value: when(c.at) },
@@ -109,5 +109,4 @@ const uncached = computed(() => (c.value ? Math.max(0, c.value.input - c.value.c
 .head { display: flex; align-items: center; gap: var(--app-space-2); min-width: 0; }
 .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 h3, p { margin: 0; }
-.error-text { color: var(--md-sys-color-error); overflow-wrap: anywhere; }
 </style>
