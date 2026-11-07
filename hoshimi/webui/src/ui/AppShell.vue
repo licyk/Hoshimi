@@ -10,7 +10,7 @@ import TopAppBar from '@/ui/TopAppBar.vue';
 /**
  * Navigation switches between a bottom bar (compact) and a rail (medium and wider). A ``fill`` page
  * takes the frame's height and scrolls inside itself, so the scroller gives its lane up until it is
- * needed (``app-scroll-auto``) and the page pads both sides alike.
+ * needed (``app-scroll-auto``). Its shell also omits overlay padding; the page pads both sides alike.
  */
 withDefaults(defineProps<{ items: NavItem[]; footer?: NavItem[]; title: string; fill?: boolean }>(), { footer: () => [], fill: false });
 const windowClass = useWindowClass();
@@ -55,5 +55,8 @@ defineExpose({ content });
   /* The page alone fades through on navigation; the rail, the top bar and the frame stay put. */
   view-transition-name: app-content;
 }
+/* Fill pages own their scrolling areas. Remove only this shell's padding, keeping the inherited
+   scrollbar measurements available to the thread, menus and other nested scrollers. */
+.content.app-scroll-auto { padding-inline-end: 0; }
 .compact .frame { margin: 0; border-radius: 0; }
 </style>

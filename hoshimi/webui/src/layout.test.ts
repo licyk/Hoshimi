@@ -157,6 +157,9 @@ describe('scrollbar lanes', () => {
   it('a page that fills the frame keeps no shell lane, and its thread reaches into its padding', () => {
     expect(readFileSync(join(SRC, 'router.ts'), 'utf8')).toMatch(/name: 'playground'[^\n]*meta: \{ fill: true \}/);
     expect(readFileSync(join(SRC, 'ui/AppShell.vue'), 'utf8')).toContain(`:class="{ 'app-scroll-auto': fill }"`);
+    const fillShell = rule('ui/AppShell.vue', '.content.app-scroll-auto');
+    expect(fillShell).toMatch(/padding-inline-end:\s*0\s*;/);
+    expect(fillShell).not.toMatch(/--app-scroll-(overlay|lane|edge)\s*:/);
     expect(rule('views/PlaygroundView.vue', '.thread')).toMatch(/margin-inline-end:[^;]*var\(--app-scroll-lane\)/);
   });
   it('the detail pane reaches into the page padding by its lane', () => {
