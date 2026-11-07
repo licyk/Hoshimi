@@ -28,6 +28,26 @@ def read_catalog(services):
     return next(event["provider"] for event in events if event["type"] == "provider" and event["provider"]["id"] == "openai")
 
 
+def test_slug_catalog_is_ready_and_invalid_refresh_keeps_the_complete_catalog(services):
+    rows = [{"slug": "glm-5.3", "context_window": 1048576}, {"slug": "glm-5.3-flash"}, {"slug": "glm-5-turbo"}]
+    provider = install_provider(services, lambda request: httpx.Response(200, json={"models": rows}))
+    try:
+        initial = read_catalog(services)
+        assert initial["status"] == "ready"
+        assert initial["error"] is None and initial["diagnostic"] is None
+        assert list(provider.listing_rows) == [row["slug"] for row in rows]
+        assert provider.specs()["glm-5.3"].context_window == 1048576
+        # Normalized IDs are also the duplicate-check keys. A broken refresh cannot
+        # publish its prefix or erase the previous complete per-account catalogue.
+        rows.append({"id": "glm-5.3"})
+        provider._models_expires_at = 0
+        failed = read_catalog(services)
+        assert failed["status"] == "failed" and failed["error"] == "invalid_response"
+        assert failed["data"] == initial["data"]
+    finally:
+        services.close()
+
+
 @pytest.mark.parametrize("status,body,kind", [
     (200, '{"error":"secret-body"}', "invalid_response"),
     (200, 'not JSON secret-body', "invalid_response"),

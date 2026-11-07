@@ -43,6 +43,15 @@ class CatalogProfile:
     next_cursor: Path = ("nextPageToken",)
     max_pages: int = 100
 
+    def model_id(self, row: dict[str, Any]) -> str:
+        # Codex-style directories use slug. An explicit ID (even an invalid one) or a
+        # provider-specific ID path remains authoritative; do not hide malformed rows.
+        path = ("slug",) if self.id_path == ("id",) and "id" not in row else self.id_path
+        model = at(row, path)
+        if not isinstance(model, str) or not model.strip():
+            raise ValueError("model directory entry has no model ID")
+        return model
+
     def normalize(self, row: dict[str, Any]) -> dict[str, Any] | None:
         if self.pagination == "dashscope":
             capabilities = row.get("capabilities")
@@ -52,9 +61,7 @@ class CatalogProfile:
             return None
         if any(not isinstance(at(row, path), list) or expected not in at(row, path) for path, expected in self.contains):
             return None
-        model = at(row, self.id_path)
-        if not isinstance(model, str) or not model.strip():
-            raise ValueError("model directory entry has no model ID")
+        model = self.model_id(row)
         result = {**row, "id": model}
         for field in self.fields:
             value = at(row, field.path)
@@ -85,8 +92,8 @@ def discover_catalog(client: httpx.Client, url: str, headers: dict[str, str], pr
             raise ValueError("invalid model directory collection")
         raw_count += len(raw)
         for row in raw:
-            model = at(row, profile.id_path)
-            if not isinstance(model, str) or not model.strip() or model in ids:
+            model = profile.model_id(row)
+            if model in ids:
                 raise ValueError("missing or duplicate model directory ID")
             ids.add(model)
             normalized = profile.normalize(row)

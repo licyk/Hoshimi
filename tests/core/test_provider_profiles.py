@@ -18,6 +18,36 @@ from hoshimi.core.registry import Registry
 from hoshimi.core.translate.responses import responses_to_chat
 
 
+@pytest.mark.parametrize("envelope", ["models", "data", None])
+def test_catalog_accepts_slug_ids_without_changing_explicit_ids_or_metadata(envelope):
+    rows = [{"slug": "glm-5.3", "display_name": "GLM", "context_window": 1048576},
+            {"id": "canonical", "slug": "alias"}]
+    payload = {envelope: rows} if envelope else rows
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload))) as client:
+        found = discover_catalog(client, "https://example.test/api/v1/models", {}, CatalogProfile())
+    assert found == [{**rows[0], "id": "glm-5.3"}, rows[1]]
+    assert "id" not in rows[0]
+
+
+@pytest.mark.parametrize("rows", [
+    [{"slug": "same"}, {"slug": "same"}],
+    [{"id": "same"}, {"slug": "same"}],
+    [{}], [{"slug": ""}], [{"slug": "  "}], [{"slug": None}], [{"slug": 123}],
+    [{"id": "", "slug": "valid"}], [{"id": None, "slug": "valid"}], [{"id": 123, "slug": "valid"}],
+])
+def test_slug_compatibility_still_rejects_missing_invalid_and_duplicate_ids(rows):
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"models": rows}))) as client, pytest.raises(ValueError):
+        discover_catalog(client, "https://example.test/models", {}, CatalogProfile())
+
+
+def test_slug_does_not_override_a_provider_specific_id_path():
+    profile = CatalogProfile(id_path=("model", "name"))
+    row = {"model": {"name": "specific"}, "id": "generic", "slug": "alias"}
+    assert profile.normalize(row)["id"] == "specific"
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"models": [{"slug": "alias"}]}))) as client, pytest.raises(ValueError):
+        discover_catalog(client, "https://example.test/models", {}, profile)
+
+
 def test_numbered_catalog_is_atomic_and_keeps_account_model_ownership(monkeypatch):
     profile = CatalogProfile(collection=("data",), pagination="numbered", fields=(Field("context_length", ("limits", "context")),))
     monkeypatch.setitem(CATALOG_PROFILES, "test", profile)
