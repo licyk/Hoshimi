@@ -154,12 +154,11 @@ def emit_messages_events(chunks: Iterable[dict[str, Any]], *, model: str, messag
                 yield _event("content_block_delta", index=index, delta={"type": "input_json_delta", "partial_json": raw})
         elif kind == "usage":
             usage.update(chunk.get("usage") or {})
-        elif kind == "finish":
-            if finish is None:
-                finish = {"length": "max_tokens", "tool_calls": "tool_use", "stop": "end_turn", "stop_sequence": "stop_sequence", "refusal": "refusal"}.get(
-                    chunk.get("reason"), "end_turn"
-                )
-                stop_sequence = chunk.get("stop_sequence")
+        elif kind == "finish" and finish is None:
+            finish = {"length": "max_tokens", "tool_calls": "tool_use", "stop": "end_turn", "stop_sequence": "stop_sequence", "refusal": "refusal"}.get(
+                chunk.get("reason"), "end_turn"
+            )
+            stop_sequence = chunk.get("stop_sequence")
     if finish is None:
         raise UpstreamStreamFailure("Upstream stream ended without a completion marker.")
     yield from end_current()
