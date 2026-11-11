@@ -5,6 +5,7 @@ import { useUpdateSettings } from '@/api/queries/app';
 import { useClaimCredits, useDeleteAccount, useRefreshNow, type BalanceReport } from '@/api/queries/channels';
 import type { ChannelAccount, ChannelView } from '@/api/types';
 import AddAccountDialog from '@/components/AddAccountDialog.vue';
+import EditAccountDialog from '@/components/EditAccountDialog.vue';
 import CatalogFailure from '@/components/CatalogFailure.vue';
 import LoginDialog from '@/components/LoginDialog.vue';
 import NetworkSettings from '@/components/NetworkSettings.vue';
@@ -90,14 +91,20 @@ const accounts = computed(() =>
     };
   }),
 );
-const accountMenu = (refreshable: boolean): MenuItem[] => [
-  ...(refreshable ? [{ id: 'refresh', label: t('channels.renewAccount'), icon: icons.RotateCcw }] : []),
+const accountMenu = (account: ChannelAccount): MenuItem[] => [
+  ...(account.edit_mode === 'config' ? [{ id: 'edit', label: t('channels.editAccount'), icon: icons.Pencil }] : []),
+  // Older OAuth providers sometimes stored only an API key, indistinguishable
+  // from a pasted key. Keep re-login available for those existing entries too.
+  ...(account.edit_mode && c.value.loginable ? [{ id: 'relogin', label: t('channels.relogin'), icon: icons.LogIn }] : []),
+  ...(account.refreshable ? [{ id: 'refresh', label: t('channels.renewAccount'), icon: icons.RotateCcw }] : []),
   { id: 'forget', label: t('channels.forget'), icon: icons.Trash2, danger: true },
 ];
 const forgetting = ref<string | null>(null);
 const confirmOpen = computed({ get: () => forgetting.value !== null, set: (v: boolean) => !v && (forgetting.value = null) });
 function onAccountMenu(id: string, account: string) {
   if (id === 'forget') forgetting.value = account;
+  else if (id === 'edit') { editingAccount.value = account; editing.value = true; }
+  else if (id === 'relogin') { loginAccount.value = account; loggingIn.value = true; }
   else if (id === 'refresh') act(refreshNow, c.value.id, t('channels.refreshStarted'));
 }
 function doForget() {
@@ -121,6 +128,9 @@ function act(mutation: { mutate: (v: never, opts: Record<string, unknown>) => vo
 }
 const adding = ref(false);
 const loggingIn = ref(false);
+const loginAccount = ref<string>();
+const editing = ref(false);
+const editingAccount = ref('');
 const hasAccounts = computed(() => c.value.accounts.length > 0);
 const more = computed<MenuItem[]>(() => [
   ...(hasAccounts.value ? [{ id: 'refresh', label: t('channels.refreshNow'), icon: icons.RotateCcw }, { id: 'claim', label: t('channels.claimNow'), icon: icons.CalendarCheck }] : []),
@@ -174,7 +184,7 @@ const today = computed(() => c.value.usage_today);
       <Switch v-model="enabled" inline :label="t('common.enabled')" />
     </header>
     <div class="actions">
-      <AppButton v-if="c.loginable" variant="filled" :icon="icons.LogIn" @click="loggingIn = true">{{ t('channels.login') }}</AppButton>
+      <AppButton v-if="c.loginable" variant="filled" :icon="icons.LogIn" @click="loginAccount = undefined; loggingIn = true">{{ t('channels.login') }}</AppButton>
       <AppButton v-else-if="c.addable" variant="filled" :icon="icons.Plus" @click="adding = true">{{ t('channels.addAccount') }}</AppButton>
       <AppButton v-if="hasAccounts" variant="tonal" :icon="icons.RotateCcw" :loading="refreshNow.isPending.value" @click="act(refreshNow, c.id, t('channels.refreshStarted'))">{{ t('channels.refreshNow') }}</AppButton>
       <AppMenu :items="more" @select="onMore">
@@ -207,7 +217,7 @@ const today = computed(() => c.value.usage_today);
               <span class="type-body-small muted">{{ a.lastUsed ? t('channels.lastUsed', { when: a.lastUsed }) : t('channels.tokensToday') }}</span>
             </div>
             <Badge :tone="a.tone" :value="t(`channels.accountStates.${a.state}`)" />
-            <AppMenu :items="accountMenu(a.refreshable)" @select="onAccountMenu($event, a.id)">
+            <AppMenu :items="accountMenu(a)" @select="onAccountMenu($event, a.id)">
               <template #default="{ toggle }"><IconButton :icon="icons.MoreVertical" :label="t('channels.accountActions', { id: a.id })" @click="toggle" /></template>
             </AppMenu>
           </li>
@@ -279,7 +289,8 @@ const today = computed(() => c.value.usage_today);
     </PageSection>
 
     <AddAccountDialog v-model:open="adding" :provider="c.id" :name="c.display_name" />
-    <LoginDialog v-model:open="loggingIn" :provider="c.id" :name="c.display_name" />
+    <EditAccountDialog v-model:open="editing" :provider="c.id" :account-id="editingAccount" />
+    <LoginDialog v-model:open="loggingIn" :provider="c.id" :name="c.display_name" :account-id="loginAccount" />
     <ConfirmDialog
       v-model:open="confirmOpen"
       :title="t('channels.forgetTitle')"

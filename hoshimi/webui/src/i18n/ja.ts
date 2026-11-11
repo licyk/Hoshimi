@@ -177,6 +177,13 @@ export default {
     context: 'コンテキスト',
   },
   channels: {
+    editAccount: '編集',
+    editTitle: '{id} を編集',
+    relogin: '再ログイン',
+    reloginTitle: '再ログイン：{id}',
+    reloginHelp: 'ログインが成功するまで、現在のアカウント情報は変更されません。',
+    showSecret: '{field} を表示',
+    hideSecret: '{field} を隠す',
     eacBundledHelp: 'ログインから GitHub で内蔵 EAC リレーを認証できます。リレー URL や署名キーの入力は不要です。',
     eacRelayHelp: '/v1 で終わるカスタムリレー URL を指定します。GitHub ログインは Worker リレー専用です。',
     invalidChoice: '{field} に対応する値を選択してください。',

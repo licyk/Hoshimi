@@ -68,7 +68,7 @@ def test_fresh_login_saves_only_reference_and_user_identity(relay, tmp_path):
         assert session.status == "succeeded" and session.account_id == "eac-default"
         raw = json.loads(config_file_path().read_text())
         account = raw["providers"]["eac"]["accounts"][0]
-        assert account == {"id": "eac-default", "relay": "bundled", "user_token": "host-user-token", "user_login": "user", "user_avatar": ""}
+        assert account == {"id": "eac-default", "relay": "bundled", "user_token": "host-user-token", "user_login": "user", "user_avatar": "", "_hoshimi_login": "browser"}
         assert "test-signing-secret" not in json.dumps(raw)
         assert "base_url" not in account
         assert "user_token" not in session.as_dict()
@@ -76,6 +76,54 @@ def test_fresh_login_saves_only_reference_and_user_identity(relay, tmp_path):
         headers = lane._headers(lane.accounts[0], method="GET", url="https://relay.example/eac/v1/models", body="")
         assert headers["x-ofm-user"] == "host-user-token"
         assert "x-ofm-signature" in headers
+        manager.close()
+
+
+@pytest.mark.parametrize("save_fails", [False, True])
+def test_relogin_targets_selected_relay_and_restores_authorization_on_write_failure(relay, monkeypatch, save_fails):
+    from hoshimi.core.config import save_settings
+    from hoshimi.core.eac_user import write_eac_user
+
+    accounts = [{"id": name, "base_url": f"https://{name}.test/v1", "signing_secret": f"{name}-secret", "user_token": "old-token"} for name in ("first", "second")]
+    settings = Settings(providers={"eac": ProviderConfig(id="eac", accounts=accounts)})
+    save_settings(settings)
+    write_eac_user({"token": "old-token", "login": "old-user"})
+    previous_file = config_file_path().read_bytes()
+    previous_user = read_eac_user()
+    finished = threading.Event()
+
+    def handle(request):
+        assert request.url.host == "second.test"
+        if request.url.path.endswith("/start"):
+            return httpx.Response(302)
+        return httpx.Response(200, json={"status": "ok", "token": "new-token", "login": "new-user"})
+
+    def fail_save(_settings):
+        raise OSError("disk full")
+
+    if save_fails:
+        monkeypatch.setattr("hoshimi.core.config.save_settings", fail_save)
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        manager = LoginManager(settings, client=client)
+        run = manager._run
+        def wrapped(*args):
+            try:
+                run(*args)
+            finally:
+                finished.set()
+        monkeypatch.setattr(manager, "_run", wrapped)
+        session = manager.start("eac", account_id="second")
+        assert finished.wait(3)
+        if save_fails:
+            assert session.status == "failed"
+            assert settings.providers["eac"].accounts == accounts
+            assert config_file_path().read_bytes() == previous_file
+            assert read_eac_user() == previous_user
+        else:
+            assert session.status == "succeeded" and session.account_id == "second"
+            assert settings.providers["eac"].accounts[0] == accounts[0]
+            assert settings.providers["eac"].accounts[1]["user_token"] == "new-token"
+            assert read_eac_user()["token"] == "new-token"
         manager.close()
 
 

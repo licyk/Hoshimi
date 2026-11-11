@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from hoshimi.core.provider_definitions import CANONICAL_PROVIDERS
 
@@ -68,3 +68,38 @@ def credential_forms() -> dict[str, tuple[CredentialForm, ...]]:
         definition = next(d for d in CANONICAL_PROVIDERS if d.id == provider)
         forms[provider] = (CredentialForm("local", (BASE, CredentialField("api_key", "secret"), MODELS), (("base_url", definition.base_url),)),)
     return forms
+
+
+def account_form(provider: str, data: dict[str, Any]) -> CredentialForm:
+    """Recover the existing method, including legacy accounts without UI metadata."""
+    forms = credential_forms().get(provider, ())
+    if provider == "agg":
+        forms = (CredentialForm("api_key", (KEY, CredentialField("preset"), BASE, MODELS)),)
+    matches = [form for form in forms
+               if all(data.get(f.key) for f in form.fields if f.required)
+               and all(data.get(key, value) == value for key, value in form.defaults if key in {"auth", "relay"})]
+    selected = max(matches, key=lambda form: sum(bool(data.get(f.key)) for f in form.fields), default=CredentialForm("config", ()))
+    fields = list(selected.fields)
+    known = {f.key for f in fields} | {key for key, _ in selected.defaults} | {"id", "_hoshimi_login"}
+    # Keep custom/imported configuration editable too; secret values are never
+    # embedded in the channel list, only in the explicitly opened editor.
+    for key, value in data.items():
+        if key in known:
+            continue
+        secret = any(part in key.lower() for part in ("token", "secret", "password", "key", "cookie", "credential"))
+        kind = "json" if isinstance(value, dict) else "list" if isinstance(value, list) else "secret" if secret else "text"
+        fields.append(CredentialField(key, kind))
+    return CredentialForm(selected.method, tuple(fields), selected.defaults)
+
+
+def account_edit_mode(provider: str, data: dict[str, Any], *, loginable: bool) -> Literal["config", "login"]:
+    """Use recorded provenance first, then the credential shape for older files."""
+    if not loginable or data.get("_hoshimi_login") == "config":
+        return "config"
+    if data.get("_hoshimi_login") == "browser":
+        return "login"
+    if provider == "eac":
+        return "login" if data.get("user_token") else "config"
+    if data.get("api_key") or data.get("personal_token"):
+        return "config"
+    return "login"

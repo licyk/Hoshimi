@@ -71,6 +71,8 @@ class LoginSession:
     waiting_for: str = ""
     inputs: queue.Queue[str] = field(default_factory=queue.Queue, repr=False)
     cancelled: threading.Event = field(default_factory=threading.Event, repr=False)
+    replace_account_id: str | None = None
+    original_account: dict[str, Any] | None = field(default=None, repr=False)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -144,10 +146,12 @@ class LoginManager:
         *,
         client: httpx.Client | None = None,
         on_persist: Callable[[LoginManager], None] | None = None,
+        on_account_persist: Callable[[str, str], None] | None = None,
     ):
         self.settings = settings
         self._client = client
         self._on_persist = on_persist
+        self._on_account_persist = on_account_persist
         self._sessions: dict[str, LoginSession] = {}
         self._lock = threading.Lock()
         self._persist_lock = threading.RLock()
@@ -158,16 +162,17 @@ class LoginManager:
             return [(pid, dict(row)) for pid, rows in self._diagnostics.items() for row in rows]
 
     # -- the sessions ------------------------------------------------------ #
-    def start(self, provider: str) -> LoginSession:
+    def start(self, provider: str, *, account_id: str | None = None) -> LoginSession:
         flows = _flows()
         flow = flows.get(provider)
         if flow is None:
             known = ", ".join(sorted(flows))
             raise LoginError(f"no interactive login for '{provider}' (known: {known})")
+        original = copy.deepcopy(self._account(provider, account_id)) if account_id is not None else None
         if provider == "eac":
             from hoshimi.core.login.eac import _resolve_account, start_eac_login
 
-            account = _resolve_account(self.settings)
+            account = {**original, "id": account_id} if original is not None else _resolve_account(self.settings)
             if account is None:
                 raise LoginError("eac: configured accounts have no usable relay; select the bundled relay or configure a worker relay")
             flow = partial(start_eac_login, account=account)
@@ -178,7 +183,7 @@ class LoginManager:
 
                 flow = start_cline_browser_login
         self._prune()
-        session = LoginSession(id=secrets.token_hex(8), provider=provider)
+        session = LoginSession(id=secrets.token_hex(8), provider=provider, replace_account_id=account_id, original_account=original)
         with self._lock:
             self._sessions[session.id] = session
         thread = threading.Thread(target=self._run, args=(session, flow), daemon=True, name=f"hoshimi-login-{provider}")
@@ -236,10 +241,25 @@ class LoginManager:
                 raise LoginError("the station returned no login URL")
             with self._persist_lock:
                 report.check_cancelled()
+                if session.replace_account_id is not None and self._account(session.provider, session.replace_account_id) != session.original_account:
+                    raise LoginError("The account changed during login; start again.")
                 if session.provider == "eac":
                     self._eac_target(credential)
-                report.commit()
-                account_id = self._persist(session.provider, credential)
+                # EAC also owns a per-install token file. If the account write
+                # fails after that commit, put its previous authorization back.
+                from hoshimi.core.eac_user import clear_eac_user, read_eac_user, write_eac_user
+
+                previous_eac = read_eac_user() if session.provider == "eac" else None
+                try:
+                    report.commit()
+                    account_id = self._persist(session.provider, credential, account_id=session.replace_account_id)
+                except Exception:
+                    if session.provider == "eac":
+                        if previous_eac is None:
+                            clear_eac_user()
+                        else:
+                            write_eac_user(previous_eac)
+                    raise
                 session.status = STATUS_SUCCEEDED
                 session.account_id = account_id
         except (LoginError, ProviderError) as exc:
@@ -259,21 +279,28 @@ class LoginManager:
                 client.close()
 
     # -- the write-back ---------------------------------------------------- #
-    def _persist(self, provider: str, credential: dict[str, Any]) -> str:
+    def _persist(self, provider: str, credential: dict[str, Any], *, account_id: str | None = None) -> str:
         """File the new account under ``provider``, replacing the same identity."""
         from hoshimi.core.config import ProviderConfig, save_settings
 
-        cfg = copy.deepcopy(self.settings.providers.get(provider))
+        previous = self.settings.providers.get(provider)
+        cfg = copy.deepcopy(previous)
         if cfg is None:
             cfg = ProviderConfig(id=provider, enabled=True)
-        cfg.enabled = True
+        if account_id is None:
+            cfg.enabled = True
         identity = _identity_of(credential)
-        account_id = ""
+        replacement = account_id
+        account_id = account_id or ""
         target = None
         if provider == "eac":
             account_id = self._eac_target(credential)
             target = next((raw for index, raw in enumerate(cfg.accounts) if str(raw.get("id") or f"eac-{index}") == account_id), None)
             credential = {key: credential[key] for key in ("user_token", "user_login", "user_avatar", "relay") if key in credential}
+        elif replacement is not None:
+            target = next((raw for index, raw in enumerate(cfg.accounts) if str(raw.get("id") or f"{provider}-{index}") == replacement), None)
+            if target is None:
+                raise LoginError("The account was removed during login; start again.")
         elif identity is not None:
             key, value = identity
             target = next((raw for raw in cfg.accounts if str(raw.get(key) or "") == value), None)
@@ -282,18 +309,46 @@ class LoginManager:
             cfg.accounts.append({"id": account_id, **credential})
         else:
             account_id = str(target.get("id") or account_id or f"{provider}-{secrets.token_hex(3)}")
-            updated = dict(target)
+            # A targeted re-login replaces old tokens/identity completely, while
+            # retaining user configuration such as model and endpoint overrides.
+            from hoshimi.core.provider_forms import credential_forms
+
+            configuration = {f.key for form in credential_forms().get(provider, ()) for f in form.fields if f.kind != "secret"}
+            updated = {key: value for key, value in target.items() if key in configuration} if replacement is not None and provider != "eac" else dict(target)
             updated.update(credential)
             updated["id"] = account_id
             target.clear()
             target.update(updated)
+        saved = next(raw for raw in cfg.accounts if raw.get("id") == account_id)
+        saved["_hoshimi_login"] = "browser"
         candidate = copy.copy(self.settings)
         candidate.providers = {**self.settings.providers, provider: cfg}
         save_settings(candidate)
         self.settings.providers[provider] = cfg
         if self._on_persist is not None:
-            self._on_persist(self)
+            try:
+                self._on_persist(self)
+            except Exception:
+                if previous is None:
+                    self.settings.providers.pop(provider, None)
+                else:
+                    self.settings.providers[provider] = previous
+                save_settings(self.settings)
+                try:
+                    self._on_persist(self)
+                except Exception:
+                    logger.exception("could not restore the running pool after a failed login update")
+                raise
+        if self._on_account_persist is not None:
+            self._on_account_persist(provider, account_id)
         return account_id
+
+    def _account(self, provider: str, account_id: str) -> dict[str, Any]:
+        cfg = self.settings.providers.get(provider)
+        for index, raw in enumerate(cfg.accounts if cfg else []):
+            if str(raw.get("id") or f"{provider}-{index}") == account_id:
+                return raw
+        raise LoginError("The account no longer exists; start again.")
 
     def _eac_target(self, credential: dict[str, Any]) -> str:
         cfg = self.settings.providers.get("eac")

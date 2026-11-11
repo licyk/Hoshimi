@@ -11,7 +11,7 @@ import { ErrorNotice, AppButton, AppDialog, IconButton, Stepper, TextField, icon
  * one), and done. Opening the dialog starts a session; closing it, however it closes, cancels a
  * session still pending.
  */
-const props = defineProps<{ provider: string | null; name: string }>();
+const props = defineProps<{ provider: string | null; name: string; accountId?: string }>();
 const open = defineModel<boolean>('open', { default: false });
 const { t } = useI18n();
 const snackbar = useSnackbar();
@@ -48,7 +48,7 @@ async function begin(provider: string) {
   session.value = null;
   opened = false;
   try {
-    const started = await startLogin(provider);
+    const started = await startLogin(provider, props.accountId);
     if (mine !== generation || !open.value) {
       if (started.status === 'pending') await cancelLogin(started.id);
       return;
@@ -134,8 +134,9 @@ const retry = () => props.provider && begin(props.provider);
 </script>
 
 <template>
-  <AppDialog v-model:open="open" :title="t('channels.loginTitle', { name })" width="medium" @closed="reset">
+  <AppDialog v-model:open="open" :title="accountId ? t('channels.reloginTitle', { id: accountId }) : t('channels.loginTitle', { name })" width="medium" @closed="reset">
     <div class="login">
+      <p v-if="accountId && step !== 'done'" class="type-body-small muted">{{ t('channels.reloginHelp') }}</p>
       <Stepper v-model="shownStep" :steps="steps" />
       <p v-if="step === 'start' && !error" class="type-body-medium muted">{{ t('channels.loginStarting') }}</p>
       <template v-if="session && step === 'browser'">

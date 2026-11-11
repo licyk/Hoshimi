@@ -95,8 +95,22 @@ export function useAddAccount() {
   });
 }
 
+/** Load secrets on demand, outside the shared query cache. */
+export const getAccount = (provider: string, account: string) =>
+  unwrap(api.GET('/api/v1/providers/{provider_id}/accounts/{account_id}', { params: { path: { provider_id: provider, account_id: account } } }));
+
+export function useUpdateAccount() {
+  const done = useLoginDone();
+  return useMutation({
+    mutationFn: ({ provider, id, account }: { provider: string; id: string; account: Record<string, unknown> }) =>
+      unwrap(api.PUT('/api/v1/providers/{provider_id}/accounts/{account_id}', { params: { path: { provider_id: provider, account_id: id } }, body: { account } })),
+    onSuccess: done,
+    gcTime: 0,
+  });
+}
+
 /** Begin a login: the session carries the station's browser URL as soon as it issues one. */
-export const startLogin = (provider: string) => unwrap(api.POST('/api/v1/login/start', { body: { provider } }));
+export const startLogin = (provider: string, accountId?: string) => unwrap(api.POST('/api/v1/login/start', { body: { provider, ...(accountId ? { account_id: accountId } : {}) } }));
 
 /** One login session's current state; the caller polls it while ``status`` is pending. */
 export const pollLogin = (sessionId: string) => unwrap(api.GET('/api/v1/login/poll', { params: { query: { session_id: sessionId } } }));
@@ -108,10 +122,11 @@ export function useLoginDone() {
   const qc = useQueryClient();
   return () => {
     qc.invalidateQueries({ queryKey: keys.providers });
-      qc.invalidateQueries({ queryKey: keys.channels });
+    qc.invalidateQueries({ queryKey: keys.channels });
     qc.invalidateQueries({ queryKey: keys.refresh });
     qc.invalidateQueries({ queryKey: keys.balances });
     qc.invalidateQueries({ queryKey: keys.catalog });
+    qc.invalidateQueries({ queryKey: keys.settings });
   };
 }
 

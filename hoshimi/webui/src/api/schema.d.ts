@@ -866,8 +866,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
+        /** Get Provider Account */
+        get: operations["get_provider_account"];
+        /**
+         * Update Provider Account
+         * @description Validate before writing, preserving the selected ID and unrelated accounts.
+         */
+        put: operations["update_provider_account"];
         post?: never;
         /**
          * Delete Provider Account
@@ -1218,6 +1223,17 @@ export interface components {
             provider: string;
         };
         /**
+         * AccountDetail
+         * @description The actual saved values, fetched only when opening an account editor.
+         */
+        AccountDetail: {
+            /** Account */
+            account: {
+                [key: string]: unknown;
+            };
+            form: components["schemas"]["CredentialFormView"];
+        };
+        /**
          * AccountRemoval
          * @description What "forget" removed: the pool always, the config file when the account was in it.
          */
@@ -1540,6 +1556,8 @@ export interface components {
              * @default 0
              */
             cooled_seconds: number;
+            /** Edit Mode */
+            edit_mode: ("config" | "login") | null;
             /** Expires At */
             expires_at: number | null;
             /**
@@ -2986,9 +3004,11 @@ export interface components {
         };
         /**
          * StartRequest
-         * @description Which station to sign into; there is nothing else to a login start.
+         * @description The station and, for re-login, the existing account to replace on success.
          */
         StartRequest: {
+            /** Account Id */
+            account_id?: string | null;
             /** Provider */
             provider: string;
         };
@@ -5677,6 +5697,146 @@ export interface operations {
             header?: never;
             path: {
                 provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountSubmission"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountAddition"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_provider_account: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountDetail"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_provider_account: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+                account_id: string;
             };
             cookie?: never;
         };

@@ -6,17 +6,17 @@ import copy
 from dataclasses import asdict
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Response
 from pydantic import Field
 
 from hoshimi.api.deps import ServicesDep
 from hoshimi.api.errors import ERROR_RESPONSES
 from hoshimi.core.config import ProviderConfig, save_settings
-from hoshimi.core.errors import ConflictError, NotFoundError
+from hoshimi.core.errors import ConflictError, NotFoundError, ValidationError
 from hoshimi.core.login import login_providers
 from hoshimi.core.net.client import NetworkClient
 from hoshimi.core.presets import PRESETS
-from hoshimi.core.provider_forms import credential_forms
+from hoshimi.core.provider_forms import account_edit_mode, account_form, credential_forms
 from hoshimi.core.providers import PROVIDER_CLASSES, real_account_count
 from hoshimi.core.record import Record
 
@@ -119,6 +119,73 @@ class AccountAddition(Record):
     accounts: int
 
 
+class AccountDetail(Record):
+    """The actual saved values, fetched only when opening an account editor."""
+
+    account: dict[str, Any]
+    form: CredentialFormView
+
+
+def configured_account(provider_id: str, account_id: str, services: ServicesDep) -> dict[str, Any]:
+    cfg = services.settings.providers.get(provider_id)
+    for index, raw in enumerate(cfg.accounts if cfg else []):
+        if _config_account_id(provider_id, raw, index) == account_id:
+            return raw
+    raise NotFoundError(f"No configured account '{account_id}' on provider '{provider_id}'.")
+
+
+@router.get("/providers/{provider_id}/accounts/{account_id}", operation_id="get_provider_account", responses=ERROR_RESPONSES)
+def get_provider_account(provider_id: str, account_id: str, services: ServicesDep, response: Response) -> AccountDetail:
+    raw = configured_account(provider_id, account_id, services)
+    form = account_form(provider_id, raw)
+    response.headers["Cache-Control"] = "no-store"
+    return AccountDetail(account={key: value for key, value in raw.items() if key != "_hoshimi_login"},
+                         form=CredentialFormView(method=form.method, fields=[CredentialFieldView(**asdict(f)) for f in form.fields], defaults=dict(form.defaults)))
+
+
+@router.put("/providers/{provider_id}/accounts/{account_id}", operation_id="update_provider_account", responses=ERROR_RESPONSES)
+def update_provider_account(provider_id: str, account_id: str, submission: AccountSubmission, services: ServicesDep) -> AccountAddition:
+    """Validate before writing, preserving the selected ID and unrelated accounts."""
+    raw = configured_account(provider_id, account_id, services)
+    if account_edit_mode(provider_id, raw, loginable=provider_id in login_providers()) == "login":
+        raise ValidationError("Use re-login to update this account.")
+    form = account_form(provider_id, raw)
+    allowed = {f.key for f in form.fields} | dict(form.defaults).keys()
+    if submission.account.keys() - allowed:
+        raise ValidationError("The account contains fields outside its credential form.")
+    data = {key: value for key, value in raw.items() if key not in allowed}
+    data.update(submission.account)
+    data.update(id=account_id, _hoshimi_login="config")
+    if provider_id in {"qodercli", "qodercli-cn"} and data.get("personal_token") != raw.get("personal_token"):
+        # A newly entered PAT must be exchanged, rather than continuing to use
+        # the old identity's still-valid job token until its expiry.
+        for key in ("access_token", "security_oauth_token", "job_token", "refresh_token", "expires_at", "uid", "user_id", "username", "email"):
+            data.pop(key, None)
+    for field in form.fields:
+        value = data.get(field.key)
+        if field.required and not value:
+            raise ValidationError(f"Field '{field.key}' is required.")
+        if value and field.kind == "select" and value not in field.choices:
+            raise ValidationError(f"Invalid choice for '{field.key}'.")
+        if value and field.kind in {"json", "list"} and not isinstance(value, dict if field.kind == "json" else list):
+            raise ValidationError(f"Invalid value for '{field.key}'.")
+    cls = PROVIDER_CLASSES.get(provider_id)
+    if cls is None:
+        raise NotFoundError(f"No provider '{provider_id}'.")
+    cls.check_account(data)
+    candidate = copy.deepcopy(services.settings)
+    cfg = candidate.providers[provider_id]
+    for index, entry in enumerate(cfg.accounts):
+        if _config_account_id(provider_id, entry, index) == account_id:
+            cfg.accounts[index] = data
+            break
+    save_settings(candidate)
+    services.apply_settings(candidate)
+    if services.refresher is not None:
+        services.refresher.credentials_updated(provider_id, account_id)
+    return AccountAddition(provider=provider_id, account=account_id, accounts=len(cfg.accounts))
+
+
 @router.get("/providers", operation_id="list_providers")
 def list_providers(services: ServicesDep) -> list[ProviderSummary]:
     configured = services.settings.providers
@@ -148,7 +215,7 @@ def list_providers(services: ServicesDep) -> list[ProviderSummary]:
                     id=provider_id,
                     display_name=_declared_display_name(provider_id),
                     accounts=len(cfg.accounts),
-                    account_ids=[str(account.get("id") or "") for account in cfg.accounts],
+                    account_ids=[_config_account_id(provider_id, account, index) for index, account in enumerate(cfg.accounts)],
                     models=0,
                     enabled=False,
                     keyless=_declared_keyless(provider_id),
@@ -186,7 +253,7 @@ def list_providers(services: ServicesDep) -> list[ProviderSummary]:
                 id=provider_id,
                 display_name=_pending_login_display_name(provider_id),
                 accounts=len(cfg.accounts) if cfg else 0,
-                account_ids=[str(account.get("id") or "") for account in cfg.accounts] if cfg else [],
+                account_ids=[_config_account_id(provider_id, account, index) for index, account in enumerate(cfg.accounts)] if cfg else [],
                 models=0,
                 enabled=bool(cfg and cfg.enabled),
                 keyless=bool(cls.keyless if cls else False),
@@ -251,6 +318,7 @@ def add_provider_account(
         raise NotFoundError(f"No provider '{provider_id}'.")
     data = dict(submission.account)
     cls.check_account(data)
+    data["_hoshimi_login"] = "config"
 
     # The whole file is taken, copied, edited and only then written: the running
     # services hold the original, so comparing the two is what tells

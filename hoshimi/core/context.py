@@ -191,6 +191,7 @@ def build_services(settings: Settings | None = None) -> Services:
         )
 
     data_dir = default_data_dir()
+    refresher = Refresher(settings=settings, registry=registry)
     # One connection for every store; each imports (then renames) its old JSON file once.
     db = Database(data_dir / DB_FILE_NAME)
     return Services(
@@ -199,9 +200,9 @@ def build_services(settings: Settings | None = None) -> Services:
         db=db,
         probe=ProbeStore(data_dir / PROBE_FILE_NAME, db=db),
         stats=StatsStore(data_dir / STATS_FILE_NAME, db=db, keep_days=settings.stats_keep_days),
-        refresher=Refresher(settings=settings, registry=registry),
+        refresher=refresher,
         credits=CreditsService(settings=settings, registry=registry, store=CheckinStore(data_dir / CHECKIN_FILE_NAME, db=db)),
-        login=LoginManager(settings=settings, on_persist=rebuild_after_login),
+        login=LoginManager(settings=settings, on_persist=rebuild_after_login, on_account_persist=refresher.credentials_updated),
         updates=UpdateChecker(network=settings.network),
         conversations=ConversationStore(db),
     )

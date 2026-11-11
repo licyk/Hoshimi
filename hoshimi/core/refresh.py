@@ -91,6 +91,13 @@ class Refresher:
     _stop: threading.Event = field(default_factory=threading.Event, repr=False)
     _thread: threading.Thread | None = field(default=None, repr=False)
 
+    def credentials_updated(self, provider_id: str, account_id: str) -> None:
+        """Forget renewal failures belonging to credentials the user replaced."""
+        key = (provider_id, account_id)
+        self.failures.pop(key, None)
+        self.last_error.pop(key, None)
+        self.last_ok.pop(key, None)
+
     # -- the round --------------------------------------------------------- #
     def run_once(self, provider_id: str | None = None, *, force: bool = False) -> list[RefreshResult]:
         """Renew every account that is due (or, with ``force``, every refreshable one)."""

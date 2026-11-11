@@ -28,7 +28,7 @@ from hoshimi.api.routers.settings import NetworkView, network_view
 from hoshimi.api.routers.stats import UsageTotals
 from hoshimi.core.context import Services
 from hoshimi.core.login import login_providers
-from hoshimi.core.provider_forms import credential_forms
+from hoshimi.core.provider_forms import account_edit_mode, credential_forms
 from hoshimi.core.quota import QUOTA
 from hoshimi.core.record import Record
 from hoshimi.core.refresh import account_expiry_ms, is_refreshable
@@ -51,6 +51,7 @@ class ChannelAccount(Record):
     """
 
     id: str
+    edit_mode: Literal["config", "login"] | None = None
     needs_login: bool = False
     refreshable: bool = False
     expires_at: int | None = None
@@ -187,6 +188,10 @@ def _account(
 ) -> ChannelAccount:
     key = f"{provider_id}/{account_id}"
     row = ChannelAccount(id=account_id, usage_today=UsageTotals.model_validate(usage.get(key, {})))
+    cfg = services.settings.providers.get(provider_id)
+    raw = next((raw for index, raw in enumerate(cfg.accounts if cfg else []) if str(raw.get("id") or f"{provider_id}-{index}") == account_id), None)
+    if raw is not None:
+        row.edit_mode = account_edit_mode(provider_id, raw, loginable=provider_id in login_providers())
     if renewal is not None:
         row.needs_login = bool(renewal.get("needs_login"))
         row.refreshable = bool(renewal.get("refreshable"))

@@ -30,9 +30,10 @@ class LoginSessionView(Record):
 
 
 class StartRequest(Record):
-    """Which station to sign into; there is nothing else to a login start."""
+    """The station and, for re-login, the existing account to replace on success."""
 
     provider: str
+    account_id: str | None = None
 
 
 class LoginInput(Record):
@@ -74,7 +75,7 @@ def start_login(body: StartRequest, services: ServicesDep) -> LoginSessionView:
     if services.login is None:
         raise ValidationError("The login service is not available.")
     try:
-        session = services.login.start(body.provider)
+        session = services.login.start(body.provider, account_id=body.account_id)
     except LoginError as exc:
         # An unknown station name is a client mistake; the message names what exists.
         raise ValidationError(str(exc)) from None

@@ -177,6 +177,13 @@ export default {
     context: 'Context',
   },
   channels: {
+    editAccount: 'Edit',
+    editTitle: 'Edit {id}',
+    relogin: 'Sign in again',
+    reloginTitle: 'Sign in again: {id}',
+    reloginHelp: 'The current account stays unchanged until sign-in succeeds.',
+    showSecret: 'Show {field}',
+    hideSecret: 'Hide {field}',
     eacBundledHelp: 'Use Sign in to authorize the bundled EAC relay with GitHub. No relay URL or signing secret is required.',
     eacRelayHelp: 'Custom worker or direct relay URL ending in /v1. GitHub sign-in is for worker relays only.',
     invalidChoice: 'Choose a supported value for {field}.',

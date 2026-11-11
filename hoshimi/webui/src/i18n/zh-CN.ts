@@ -177,6 +177,13 @@ export default {
     context: '上下文',
   },
   channels: {
+    editAccount: '编辑',
+    editTitle: '编辑 {id}',
+    relogin: '重新登录',
+    reloginTitle: '重新登录：{id}',
+    reloginHelp: '登录成功后才会更新此账户；失败或取消将保留原来的信息。',
+    showSecret: '显示{field}',
+    hideSecret: '隐藏{field}',
     eacBundledHelp: '点击登录即可通过 GitHub 授权内置 EAC 中继，无需填写中继地址或签名密钥。',
     eacRelayHelp: '填写以 /v1 结尾的自定义中继地址。GitHub 登录仅适用于 Worker 中继。',
     invalidChoice: '请为{field}选择支持的值。',
