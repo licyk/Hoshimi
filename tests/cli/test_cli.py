@@ -55,6 +55,15 @@ def test_command_tree_snapshot():
 def test_debug_option_everywhere(runner, args):
     result = runner.invoke(get_app(), args)
     assert result.exit_code == 0, result.output
+    assert logging.getLogger(LOGGER_NAME).level == logging.DEBUG
+
+
+def test_omitted_debug_option_preserves_log_level(runner):
+    logger = logging.getLogger(LOGGER_NAME)
+    logger.setLevel(logging.WARNING)
+    result = runner.invoke(get_app(), ["env"])
+    assert result.exit_code == 0, result.output
+    assert logger.level == logging.WARNING
 
 
 def test_help_is_alphabetical(runner):

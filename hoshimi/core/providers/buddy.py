@@ -100,11 +100,11 @@ class BuddyProvider(OpenAiCompatProvider):
     model_family_ua = False
 
     @property
-    def base_url(self) -> str:  # ty: ignore[invalid-property-type-override]
+    def base_url(self) -> str:  # ty: ignore[incompatible-property-override]
         return self.endpoint
 
     @property
-    def chat_path(self) -> str:  # ty: ignore[invalid-property-type-override]
+    def chat_path(self) -> str:  # ty: ignore[incompatible-property-override]
         return "/v2/chat/completions"
 
     def build_headers(self, account: Account, model: str) -> dict[str, str]:

@@ -11,6 +11,7 @@ from typing import Any
 import typer
 from typer import _click
 from typer.core import TyperCommand, TyperGroup, TyperOption
+from typer.main import get_command
 
 from hoshimi.logger import LOGGER_NAME
 
@@ -30,14 +31,18 @@ def _debug_option_callback(ctx: _click.Context, _param: _click.Parameter, value:
 
 def _make_debug_option() -> TyperOption:
     """A ``--debug`` option that can be attached at any level."""
-    return TyperOption(
-        param_decls=["--debug"],
-        is_flag=True,
-        is_eager=True,
-        expose_value=False,
-        help=DEBUG_OPTION_HELP,
-        callback=_debug_option_callback,
-    )
+    # Let Typer derive its internal type metadata from a normal bool option.
+    option_app = typer.Typer(add_completion=False)
+
+    @option_app.command()
+    def options(
+        debug: bool = typer.Option(False, "--debug", is_eager=True, expose_value=False, help=DEBUG_OPTION_HELP, callback=_debug_option_callback),
+    ) -> None:
+        pass
+
+    option = get_command(option_app).params[0]
+    assert isinstance(option, TyperOption)
+    return option
 
 
 def _has_debug_option(params: list[_click.Parameter] | None) -> bool:

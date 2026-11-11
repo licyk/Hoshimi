@@ -159,7 +159,7 @@ MiniMax Agent 的登录通道（Anthropic Messages 协议），与按密钥计�
 
 同样是两个版本，但走官方 Qoder CLI 的路径：带签名的 `agent_chat_generation` 端点，而不是公开的 OpenAI 兼容端点。逻辑完整移植自 `pi-provider-qoder` 插件，包含其客户端伪装。这两个渠道与 `qoder` / `qodercn` 相互独立（凭据、模型表都不通用），可以同时配置。
 
-- **登录**：`hoshimi login qodercli --manual`（或 `qodercli-cn`）打开账号的集成页面并等待粘贴个人访问令牌。令牌在 <https://qoder.com/account/integrations>（国际版）或 <https://qoder.com.cn/account/integrations>（国内版）创建。网页界面中 **登录** 会显示同样的粘贴框，**添加账号 → 个人访问令牌** 则直接保存令牌。导出 `QODER_API_KEY` / `QODER_PERSONAL_ACCESS_TOKEN` / `QODER_PAT`（国内版为 `QODERCN_*`）时，渠道无需交互即可登录。
+- **登录**：`hoshimi login qodercli --manual`（或 `qodercli-cn`）打开账号的集成页面并等待粘贴个人访问令牌。令牌在 [https://qoder.com/account/integrations](https://qoder.com/account/integrations)（国际版）或 [https://qoder.com.cn/account/integrations](https://qoder.com.cn/account/integrations)（国内版）创建。网页界面中 **登录** 会显示同样的粘贴框，**添加账号 → 个人访问令牌** 则直接保存令牌。导出 `QODER_API_KEY` / `QODER_PERSONAL_ACCESS_TOKEN` / `QODER_PAT`（国内版为 `QODERCN_*`）时，渠道无需交互即可登录。
 - **浏览器登录（仅国际版）**：不加 `--manual` 的 `hoshimi login qodercli` 会打开 Qoder 设备授权页并轮询授权结果，同一会话仍可粘贴 PAT，两者先到先用。国内版没有设备流程。浏览器凭据不含 PAT，因此续期走 `{center}/algo/api/v3/user/refresh_token`，而不是重新交换。
 - **令牌交换**：`pt-…` 不是 API 凭据。适配器在 `{openApi}/api/v1/jobToken/exchange` 用它换取作业令牌（`jt-…`，一天有效）和作业刷新令牌，再从 `/api/v1/userinfo` 读取账号身份，续期时重新交换。PAT 会保留在账号里以便重复交换；站点拒绝 PAT 时账号退出轮换，直到重新登录。
 - **请求签名**：目录与对话请求都带 `Authorization: Bearer COSY.<payload>.<sig>`。payload 用 AES-128-CBC（密钥同时作为 IV）加密身份，AES 密钥再经 RSA 加密；签名是对 payload、密钥、时间戳、实际发送的编码正文与签名路径的 MD5。请求头声明 CLI 客户端身份（`Cosy-Clienttype: 5`、机器 id/类型/OS、`Cosy-Data-Policy: disagree`、`Login-Version: v2`）。客户端版本跟随 Qoder CLI 最新发布（每天检查一次，缓存在数据目录），因为网关会给版本落后的客户端返回精简的模型表。
