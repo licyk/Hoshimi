@@ -11,7 +11,7 @@ Hoshimi treats each upstream service as a **channel** (called a provider in code
 | Kind | Example channel IDs | Where accounts come from | See |
 | --- | --- | --- | --- |
 | Anonymous lanes | `opencode`, `kilo` | None needed; on by default | [Anonymous lanes](/docs/providers-anonymous) |
-| Free stations and subscription logins | `cline`, `gemini`, `zcode`, `minimax`, `trae`, `qoder`, `qodercn`, `buddy`, `workbuddy`, `codearts`, `loomy`, `raccoon`, `lobsterai`, `codex`, `eac`, `zhipu` | Browser or device-code sign-in (`zhipu` uses an API key) | [Free stations](/docs/providers-stations) |
+| Free stations and subscription logins | `cline`, `gemini`, `zcode`, `minimax`, `trae`, `qoder`, `qodercn`, `qodercli`, `qodercli-cn`, `buddy`, `workbuddy`, `codearts`, `loomy`, `raccoon`, `lobsterai`, `codex`, `eac`, `zhipu` | Browser, device-code or token sign-in (`zhipu` uses an API key; `qodercli` a Personal Access Token) | [Free stations](/docs/providers-stations) |
 | Generic compatible lane | `agg` | Your own base URL or one of 22 presets, plus an API key | [The agg aggregator](/docs/providers-agg) |
 | Cloud platforms and special protocols | `azure`, `cloudflare-workers-ai`, `cloudflare-ai-gateway`, `google`, `google-vertex`, `amazon-bedrock`, `radius`, `typesafe` | Platform keys, Google or AWS credentials | [Cloud platforms](/docs/providers-cloud) |
 | NVIDIA NIM | `nvidia` | API key | [NVIDIA NIM](/docs/providers-nvidia) |
@@ -95,7 +95,7 @@ Account tokens and keys are stored in plain text in `config.json`. Do not commit
 Clients name the model in the request's `model` field:
 
 - `channel/model` (for example `opencode/big-pickle` or `nvidia/<model-id>`) goes straight to that channel.
-- A bare model ID goes to the first channel that lists it, in this fixed order: `cline`, `opencode`, `kilo`, `gemini`, `zcode`, `minimax`, `trae`, `qoder`, `qodercn`, `buddy`, `workbuddy`, `codearts`, `loomy`, `raccoon`, `lobsterai`, `eac`, `agg`, `zhipu`, `nvidia`, then every other channel.
+- A bare model ID goes to the first channel that lists it, in this fixed order: `cline`, `opencode`, `kilo`, `gemini`, `zcode`, `minimax`, `trae`, `qoder`, `qodercn`, `qodercli`, `qodercli-cn`, `buddy`, `workbuddy`, `codearts`, `loomy`, `raccoon`, `lobsterai`, `eac`, `agg`, `zhipu`, `nvidia`, then every other channel.
 - When only one channel is enabled, an unknown ID is passed to it unchanged.
 
 `GET /v1/models` lists each ID once; `owned_by` is the channel that wins by the order above. When the model ID itself contains a `/` (Kilo's `openrouter/free`, for example), add the channel prefix, `kilo/openrouter/free`, so the first segment is not read as a channel name. Client setup is in [Connecting clients](/docs/clients).

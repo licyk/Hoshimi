@@ -7,6 +7,7 @@ pi-free/
 KohakuTerrarium/
 pi/
 free-claude-code/
+pi-provider-qoder/
 
 # 本地凭据（config.example.json 是模板）
 config.json

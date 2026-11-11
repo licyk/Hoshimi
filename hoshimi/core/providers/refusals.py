@@ -113,7 +113,7 @@ def provider_refusal(provider: str, payload: Any, *, status: int | None = None, 
             kind = "concurrency_limited"
         elif codes.intersection({"1005", "1113"}):
             kind, quota, scope = "quota_exhausted", True, "account"
-    elif provider in ("qoder", "qoder-cn"):
+    elif provider in ("qoder", "qoder-cn", "qodercli", "qodercli-cn"):
         if "105" in codes:
             return failure(AuthFailed, 401, "105")
         if "10605" in codes:

@@ -41,6 +41,10 @@ def credential_forms() -> dict[str, tuple[CredentialForm, ...]]:
         ),
         "kilo": (CredentialForm("api_key", (KEY,)),),
         "zhipu": (CredentialForm("api_key", (KEY,)),),
+        # The Qoder CLI lanes take a Personal Access Token, not an API key: the
+        # adapter exchanges it for a job token on first use and on renewal.
+        "qodercli": (CredentialForm("token", (CredentialField("personal_token", "secret", True),)),),
+        "qodercli-cn": (CredentialForm("token", (CredentialField("personal_token", "secret", True),)),),
         "azure": (CredentialForm("api_key", (KEY, CredentialField("resource", required=True), CredentialField("models", "list", True), CredentialField("deployments", "json"))),),
         "cloudflare-workers-ai": (CredentialForm("api_key", (KEY, CredentialField("account_id", required=True), MODELS)),),
         "cloudflare-ai-gateway": (CredentialForm("api_key", (KEY, CredentialField("account_id", required=True), CredentialField("gateway_id", required=True), MODELS)),),

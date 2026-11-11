@@ -152,8 +152,15 @@ const retry = () => props.provider && begin(props.provider);
           </div>
           <span class="type-body-small muted">{{ t('channels.deviceInstructions') }}</span>
         </div>
-        <form v-if="session.waiting_for === 'manual_code' && session.status === 'pending'" class="manual" @submit.prevent="sendCode">
-          <TextField v-model="manualCode" type="password" autocomplete="off" :label="t('channels.manualCode')" :supporting-text="t('channels.manualCodeHelp')" @enter="sendCode" />
+        <form v-if="(session.waiting_for === 'manual_code' || session.waiting_for === 'personal_token') && session.status === 'pending'" class="manual" @submit.prevent="sendCode">
+          <TextField
+            v-model="manualCode"
+            type="password"
+            autocomplete="off"
+            :label="session.waiting_for === 'personal_token' ? t('channels.tokenCode') : t('channels.manualCode')"
+            :supporting-text="session.instructions || t('channels.manualCodeHelp')"
+            @enter="sendCode"
+          />
           <AppButton variant="tonal" :loading="submitting" :disabled="!manualCode.trim()" @click="sendCode">{{ t('channels.submitCode') }}</AppButton>
         </form>
         <p v-if="session.expires_at" class="type-body-small muted">{{ t('channels.loginExpires', { when: new Date(session.expires_at * 1000).toLocaleTimeString() }) }}</p>

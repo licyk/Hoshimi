@@ -50,6 +50,9 @@ STATUS_PENDING = "pending"
 STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
 
+INPUT_STATES = frozenset({"manual_code", "personal_token"})
+"""The waits a pasted answer resolves: a browser code, or a station token."""
+
 
 @dataclass
 class LoginSession:
@@ -99,6 +102,7 @@ def _flows() -> dict[str, LoginFlow]:
     from hoshimi.core.login.minimax import start_minimax_login
     from hoshimi.core.login.provider_oauth import provider_login_flows
     from hoshimi.core.login.qoder import start_qoder_login
+    from hoshimi.core.login.qodercli import start_qodercli_login
     from hoshimi.core.login.raccoon import start_raccoon_login
     from hoshimi.core.login.trae import start_trae_login
     from hoshimi.core.login.zcode import start_zcode_login
@@ -113,6 +117,8 @@ def _flows() -> dict[str, LoginFlow]:
         "zcode": start_zcode_login,
         "qoder": lambda client, report: start_qoder_login(client, report, "qoder"),
         "qodercn": lambda client, report: start_qoder_login(client, report, "qodercn"),
+        "qodercli": lambda client, report: start_qodercli_login(client, report, "qodercli"),
+        "qodercli-cn": lambda client, report: start_qodercli_login(client, report, "qodercli-cn"),
         "gemini": start_gemini_login,
         "trae": start_trae_login,
         "lobsterai": start_lobsterai_login,
@@ -195,8 +201,8 @@ class LoginManager:
 
     def submit(self, session_id: str, value: str) -> None:
         session = self.poll(session_id)
-        if session is None or session.status != STATUS_PENDING or session.waiting_for != "manual_code":
-            raise LoginError("This login is not waiting for an authorization code.")
+        if session is None or session.status != STATUS_PENDING or session.waiting_for not in INPUT_STATES:
+            raise LoginError("This login is not waiting for an authorization code or token.")
         if not value.strip() or len(value) > 16384:
             raise LoginError("Supply a valid authorization code or callback URL.")
         session.inputs.put(value)

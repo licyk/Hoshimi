@@ -11,7 +11,7 @@ Hoshimi 把每个上游服务当作一个**渠道**（代码和配置中称为 p
 | 类别 | 渠道 ID 示例 | 账号怎么来 | 详见 |
 | --- | --- | --- | --- |
 | 匿名入口 | `opencode`、`kilo` | 不需要账号，默认开启 | [匿名入口](/docs/providers-anonymous) |
-| 免费站点与订阅登录 | `cline`、`gemini`、`zcode`、`minimax`、`trae`、`qoder`、`qodercn`、`buddy`、`workbuddy`、`codearts`、`loomy`、`raccoon`、`lobsterai`、`codex`、`eac`、`zhipu` | 浏览器或设备码登录（`zhipu` 用 API 密钥） | [免费站点](/docs/providers-stations) |
+| 免费站点与订阅登录 | `cline`、`gemini`、`zcode`、`minimax`、`trae`、`qoder`、`qodercn`、`qodercli`、`qodercli-cn`、`buddy`、`workbuddy`、`codearts`、`loomy`、`raccoon`、`lobsterai`、`codex`、`eac`、`zhipu` | 浏览器、设备码或令牌登录（`zhipu` 用 API 密钥，`qodercli` 用个人访问令牌） | [免费站点](/docs/providers-stations) |
 | 通用兼容入口 | `agg` | 自填地址或选 22 个预设之一，加 API 密钥 | [聚合入口 agg](/docs/providers-agg) |
 | 云平台与特殊协议 | `azure`、`cloudflare-workers-ai`、`cloudflare-ai-gateway`、`google`、`google-vertex`、`amazon-bedrock`、`radius`、`typesafe` | 平台密钥、Google/AWS 凭据 | [云平台](/docs/providers-cloud) |
 | NVIDIA NIM | `nvidia` | API 密钥 | [NVIDIA NIM](/docs/providers-nvidia) |
@@ -95,7 +95,7 @@ hoshimi providers             # 查看当前渠道和账号数
 客户端在请求的 `model` 字段中指定模型：
 
 - 写成 `渠道/模型`（例如 `opencode/big-pickle`、`nvidia/<model-id>`）会直接交给该渠道。
-- 只写模型 ID 时，网关按固定顺序查找第一个列出该 ID 的渠道：`cline`、`opencode`、`kilo`、`gemini`、`zcode`、`minimax`、`trae`、`qoder`、`qodercn`、`buddy`、`workbuddy`、`codearts`、`loomy`、`raccoon`、`lobsterai`、`eac`、`agg`、`zhipu`、`nvidia`，然后是其他渠道。
+- 只写模型 ID 时，网关按固定顺序查找第一个列出该 ID 的渠道：`cline`、`opencode`、`kilo`、`gemini`、`zcode`、`minimax`、`trae`、`qoder`、`qodercn`、`qodercli`、`qodercli-cn`、`buddy`、`workbuddy`、`codearts`、`loomy`、`raccoon`、`lobsterai`、`eac`、`agg`、`zhipu`、`nvidia`，然后是其他渠道。
 - 只开启了一个渠道时，未知的 ID 也会原样转给它。
 
 `GET /v1/models` 中每个 ID 只出现一次，`owned_by` 是按上述顺序胜出的渠道。模型 ID 本身含有 `/` 时（例如 Kilo 的 `openrouter/free`），建议加上渠道前缀：`kilo/openrouter/free`，避免第一段被当成渠道名。客户端配置见[接入客户端](/docs/clients)。

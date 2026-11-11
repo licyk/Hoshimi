@@ -56,8 +56,9 @@ def login(
             if current.login_url and current.login_url != reported_url:
                 logger.info("Authorize at %s", current.login_url)
                 reported_url = current.login_url
-            if manual and current.waiting_for == "manual_code" and not submitted:
-                value = typer.prompt("Authorization code or callback URL", hide_input=True)
+            if manual and current.waiting_for in ("manual_code", "personal_token") and not submitted:
+                prompt = "Personal Access Token" if current.waiting_for == "personal_token" else "Authorization code or callback URL"
+                value = typer.prompt(prompt, hide_input=True)
                 services.login.submit(current.id, value)
                 submitted = True
             # The URL only exists once the station has issued it, so the browser

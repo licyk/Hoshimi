@@ -51,6 +51,7 @@ On success it prints `Signed into <channel> as <account id>.` and the account is
 | `minimax` | MiniMax Agent (`agent.minimax.cn`) | Device code + PKCE | Yes | Yes | Yes |
 | `trae` | TRAE (China) | Console login, local callback (port 18080 preferred) | Yes | Yes | Yes |
 | `qoder` / `qodercn` | Qoder international / China | Device authorization link, polled | Yes | Yes | Yes |
+| `qodercli` / `qodercli-cn` | Qoder CLI international / China | Personal Access Token (`pt-…`) | Yes | — | Yes |
 | `buddy` / `workbuddy` | Tencent CodeBuddy / WorkBuddy international | External login page, polled | Yes | `buddy` only | Yes |
 | `codearts` | Huawei Cloud CodeArts | Portal login, PKCE + DPoP, local callback | — | Yes | Yes |
 | `loomy` | iFlytek Loomy | WeChat QR on a local page | — | Yes | Yes |
@@ -153,6 +154,22 @@ Alibaba Qoder's international edition (`qoder`, `openapi.qoder.sh`) and China ed
 - **Check-in**: claiming the campaign reward needs the machine token cached by the Qoder desktop client. The adapter looks for `Qoder` (or `Qoder CN`) `/SharedClientCache/cache/machine_token.json` under `%APPDATA%`, `~/Library/Application Support` or `~/.config`; on a machine without Qoder desktop installed, check-in fails. The station refreshes its campaigns at 10:00 UTC+8.
 - **Note**: the official client uses an encrypted WASM inference path; Hoshimi uses the public OpenAI-compatible endpoint, which may answer `503`. Matching headers, models and renewal do not mean inference behaves exactly as in the official client.
 - **Account fields**: `access_token`, `security_oauth_token`, `refresh_token`, `machine_id`.
+
+## Qoder CLI (`qodercli`, `qodercli-cn`)
+
+The same two editions, reached the way the official Qoder CLI reaches them: the signed `agent_chat_generation` endpoint instead of the public OpenAI-compatible one. Ported from the `pi-provider-qoder` extension, including its client impersonation. The lanes are separate from `qoder` / `qodercn` — different credentials, different catalogues — and both can be configured at once.
+
+- **Sign-in**: `hoshimi login qodercli --manual` (or `qodercli-cn`) opens the account's integrations page and asks for a Personal Access Token. Create one at <https://qoder.com/account/integrations> (international) or <https://qoder.com.cn/account/integrations> (China). In the web UI, **Sign in** shows the same paste field, and **Add account → Personal Access Token** files the token directly. A token exported as `QODER_API_KEY` / `QODER_PERSONAL_ACCESS_TOKEN` / `QODER_PAT` (or the `QODERCN_*` equivalents) signs the lane in without a prompt.
+- **Browser login (international only)**: `hoshimi login qodercli` without `--manual` opens Qoder's device authorization page and polls for the approval, while the same session still accepts a pasted PAT — whichever answers first wins. The China edition has no device flow. A browser credential carries no PAT, so it renews against `{center}/algo/api/v3/user/refresh_token` instead of re-exchanging.
+- **Token exchange**: a `pt-…` token is not an API credential. The adapter exchanges it at `{openApi}/api/v1/jobToken/exchange` for a job token (`jt-…`, one day) plus a job refresh token, reads the account identity from `/api/v1/userinfo`, and re-exchanges on renewal. The PAT stays in the account so renewal can repeat the exchange; a PAT the station refuses takes the account out of rotation until a human signs in again.
+- **Request signing**: every catalogue and chat request carries `Authorization: Bearer COSY.<payload>.<sig>`. The payload encrypts the identity (AES-128-CBC, key reused as IV) under an RSA-encrypted key, and the signature is an MD5 over payload, key, timestamp, the exact encoded body and the signed path. The header set declares a CLI client (`Cosy-Clienttype: 5`, machine id/type/OS, `Cosy-Data-Policy: disagree`, `Login-Version: v2`). The client version follows the latest Qoder CLI release (checked once a day, cached in the data directory), because the gateway serves a reduced catalogue to clients that lag behind.
+- **Body encoding**: chat bodies use Qoder's custom Base64 (`Encode=1`) — substituted alphabet, `$` padding, and the three blocks rotated. `region/endpoints` answers in the same encoding.
+- **Nodes**: chat is routed to the account's `dataNodeMap.remote_agent` node, which is what the CLI uses; the catalogue stays on the inference node. The resolved node is cached for an hour. A `403 code 110 "Billing daily count exceeded"` is counted per node, so the adapter rotates through the remaining candidates and remembers whichever node served the request.
+- **Models**: discovered live from `algo/api/v2/model/list`. The public ID is the catalogue's `display_name` without whitespace (`Auto`, `Qwen3.8-Max`, `DeepSeek-V4-Pro`, …); the upstream key (`auto`, `qmodel_38max`, `dmodel`) travels only inside the request. Context is the largest advertised option (often 1M), output is 131072, and each model's own thinking menu comes from its `thinking_config`. Static fallbacks differ per edition.
+- **Thinking**: the level rides in the envelope's `parameters` (`enable_thinking`, and `reasoning_effort` for effort-based models). Off takes both signals; a model with no `disabled` branch is sent the switch alone, because it rejects `reasoning_effort: "none"`. Leaked `<thinking>` tags and DSML tool-call markup are stripped, and a turn that produced nothing but markup is reported as a retryable error instead of a finished task.
+- **Busy models**: `10605` with `serviceAvailable` is the scheduler's answer. A ready request is re-sent after the hinted delay (bounded, with a fresh `request_id`); a genuinely queued one is returned as a rate limit carrying the wait, so the caller can schedule it.
+- **Credits**: request-level `usage.credits`, `original_credits` and `billable` are preserved, and `charged_credits` is zero for a non-billable call. **Balance** reads the account-wide period quota (personal, add-on and organization buckets); there is no daily check-in on this path.
+- **Account fields**: `personal_token`, `access_token`, `security_oauth_token`, `refresh_token`, `uid` / `user_id`, `nickname`, `email`, `machine_id`, `expires_at`.
 
 ## CodeBuddy / WorkBuddy (`buddy`, `workbuddy`)
 
@@ -268,9 +285,9 @@ Two timers are switched in **Settings**: **Credential renewal** (`server.auto_re
 
 | Capability | Channels |
 | --- | --- |
-| Renewal | `cline`, `gemini`, `minimax`, `trae`, `qoder`, `qodercn`, `buddy`, `workbuddy`, `raccoon`, `lobsterai`, `codex` |
+| Renewal | `cline`, `gemini`, `minimax`, `trae`, `qoder`, `qodercn`, `qodercli`, `qodercli-cn`, `buddy`, `workbuddy`, `raccoon`, `lobsterai`, `codex` |
 | Daily check-in | `minimax`, `trae`, `qoder`, `qodercn`, `buddy`, `codearts`, `loomy`, `lobsterai` |
-| Balance | `cline`, `gemini` (quota windows), `minimax`, `trae`, `qoder`, `qodercn`, `buddy`, `workbuddy`, `codearts`, `loomy`, `raccoon`, `lobsterai` |
+| Balance | `cline`, `gemini` (quota windows), `minimax`, `trae`, `qoder`, `qodercn`, `qodercli`, `qodercli-cn`, `buddy`, `workbuddy`, `codearts`, `loomy`, `raccoon`, `lobsterai` |
 
 The related routes are in the [management API](/docs/api-management); the UI is described in [Channels](/docs/guide-channels).
 

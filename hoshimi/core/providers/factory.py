@@ -25,6 +25,7 @@ from hoshimi.core.providers.minimax import MinimaxProvider
 from hoshimi.core.providers.nvidia import NvidiaProvider
 from hoshimi.core.providers.opencode import OpencodeProvider
 from hoshimi.core.providers.qoder import QoderCnProvider, QoderProvider
+from hoshimi.core.providers.qodercli import QoderCliCnProvider, QoderCliProvider
 from hoshimi.core.providers.raccoon import RaccoonProvider
 from hoshimi.core.providers.radius import RadiusProvider
 from hoshimi.core.providers.trae import TraeProvider
@@ -42,6 +43,8 @@ PROVIDER_CLASSES: dict[str, type[Provider]] = {
         LobsteraiProvider,
         QoderProvider,
         QoderCnProvider,
+        QoderCliProvider,
+        QoderCliCnProvider,
         TraeProvider,
         ClineProvider,
         LoomyProvider,
@@ -75,6 +78,8 @@ PROVIDER_ORDER = [
     "trae",
     "qoder",
     "qodercn",
+    "qodercli",
+    "qodercli-cn",
     "buddy",
     "workbuddy",
     "codearts",

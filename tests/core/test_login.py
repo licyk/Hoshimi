@@ -1003,5 +1003,5 @@ def test_manager_rejects_an_unknown_station(tmp_path: Any) -> None:
 
 
 def test_every_registered_flow_imports() -> None:
-    assert set(login_providers()) == {"buddy", "cline", "codearts", "codex", "eac", "gemini", "kilo", "lobsterai", "loomy", "minimax", "qoder", "qodercn", "raccoon", "trae", "workbuddy", "zcode",
+    assert set(login_providers()) == {"buddy", "cline", "codearts", "codex", "eac", "gemini", "kilo", "lobsterai", "loomy", "minimax", "qoder", "qodercn", "qodercli", "qodercli-cn", "raccoon", "trae", "workbuddy", "zcode",
                                      "anthropic", "github-copilot", "kimi-coding", "meta", "openai", "openrouter", "radius", "xai"}
