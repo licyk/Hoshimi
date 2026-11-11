@@ -27,6 +27,12 @@ function onInput(event: Event) {
   const value = (event.target as HTMLInputElement).value;
   model.value = typeof model.value === 'number' && value !== '' ? Number(value) : value;
 }
+
+function onEnter(event: KeyboardEvent) {
+  // The shadow input is retargeted to the field host. Slotted buttons keep
+  // their own target: activating one must not act like Enter in the input.
+  if (event.target === event.currentTarget) emit('enter');
+}
 </script>
 
 <template>
@@ -46,10 +52,10 @@ function onInput(event: Event) {
     :rows="type === 'textarea' ? rows : undefined"
     @input="onInput"
     @change="emit('change', ($event.target as HTMLInputElement).value)"
-    @keydown.enter="emit('enter')"
+    @keydown.enter="onEnter"
   >
     <AppIcon v-if="icon" slot="leading-icon" :icon="icon" :size="20" />
-    <slot name="trailing" />
+    <span v-if="$slots.trailing" slot="trailing-icon" class="trailing"><slot name="trailing" /></span>
   </md-outlined-text-field>
 </template>
 
@@ -62,4 +68,5 @@ function onInput(event: Event) {
   /* An example, not a value: the outline tone keeps it well apart from typed text (on-surface). */
   --md-outlined-text-field-input-text-placeholder-color: var(--md-sys-color-outline);
 }
+.trailing { display: inline-flex; align-items: center; justify-content: center; }
 </style>

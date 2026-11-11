@@ -6,7 +6,7 @@ import AppIcon from '@/ui/AppIcon.vue';
 import Badge from '@/ui/Badge.vue';
 
 /** ``href`` makes it a link, opened in a new tab (the documentation, say). */
-withDefaults(defineProps<{ icon: Component; label: string; tonal?: boolean; disabled?: boolean; badge?: number | string | null; spin?: boolean; href?: string }>(), { badge: null, href: '' });
+withDefaults(defineProps<{ icon: Component; label: string; tonal?: boolean; disabled?: boolean; badge?: number | string | null; spin?: boolean; href?: string; type?: 'button' | 'submit' | 'reset'; pressed?: boolean }>(), { badge: null, href: '', type: 'button', pressed: undefined });
 defineEmits<{ click: [MouseEvent] }>();
 </script>
 
@@ -14,10 +14,12 @@ defineEmits<{ click: [MouseEvent] }>();
   <span class="icon-button-wrap" :title="label">
     <component
       :is="tonal ? 'md-filled-tonal-icon-button' : 'md-icon-button'"
+      :type.prop="type"
       :disabled.prop="disabled"
       :href.prop="href"
       :target.prop="href ? '_blank' : ''"
       :aria-label="label"
+      :aria-pressed="pressed"
       @click="$emit('click', $event)"
     >
       <AppIcon :icon="icon" :size="24" :spin="spin" />

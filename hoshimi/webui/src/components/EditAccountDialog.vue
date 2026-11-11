@@ -90,14 +90,15 @@ function submit() {
       <template v-for="field in form?.fields ?? []" :key="field.key">
         <SelectField v-if="field.kind === 'select'" v-model="values[field.key]" :label="label(field.key)" :disabled="update.isPending.value"
           :options="(field.choices ?? []).map((value) => ({ value, label: t(`channels.protocols.${value}`) }))" />
-        <div v-else class="field-row">
-          <TextField v-model="values[field.key]" :label="label(field.key)" autocomplete="off" :disabled="update.isPending.value"
-            :type="secret(field) && !revealed[field.key] ? 'password' : field.kind === 'json' ? 'textarea' : 'text'"
-            :supporting-text="field.kind === 'list' ? t('channels.modelListHelp') : undefined" />
-          <IconButton v-if="secret(field)" :icon="revealed[field.key] ? icons.EyeOff : icons.Eye"
-            :label="t(revealed[field.key] ? 'channels.hideSecret' : 'channels.showSecret', { field: label(field.key) })"
-            :aria-pressed="!!revealed[field.key]" @click="revealed[field.key] = !revealed[field.key]" />
-        </div>
+        <TextField v-else v-model="values[field.key]" :label="label(field.key)" autocomplete="off" :disabled="update.isPending.value"
+          :type="secret(field) && !revealed[field.key] ? 'password' : field.kind === 'json' ? 'textarea' : 'text'"
+          :supporting-text="field.kind === 'list' ? t('channels.modelListHelp') : undefined">
+          <template v-if="secret(field)" #trailing>
+            <IconButton :icon="revealed[field.key] ? icons.EyeOff : icons.Eye" :disabled="update.isPending.value"
+              :label="t(revealed[field.key] ? 'channels.hideSecret' : 'channels.showSecret', { field: label(field.key) })"
+              :pressed="!!revealed[field.key]" @click="revealed[field.key] = !revealed[field.key]" />
+          </template>
+        </TextField>
       </template>
       <ErrorNotice v-if="error" :message="error" announcement="assertive">
         <template v-if="!form" #actions><AppButton variant="text" @click="load">{{ t('common.retry') }}</AppButton></template>
@@ -112,8 +113,5 @@ function submit() {
 
 <style scoped>
 .edit-account { display: flex; flex-direction: column; gap: var(--app-space-3); }
-.field-row { display: flex; align-items: flex-start; gap: var(--app-space-2); }
-.field-row > :first-child { flex: 1; min-width: 0; }
-.field-row > :last-child:not(:first-child) { margin-top: var(--app-space-2); }
 p { margin: 0; }
 </style>
