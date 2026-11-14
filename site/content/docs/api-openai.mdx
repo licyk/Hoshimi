@@ -186,6 +186,8 @@ Hoshimi 的 Responses 是无状态的：请求被转换成 Chat Completions，�
 
 `GET /v1/models`
 
+响应结构示例（省略能力字段）：
+
 ```json
 {
   "object": "list",
@@ -201,10 +203,15 @@ Hoshimi 的 Responses 是无状态的：请求被转换成 Chat Completions，�
 | `owned_by` | 提供这个模型的渠道 id |
 | `free` | 站点声明调用免费时为 `true`，声明收费时为 `false`，没有说明时为 `null`（大多数情况） |
 | `display_name` | 显示名称；不知道时与 `id` 相同 |
+| `vision`、`reasoning`、`tools` | 能否看图、是否支持思考、能否调用工具（`tools` 为 `null` 表示未知） |
+| `context_window`、`max_output` | 上下文长度和最大输出，单位为 token |
+| `can_disable_thinking` | 能否关闭思考 |
+| `efforts`、`effort_default` | 思考档位（`id`、`name`、`description`、`is_default`、`tokens`）和默认档位 |
+| `wire`、`region_sensitive` | 上游协议、可用性是否受地区影响 |
 
 查询参数 `limit`（1–1000）返回前 `limit` 个模型，并把等待各渠道刷新目录的时间限制在 2 秒以内：响应慢的渠道先用缓存、配置或内置的模型 id，刷新在后台继续。Claude Code 的模型发现使用 `?limit=1000`。不带 `limit` 时返回完整目录。
 
-模型的能力（视觉、推理、工具、上下文长度、推理选项）不在这里，见管理接口的 `GET /api/v1/models`（[管理 API](/docs/api-management)）。
+能力字段与 `GET /api/v1/models` 和 `GET /api/v1/catalog/stream` 共用同一套定义和转换逻辑（[管理 API](/docs/api-management)）。这些是 OpenAI 格式之外的扩展字段。尚未取得模型元数据时使用默认值：`vision`、`reasoning` 为 `false`，`context_window` 为 `131072`，`max_output` 为 `32768`；默认值不代表上游确认的能力。带 `limit` 的请求可能先返回这些默认值，目录刷新完成后再返回已知元数据。
 
 ## 模型路由
 

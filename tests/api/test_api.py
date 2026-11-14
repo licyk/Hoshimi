@@ -7,6 +7,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from hoshimi.core.catalog import ModelSpec
 from hoshimi.core.chunks import aggregate_chat, emit_chat_chunks
 from tests.conftest import FakeProvider, make_services
 
@@ -490,6 +493,55 @@ def test_the_free_mark_reaches_both_catalogues(client: Any) -> None:
     rows = {row["id"]: row for row in client.get("/api/v1/models").json()["data"]}
     assert rows["fake-1"]["free"] is True
     assert rows["fake-2"]["free"] is None
+
+
+@pytest.mark.parametrize("query", ["", "?limit=1"])
+def test_openai_models_share_catalog_capabilities(client: Any, services: Any, monkeypatch: pytest.MonkeyPatch, query: str) -> None:
+    spec = ModelSpec(
+        id="fake-1", provider="fake", name="Vision Thinker", wire="messages",
+        vision=True, reasoning=True, tools=True, context_window=200000, max_output=64000,
+        can_disable_thinking=False, region_sensitive=True, free=True,
+        efforts=("low", "high"), effort_default="high",
+    )
+    monkeypatch.setattr(services.registry.providers["fake"], "specs", lambda: {spec.id: spec})
+    catalog = client.get("/api/v1/models").json()["data"][0]
+    response = client.get(f"/v1/models{query}")
+    assert response.status_code == 200
+    assert response.json()["object"] == "list"
+    row = response.json()["data"][0]
+    assert row["id"] == "fake-1"
+    assert row["object"] == "model"
+    assert row["created"] == 0
+    assert row["owned_by"] == "fake"
+    assert row["display_name"] == "Vision Thinker"
+    for key in ("wire", "vision", "reasoning", "tools", "context_window", "max_output", "can_disable_thinking",
+                "region_sensitive", "free", "efforts", "effort_default"):
+        assert row[key] == catalog[key]
+    assert row["vision"] is True and row["reasoning"] is True
+    assert row["context_window"] == 200000
+    assert [option["id"] for option in row["efforts"]] == ["low", "high"]
+    assert row["effort_default"] == "high"
+    if query:
+        assert len(response.json()["data"]) == 1
+
+
+def test_limited_models_without_cached_specs_keep_defaults(client: Any, services: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(services.registry, "quick_models", lambda: [("unknown", "fake", None)])
+
+    def unexpected_catalog():
+        pytest.fail("Limited discovery must not wait for the full capability catalogue")
+
+    monkeypatch.setattr(services.registry, "catalog", unexpected_catalog)
+    response = client.get("/v1/models?limit=1")
+    assert response.status_code == 200
+    row = response.json()["data"][0]
+    assert row["id"] == row["display_name"] == "unknown"
+    assert row["owned_by"] == "fake"
+    assert row["vision"] is False and row["reasoning"] is False
+    assert row["context_window"] == 131072
+    assert row["max_output"] == 32768
+    assert row["tools"] is None and row["free"] is None
+    assert row["efforts"] == [] and row["effort_default"] is None
 
 
 def test_a_banned_model_stays_listed_and_is_flagged(client: Any, services: Any) -> None:

@@ -12,42 +12,21 @@ from fastapi.responses import StreamingResponse
 from pydantic import Field
 
 from hoshimi.api.deps import ServicesDep
+from hoshimi.api.model_metadata import EffortOption, ModelCapabilities, model_capabilities
 from hoshimi.api.routers.probe import ProbeState
 from hoshimi.api.routers.providers import NetworkDiagnostic
 from hoshimi.core.catalog import ModelSpec
-from hoshimi.core.effort import LEVELS, efforts_for
+from hoshimi.core.effort import LEVELS
 from hoshimi.core.record import Record
 
 router = APIRouter(prefix="/v1", tags=["models"])
 CATALOG_TIMEOUT_SECONDS = 20.0
 
 
-class EffortOption(Record):
-    id: str
-    name: str
-    description: str = ""
-    is_default: bool = False
-    tokens: int | None = None
-
-
-class ModelSpecObject(Record):
+class ModelSpecObject(ModelCapabilities):
     id: str
     provider: str
     name: str
-    wire: str = "chat"
-    vision: bool = False
-    reasoning: bool = False
-    tools: bool | None = None
-    context_window: int = 0
-    max_output: int = 0
-    can_disable_thinking: bool = True
-    region_sensitive: bool = False
-    # Whether calling this id costs the account anything, per the station that
-    # serves it. None is "the station did not say", which is most ids at most
-    # stations — a price list is not something every gateway publishes.
-    free: bool | None = None
-    efforts: list[EffortOption]
-    effort_default: str | None = None
     # The last availability verdict for this id, when a round has asked about it.
     probe: ProbeState | None = None
     # The gateway's own verdict: the station answered 404/410 for every
@@ -116,23 +95,12 @@ def _levels() -> list[EffortOption]:
 def _model_objects(services, specs: Iterable[ModelSpec]) -> list[ModelSpecObject]:
     data: list[ModelSpecObject] = []
     for spec in specs:
-        options = efforts_for(spec) or []
         data.append(
             ModelSpecObject(
                 id=spec.id,
                 provider=spec.provider,
                 name=spec.name,
-                wire=spec.wire,
-                vision=spec.vision,
-                reasoning=spec.reasoning,
-                tools=spec.tools,
-                context_window=spec.context_window,
-                max_output=spec.max_output,
-                can_disable_thinking=spec.can_disable_thinking,
-                region_sensitive=spec.region_sensitive,
-                free=spec.free,
-                efforts=[EffortOption(**option) for option in options],
-                effort_default=next((option["id"] for option in options if option.get("is_default")), None),
+                **model_capabilities(spec).model_dump(),
                 probe=_probe_state(services, spec.id),
                 unavailable=services.registry.dead_models.is_dead(spec.provider, spec.id),
             )

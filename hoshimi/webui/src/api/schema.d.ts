@@ -725,13 +725,7 @@ export interface paths {
         };
         /**
          * List Models
-         * @description Every advertised id, with the one fact a model id cannot carry.
-         *
-         *     The roster is what each station published; ``free`` is what the station
-         *     said about the price of calling an id there, and it is absent for almost
-         *     everything because almost nothing publishes a price list. A client that
-         *     has no idea what to do with the extra field is the expected case — every
-         *     OpenAI client ignores keys it does not know.
+         * @description Every advertised id, with the management catalogue's model capabilities.
          */
         get: operations["list_playground_models"];
         put?: never;
@@ -1172,13 +1166,7 @@ export interface paths {
         };
         /**
          * List Models
-         * @description Every advertised id, with the one fact a model id cannot carry.
-         *
-         *     The roster is what each station published; ``free`` is what the station
-         *     said about the price of calling an id there, and it is absent for almost
-         *     everything because almost nothing publishes a price list. A client that
-         *     has no idea what to do with the extra field is the expected case — every
-         *     OpenAI client ignores keys it does not know.
+         * @description Every advertised id, with the management catalogue's model capabilities.
          */
         get: operations["list_models"];
         put?: never;
@@ -2477,6 +2465,16 @@ export interface components {
         /** ModelObject */
         ModelObject: {
             /**
+             * Can Disable Thinking
+             * @default true
+             */
+            can_disable_thinking: boolean;
+            /**
+             * Context Window
+             * @default 0
+             */
+            context_window: number;
+            /**
              * Created
              * @default 0
              */
@@ -2486,10 +2484,19 @@ export interface components {
              * @default
              */
             display_name: string;
+            /** Effort Default */
+            effort_default: string | null;
+            /** Efforts */
+            efforts: components["schemas"]["EffortOption"][];
             /** Free */
             free: boolean | null;
             /** Id */
             id: string;
+            /**
+             * Max Output
+             * @default 0
+             */
+            max_output: number;
             /**
              * Object
              * @default model
@@ -2500,6 +2507,28 @@ export interface components {
              * @default
              */
             owned_by: string;
+            /**
+             * Reasoning
+             * @default false
+             */
+            reasoning: boolean;
+            /**
+             * Region Sensitive
+             * @default false
+             */
+            region_sensitive: boolean;
+            /** Tools */
+            tools: boolean | null;
+            /**
+             * Vision
+             * @default false
+             */
+            vision: boolean;
+            /**
+             * Wire
+             * @default chat
+             */
+            wire: string;
         };
         /** ModelSpecList */
         ModelSpecList: {

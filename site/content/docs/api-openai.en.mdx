@@ -186,6 +186,8 @@ Content-part events such as `response.content_part.added` are not sent, so clien
 
 `GET /v1/models`
 
+Response structure (capability fields omitted from this example):
+
 ```json
 {
   "object": "list",
@@ -201,10 +203,15 @@ Content-part events such as `response.content_part.added` are not sent, so clien
 | `owned_by` | The id of the provider that serves it |
 | `free` | `true` when the station says calls are free, `false` when it says they cost, `null` when it says nothing (the usual case) |
 | `display_name` | The display name; equal to `id` when unknown |
+| `vision`, `reasoning`, `tools` | Image input, thinking and tool support (`tools: null` means unknown) |
+| `context_window`, `max_output` | Context capacity and maximum output, in tokens |
+| `can_disable_thinking` | Whether thinking can be disabled |
+| `efforts`, `effort_default` | Thinking levels (`id`, `name`, `description`, `is_default`, `tokens`) and the default level |
+| `wire`, `region_sensitive` | Upstream protocol and whether availability depends on region |
 
 The `limit` query parameter (1–1000) returns the first `limit` models and caps the wait for providers to refresh their catalogues at two seconds: slow providers are represented by cached, configured or built-in ids while the refresh continues in the background. Claude Code's model discovery uses `?limit=1000`. Without `limit`, the full catalogue is returned.
 
-Model capabilities (vision, reasoning, tools, context length, effort options) are not here; see the management endpoint `GET /api/v1/models` in [Management API](/docs/api-management).
+Capability fields share their definitions and conversion logic with `GET /api/v1/models` and `GET /api/v1/catalog/stream` ([Management API](/docs/api-management)). These extend the OpenAI response format. When model metadata is unavailable, defaults apply: `vision` and `reasoning` are `false`, `context_window` is `131072`, and `max_output` is `32768`; defaults are not upstream-confirmed capabilities. Requests with `limit` may initially return these defaults, then return known metadata once catalogue discovery completes.
 
 ## Model routing
 

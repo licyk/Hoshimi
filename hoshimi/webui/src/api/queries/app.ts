@@ -52,7 +52,12 @@ export function useStartProbe() {
   });
 }
 
-export const useModels = () => useCatalog<ModelList>((snapshot) => ({ object: 'list', data: catalogSpecs(snapshot).data.map((s) => ({ id: modelKey(s), object: 'model', created: 0, owned_by: s.provider, free: s.free, display_name: s.name })) }));
+export const useModels = () => useCatalog<ModelList>((snapshot) => ({
+  object: 'list',
+  data: catalogSpecs(snapshot).data.map((s) => ({
+    ...s, id: modelKey(s), object: 'model', created: 0, owned_by: s.provider, display_name: s.name,
+  })),
+}));
 
 export function useUpdateSettings() {
   const qc = useQueryClient();
