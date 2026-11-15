@@ -36,7 +36,7 @@ async function copy() {
       <AppButton variant="text" @click="copy">{{ copied ? t('common.copied') : t('common.copy') }}</AppButton>
       <span v-if="failed" role="status">{{ t('usage.payloadCopyFailed') }}</span>
     </div>
-    <pre tabindex="0" :aria-label="title">{{ text }}</pre>
+    <pre class="app-scroll app-scroll-chain" tabindex="0" :aria-label="title">{{ text }}</pre>
   </details>
 </template>
 
@@ -45,5 +45,5 @@ async function copy() {
 summary { cursor: pointer; overflow-wrap: anywhere; }
 .actions { display: flex; align-items: center; justify-content: flex-end; }
 .partial { color: var(--md-sys-color-error); }
-pre { margin: 0; max-height: 28rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; user-select: text; }
+pre { margin: 0; max-height: 28rem; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; user-select: text; }
 </style>
