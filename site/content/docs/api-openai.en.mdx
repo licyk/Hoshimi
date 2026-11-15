@@ -106,8 +106,8 @@ Hoshimi's Responses is stateless: the request is converted to Chat Completions, 
 | `stream` | Defaults to `true` |
 | `max_output_tokens` | Becomes `max_tokens` |
 | `temperature`, `top_p` | Passed through |
-| `tools` | Only `type: "function"` tools (`name`, `description`, `parameters`); other types are dropped |
-| `tool_choice` | `auto`, `none`, `required`, or `{"type": "function", "name": "…"}` |
+| `tools` | `type: "function"` tools (`name`, `description`, `parameters`) and `type: "custom"` tools (`name`, `description`, `format`); other types are dropped |
+| `tool_choice` | `auto`, `none`, `required`, or a named `function` or `custom` tool |
 | `reasoning.effort` | The effort level |
 | `previous_response_id` | Refused with `400` (`invalid_input`), asking for the whole conversation in `input` |
 | `text.format` (any type other than `text`) | Refused with `400` (`invalid_input`): structured output is not supported |
@@ -123,9 +123,13 @@ Items in an `input` array:
 | `role` `assistant` | An assistant message (text only) |
 | `{"type": "function_call", "call_id", "name", "arguments"}` | An assistant tool call |
 | `{"type": "function_call_output", "call_id", "output"}` | A tool result |
+| `{"type": "custom_tool_call", "call_id", "name", "input"}` | An assistant tool call carrying raw text |
+| `{"type": "custom_tool_call_output", "call_id", "output"}` | A custom tool result |
 | `{"type": "reasoning", …}` | Reasoning data from the previous turn, handed back to the upstream (its `provider_details` when present) |
 
-Put the previous response's `output` items back into `input` unchanged, then append the `function_call_output` items, to carry tool calls and reasoning forward.
+Put the previous response's `output` items back into `input` unchanged, then append the matching `function_call_output` or `custom_tool_call_output` items, to carry tool calls and reasoning forward.
+
+Custom tools such as `apply_patch` travel upstream as functions with a required string field named `input`. Hoshimi unwraps that field into the original raw text on return, including in streaming events. A grammar in `format` is passed as model guidance; the Chat transport does not enforce it with constrained decoding. Custom input is emitted after the complete JSON arguments arrive and decode successfully.
 
 Consecutive assistant text, reasoning and function-call items form one Chat assistant message. In particular, parallel function calls share one `tool_calls` array before their results; a tool result, user message or system message ends that group. This keeps each call paired with its result when the upstream validates Chat history.
 
@@ -166,6 +170,7 @@ Consecutive assistant text, reasoning and function-call items form one Chat assi
 - `reasoning`: present when the model reasoned, with the reasoning text in `summary`; structured reasoning data from the upstream rides along in `provider_details`, and an upstream that itself speaks Responses has its own `reasoning` items passed through.
 - `message`: the answer text. Left out when there are tool calls and no text.
 - `function_call`: one item per tool call, with `call_id`, `name` and `arguments`.
+- `custom_tool_call`: one item per custom tool call, with `call_id`, `name` and the raw `input` string.
 
 ### Stream events
 
@@ -178,6 +183,7 @@ Each event is a `data: {...}` line with a `type` and a `sequence_number` countin
 | `response.reasoning_summary_text.delta` / `.done` | Reasoning text |
 | `response.output_text.delta` / `.done` | Answer text |
 | `response.function_call_arguments.delta` / `.done` | Tool-call arguments |
+| `response.custom_tool_call_input.delta` / `.done` | Raw custom tool input, after unwrapping the upstream function arguments |
 | `response.output_item.done` | An item ends |
 | `response.completed` | The full response object, with `usage` |
 | `response.failed` | The upstream failed; `response.error` says why |

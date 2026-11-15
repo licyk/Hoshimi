@@ -106,8 +106,8 @@ Hoshimi 的 Responses 是无状态的：请求被转换成 Chat Completions，�
 | `stream` | 默认 `true` |
 | `max_output_tokens` | 转为 `max_tokens` |
 | `temperature`、`top_p` | 原样传递 |
-| `tools` | 只接受 `type: "function"` 的工具（`name`、`description`、`parameters`），其他类型被忽略 |
-| `tool_choice` | `auto`、`none`、`required`，或 `{"type": "function", "name": "…"}` |
+| `tools` | 接受 `type: "function"` 工具（`name`、`description`、`parameters`）和 `type: "custom"` 工具（`name`、`description`、`format`），其他类型被忽略 |
+| `tool_choice` | `auto`、`none`、`required` 或指定名称的 `function`、`custom` 工具 |
 | `reasoning.effort` | 推理强度 |
 | `previous_response_id` | 拒绝，`400`（`invalid_input`），提示每次在 `input` 中发送完整对话 |
 | `text.format`（`text` 以外的类型） | 拒绝，`400`（`invalid_input`），结构化输出不受支持 |
@@ -123,9 +123,13 @@ Hoshimi 的 Responses 是无状态的：请求被转换成 Chat Completions，�
 | `role` 为 `assistant` | 助手消息（只取文字） |
 | `{"type": "function_call", "call_id", "name", "arguments"}` | 助手的工具调用 |
 | `{"type": "function_call_output", "call_id", "output"}` | 工具结果 |
+| `{"type": "custom_tool_call", "call_id", "name", "input"}` | 携带原始文本的助手工具调用 |
+| `{"type": "custom_tool_call_output", "call_id", "output"}` | 自定义工具结果 |
 | `{"type": "reasoning", …}` | 上一轮的推理数据，原样交回上游（带 `provider_details` 时用它） |
 
-把上一轮响应的 `output` 项原样放回 `input`，再追加 `function_call_output`，就能延续工具调用和推理。
+把上一轮响应的 `output` 项原样放回 `input`，再追加对应的 `function_call_output` 或 `custom_tool_call_output`，就能延续工具调用和推理。
+
+`apply_patch` 等自定义工具会转换成带有必填字符串字段 `input` 的函数工具发给上游。返回时，Hoshimi 将该字段还原为原始文本，流式事件也采用相同处理。`format` 中的语法作为提示传给模型，Chat 传输不会通过约束解码强制执行该语法。自定义工具的输入会在完整 JSON 参数到达并成功解码后发出。
 
 连续的 assistant 文本、推理和函数调用项会合并为一条 Chat assistant 消息。并行函数调用会放在同一个 `tool_calls` 数组中，后面再接对应的工具结果；工具结果、用户消息或系统消息会结束这一组。这样上游校验 Chat 历史时，每个调用都能与其结果正确配对。
 
@@ -166,6 +170,7 @@ Hoshimi 的 Responses 是无状态的：请求被转换成 Chat Completions，�
 - `reasoning`：模型有推理内容时出现，`summary` 中是推理文字；上游给出了结构化推理数据时附在 `provider_details` 中，上游本身就是 Responses 协议时直接使用上游的 `reasoning` 项。
 - `message`：回答文字。只有工具调用、没有文字时省略。
 - `function_call`：每个工具调用一项，`call_id`、`name`、`arguments`。
+- `custom_tool_call`：每个自定义工具调用一项，包含 `call_id`、`name` 和原始字符串 `input`。
 
 ### 流式事件
 
@@ -178,6 +183,7 @@ Hoshimi 的 Responses 是无状态的：请求被转换成 Chat Completions，�
 | `response.reasoning_summary_text.delta` / `.done` | 推理文字 |
 | `response.output_text.delta` / `.done` | 回答文字 |
 | `response.function_call_arguments.delta` / `.done` | 工具调用参数 |
+| `response.custom_tool_call_input.delta` / `.done` | 从上游函数参数中还原的自定义工具原始输入 |
 | `response.output_item.done` | 一项结束 |
 | `response.completed` | 完整的响应对象，含 `usage` |
 | `response.failed` | 上游失败，`response.error` 中是原因 |

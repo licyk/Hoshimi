@@ -113,3 +113,16 @@ def test_aggregate_chat_propagates_upstream_error() -> None:
                 created=1,
             )
         )
+
+
+@pytest.mark.parametrize("arguments", ['{"input":', '{}', '{"input":42}'])
+def test_custom_tool_invalid_transport_does_not_complete(arguments: str) -> None:
+    from hoshimi.core.chunks import UpstreamStreamFailure
+
+    source = [{"type": "tool_call_start", "id": "patch-1", "name": "apply_patch", "arguments": arguments, "index": 0}]
+    options = {"model": "m", "response_id": "resp_1", "created": 1, "custom_tools": frozenset({"apply_patch"})}
+    events = list(emit_responses_events(source, **options))
+    assert events[-1]["type"] == "response.failed"
+    assert not any(e["type"] in ("response.output_item.done", "response.completed", "response.custom_tool_call_input.delta") for e in events)
+    with pytest.raises(UpstreamStreamFailure):
+        aggregate_responses(source, **options)

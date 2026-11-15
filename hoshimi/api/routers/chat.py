@@ -25,7 +25,7 @@ from hoshimi.core.chunks import (
 from hoshimi.core.context import Services
 from hoshimi.core.errors import HoshimiError, UpstreamError, ValidationError
 from hoshimi.core.net.identity import InferenceIdentity
-from hoshimi.core.translate.responses import ResponsesRequestError, responses_to_chat
+from hoshimi.core.translate.responses import ResponsesRequestError, custom_tool_names, responses_to_chat
 
 router = APIRouter(prefix="/v1", tags=["openai"])
 
@@ -124,14 +124,15 @@ def create_response(
 
     response_id = new_response_id()
     created = int(time.time())
+    custom_tools = custom_tool_names(body.get("tools"))
     chunks = tracked_chunks(services, model, chat_body, origin="responses", stream=stream, identity=InferenceIdentity.from_headers(request.headers))
 
     if not stream:
         try:
-            payload = aggregate_responses(chunks, model=model, response_id=response_id, created=created)
+            payload = aggregate_responses(chunks, model=model, response_id=response_id, created=created, custom_tools=custom_tools)
         except UpstreamStreamFailure as exc:
             raise UpstreamError(str(exc)) from None
         return _finish_non_stream(payload)
 
-    events = emit_responses_events(chunks, model=model, response_id=response_id, created=created)
+    events = emit_responses_events(chunks, model=model, response_id=response_id, created=created, custom_tools=custom_tools)
     return StreamingResponse(_sse(events, kind="responses"), media_type=SSE_MEDIA_TYPE)

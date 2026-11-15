@@ -17,6 +17,7 @@ Normalized chunk shapes (dicts with a "type" key):
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Iterator
 from typing import Any
 from uuid import uuid4
@@ -294,6 +295,7 @@ def _response_output(
     reasoning_parts: list[str],
     tools: dict[int, dict[str, Any]],
     reasoning_details: list[dict[str, Any]] | None = None,
+    custom_tools: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
     native = [item for item in reasoning_details or [] if item.get("type") == "reasoning"]
@@ -322,6 +324,21 @@ def _response_output(
         )
     for slot in sorted(tools):
         entry = tools[slot]
+        if entry["name"] in custom_tools:
+            try:
+                arguments = json.loads(entry["arguments"])
+            except (ValueError, TypeError):
+                raise UpstreamStreamFailure("A custom tool returned invalid JSON input.") from None
+            if not isinstance(arguments, dict) or not isinstance(arguments.get("input"), str):
+                raise UpstreamStreamFailure("A custom tool returned no input string.")
+            output.append({
+                "type": "custom_tool_call",
+                "id": entry["call_id"],
+                "call_id": entry["call_id"],
+                "name": entry["name"],
+                "input": arguments["input"],
+            })
+            continue
         output.append(
             {
                 "type": "function_call",
@@ -341,6 +358,7 @@ def emit_responses_events(
     model: str,
     response_id: str,
     created: int,
+    custom_tools: frozenset[str] = frozenset(),
 ) -> Iterator[dict[str, Any]]:
     """Translate normalized chunks into OpenAI Responses SSE event dicts."""
     content_parts: list[str] = []
@@ -431,17 +449,17 @@ def emit_responses_events(
                 {
                     "output_index": next_index,
                     "item": {
-                        "type": "function_call",
+                        "type": "custom_tool_call" if name in custom_tools else "function_call",
                         "id": call_id,
                         "call_id": call_id,
                         "name": name,
-                        "arguments": "",
+                        **({"input": ""} if name in custom_tools else {"arguments": ""}),
                         "status": "in_progress",
                     },
                 },
             )
             next_index += 1
-            if arguments:
+            if arguments and name not in custom_tools:
                 yield event(
                     "response.function_call_arguments.delta",
                     {"item_id": call_id, "output_index": tool_index_by_slot[slot], "delta": arguments},
@@ -454,6 +472,8 @@ def emit_responses_events(
             if entry is None or not arguments:
                 continue
             entry["arguments"] += arguments
+            if entry["name"] in custom_tools:
+                continue
             yield event(
                 "response.function_call_arguments.delta",
                 {
@@ -483,6 +503,15 @@ def emit_responses_events(
                 },
             )
             return
+
+    try:
+        output = _response_output(response_id, content_parts, reasoning_parts, tools, reasoning_details, custom_tools)
+    except UpstreamStreamFailure as exc:
+        yield event("response.failed", {"response": {
+            **_base_response(response_id, created, model, "failed"),
+            "error": {"code": "upstream_error", "message": str(exc)},
+        }})
+        return
 
     if reasoning_index is not None:
         summary = "".join(reasoning_parts)
@@ -522,9 +551,20 @@ def emit_responses_events(
             },
         )
 
+    custom_outputs = {item["call_id"]: item for item in output if item["type"] == "custom_tool_call"}
     for slot in sorted(tools):
         entry = tools[slot]
         index = tool_index_by_slot.get(slot, 0)
+        if entry["name"] in custom_tools:
+            item = custom_outputs[entry["call_id"]]
+            yield event("response.custom_tool_call_input.delta", {
+                "item_id": entry["call_id"], "output_index": index, "delta": item["input"],
+            })
+            yield event("response.custom_tool_call_input.done", {
+                "item_id": entry["call_id"], "output_index": index, "input": item["input"],
+            })
+            yield event("response.output_item.done", {"output_index": index, "item": item})
+            continue
         yield event(
             "response.function_call_arguments.done",
             {"item_id": entry["call_id"], "output_index": index, "arguments": entry["arguments"]},
@@ -544,7 +584,6 @@ def emit_responses_events(
             },
         )
 
-    output = _response_output(response_id, content_parts, reasoning_parts, tools, reasoning_details)
     final = {
         **_base_response(response_id, created, model, "completed"),
         "output": output,
@@ -559,6 +598,7 @@ def aggregate_responses(
     model: str,
     response_id: str,
     created: int,
+    custom_tools: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Fold normalized chunks into a single Responses object."""
     content_parts, reasoning_parts, tools, usage, _finish, error_message, reasoning_details = _fold_responses(chunks)
@@ -566,6 +606,6 @@ def aggregate_responses(
         raise UpstreamStreamFailure(error_message)
     return {
         **_base_response(response_id, created, model, "completed"),
-        "output": _response_output(response_id, content_parts, reasoning_parts, tools, reasoning_details),
+        "output": _response_output(response_id, content_parts, reasoning_parts, tools, reasoning_details, custom_tools),
         "usage": _responses_usage(usage),
     }

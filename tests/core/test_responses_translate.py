@@ -110,3 +110,16 @@ def test_tools_are_translated() -> None:
     )
     assert body["tools"][0]["type"] == "function"
     assert body["tools"][0]["function"]["name"] == "fn"
+
+
+def test_custom_tool_grammar_is_preserved_as_input_guidance() -> None:
+    grammar = 'start: "*** Begin Patch" /[\\s\\S]*/ "*** End Patch"'
+    body = responses_to_chat({
+        "input": "edit",
+        "tools": [{"type": "custom", "name": "apply_patch", "description": "Edit files.", "format": {"type": "grammar", "syntax": "lark", "definition": grammar}}],
+    })
+    tool = body["tools"][0]["function"]
+    assert tool["name"] == "apply_patch"
+    assert tool["parameters"]["properties"]["input"] == {"type": "string"}
+    assert "Edit files." in tool["description"]
+    assert grammar in tool["description"]

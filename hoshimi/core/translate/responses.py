@@ -70,7 +70,7 @@ def responses_to_chat(body: dict[str, Any]) -> dict[str, Any]:
     tool_choice = body.get("tool_choice")
     if tool_choice in ("auto", "none", "required"):
         chat["tool_choice"] = tool_choice
-    elif _is_object(tool_choice) and tool_choice.get("type") == "function":
+    elif _is_object(tool_choice) and tool_choice.get("type") in ("function", "custom"):
         nested = tool_choice.get("function")
         name = tool_choice.get("name") or (nested.get("name") if _is_object(nested) else None)
         if isinstance(name, str) and name:
@@ -114,7 +114,7 @@ def _convert_input_items(items: list[Any]) -> list[dict[str, Any]]:
                 )
             else:
                 messages.append({"role": "user", "content": _user_content(content)})
-        elif kind == "function_call":
+        elif kind in ("function_call", "custom_tool_call"):
             call_id = item.get("call_id") or item.get("id")
             _append_assistant(
                 messages,
@@ -126,13 +126,14 @@ def _convert_input_items(items: list[Any]) -> list[dict[str, Any]]:
                             "type": "function",
                             "function": {
                                 "name": item.get("name"),
-                                "arguments": item.get("arguments") or "{}",
+                                "arguments": json.dumps({"input": item.get("input", "")}, ensure_ascii=False)
+                                if kind == "custom_tool_call" else item.get("arguments") or "{}",
                             },
                         }
                     ],
                 }
             )
-        elif kind == "function_call_output":
+        elif kind in ("function_call_output", "custom_tool_call_output"):
             messages.append(
                 {
                     "role": "tool",
@@ -192,13 +193,22 @@ def _user_content(content: Any) -> Any:
     return content
 
 
+def custom_tool_names(tools: Any) -> frozenset[str]:
+    """The declared custom tools whose function transport must be unwrapped."""
+    return frozenset(
+        tool["name"] for tool in tools or []
+        if _is_object(tool) and tool.get("type") == "custom"
+        and isinstance(tool.get("name"), str) and tool["name"]
+    )
+
+
 def _convert_responses_tools(tools: Any) -> list[dict[str, Any]]:
-    """Accept function tools (incl. flattened namespace tools); drop the rest."""
+    """Lower function and custom tools to the internal Chat transport."""
     out: list[dict[str, Any]] = []
     for tool in tools or []:
         if not _is_object(tool):
             continue
-        if tool.get("type") != "function":
+        if tool.get("type") not in ("function", "custom"):
             continue
         name = tool.get("name")
         if not isinstance(name, str) or not name:
@@ -213,6 +223,19 @@ def _convert_responses_tools(tools: Any) -> list[dict[str, Any]]:
         }
         if isinstance(tool.get("description"), str):
             entry["function"]["description"] = tool["description"]
+        if tool.get("type") == "custom":
+            entry["function"]["parameters"] = {
+                "type": "object",
+                "properties": {"input": {"type": "string"}},
+                "required": ["input"],
+                "additionalProperties": False,
+            }
+            description = str(tool.get("description") or "")
+            description += "\nTransport adaptation: call this function with a JSON object whose required input string contains the complete raw tool input."
+            format_spec = tool.get("format")
+            if isinstance(format_spec, dict) and format_spec.get("type") == "grammar":
+                description += "\nThe input string must follow this grammar:\n" + str(format_spec.get("definition") or "")
+            entry["function"]["description"] = description
         out.append(entry)
     # Normalize via the shared converter (drops malformed entries).
     return convert_tools(out)
