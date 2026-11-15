@@ -268,6 +268,18 @@ MIGRATIONS: list[str] = [
     """
     UPDATE conversations SET approval = 'workspace' WHERE approval = 'auto';
     """,
+    # 11: full call payloads, loaded separately from the usage list. Delete with their call.
+    """
+    CREATE TABLE call_traces (
+        call_id TEXT PRIMARY KEY,
+        payload BLOB NOT NULL
+    );
+    CREATE INDEX calls_id ON calls(id);
+    CREATE TRIGGER calls_delete_trace AFTER DELETE ON calls
+    BEGIN
+        DELETE FROM call_traces WHERE call_id = OLD.id;
+    END;
+    """,
 ]
 
 

@@ -44,8 +44,8 @@ A few rules:
 - **Routing failures count as failures**: a request that ends before reaching upstream (model not found, every account failed and so on) is still recorded, as a failure.
 - **A client disconnecting is not a failure**: when the caller hangs up mid-answer, the gateway did serve the call, and the record counts as a success.
 - An error frame from the upstream inside a stream is recorded as a failure.
-- Records hold usage and metadata only; prompts and replies are not stored here (Playground conversations are stored separately).
-- Error explanations are kept to one line of at most 160 characters, with anything shaped like a key (`Bearer …`, `sk-…`, random strings of 32 characters or more, and so on) replaced with `***`. An upstream error that carries a status is recorded only as `upstream returned HTTP <status>`, without the upstream's body; error frames inside a stream keep their explanation, shortened and masked by the same rules.
+- Call lists contain usage and metadata only. Full prompts, replies and upstream exchanges are stored separately and loaded through `GET /api/v1/stats/calls/{seq}`; see [Requests and responses](/docs/guide-usage#requests-and-responses). They share call retention and are also deleted by a statistics reset.
+- Error explanations are kept to one line of at most 160 characters, with anything shaped like a key (`Bearer …`, `sk-…`, random strings of 32 characters or more, and so on) replaced with `***`. An upstream error that carries a status is recorded only as `upstream returned HTTP <status>`, without the upstream's body in this summary (the separate payload detail can retain it); error frames inside a stream keep their explanation, shortened and masked by the same rules.
 
 ### Where tokens and cache counts come from
 

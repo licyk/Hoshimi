@@ -54,6 +54,7 @@ curl -H "Authorization: Bearer $ACCESS_KEY" $API/app/meta
 | `GET /stats` | Usage totals for one range |
 | `GET /stats/days` | Every date with usage |
 | `GET /stats/calls` | Individual calls, filtered and paged |
+| `GET /stats/calls/{seq}` | Full captured request and response payloads for one call |
 | `GET /stats/live` | An SSE stream of calls in flight |
 | `DELETE /stats` | Clear the usage statistics |
 | `/playground/*` | See [Playground API](/docs/api-playground) |
@@ -253,6 +254,8 @@ It returns `totals`, `previous` (the equal span just before; for `day` the day b
 | `q` | Case-insensitive search in the model, provider, account, error code, error message and finish reason |
 
 Each record has `seq`, `at`, `model`, `provider`, `account`, `origin`, `effort`, `stream`, `ok`, the token counts, `ttft_ms`, `tps`, `elapsed_ms`, `attempts`, `finish_reason`, `error_code`, `error_message` and more.
+
+`GET /stats/calls/{seq}` returns `{id, trace}`. `trace` contains `client_request`, `client_response`, the pre-conversion `request`, normalized `response` chunks and individual `upstream` exchanges. HTTP body captures include `body`, `encoding` (`utf-8` or `base64`), `bytes` and `complete`; client responses also have `finished`, which indicates capture has ended even when a disconnect leaves `complete=false`. Historical calls return `trace: null`; missing or deleted calls return 404. This endpoint requires the tool access key; a model API key cannot read it. Payloads expire or reset with their calls.
 
 `DELETE /stats` clears every counter and recorded call and returns `{"cleared_at": …}`; calls in flight are still recorded when they finish.
 

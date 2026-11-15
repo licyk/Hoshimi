@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import Field
 
@@ -143,6 +143,19 @@ class CallRecord(Record):
 class CallPage(Record):
     calls: list[CallRecord]
     next: int | None = None
+
+
+class CallPayloads(Record):
+    request: Any = None
+    response: dict[str, Any]
+    client_request: dict[str, Any] | None = None
+    client_response: dict[str, Any] | None = None
+    upstream: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class CallDetail(Record):
+    id: str
+    trace: CallPayloads | None = None
 
 
 class LiveCall(Record):
@@ -317,6 +330,15 @@ def list_stats_calls(
     )
     names = model_names(services)
     return CallPage(calls=[call_record(row, names) for row in rows], next=cursor)
+
+
+@router.get("/stats/calls/{seq}", operation_id="get_stats_call", responses={404: {"description": "Call not found"}})
+def get_stats_call(seq: int, services: ServicesDep) -> CallDetail:
+    """Full captured payloads; historical calls have a null trace. Management authentication applies."""
+    detail = services.stats.call_trace(seq)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Call not found")
+    return CallDetail.model_validate(detail)
 
 
 @router.delete("/stats", operation_id="reset_stats")

@@ -1011,6 +1011,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/stats/calls/{seq}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Stats Call
+         * @description Full captured payloads; historical calls have a null trace. Management authentication applies.
+         */
+        get: operations["get_stats_call"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/stats/days": {
         parameters: {
             query?: never;
@@ -1374,12 +1394,39 @@ export interface components {
             /** Message Id */
             message_id: string;
         };
+        /** CallDetail */
+        CallDetail: {
+            /** Id */
+            id: string;
+            trace: components["schemas"]["CallPayloads"] | null;
+        };
         /** CallPage */
         CallPage: {
             /** Calls */
             calls: components["schemas"]["CallRecord"][];
             /** Next */
             next: number | null;
+        };
+        /** CallPayloads */
+        CallPayloads: {
+            /** Client Request */
+            client_request: {
+                [key: string]: unknown;
+            } | null;
+            /** Client Response */
+            client_response: {
+                [key: string]: unknown;
+            } | null;
+            /** Request */
+            request: unknown;
+            /** Response */
+            response: {
+                [key: string]: unknown;
+            };
+            /** Upstream */
+            upstream: {
+                [key: string]: unknown;
+            }[];
         };
         /**
          * CallRecord
@@ -6285,6 +6332,44 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CallPage"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_stats_call: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                seq: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallDetail"];
+                };
+            };
+            /** @description Call not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

@@ -134,6 +134,7 @@ def _native_response(services: Services, body: dict[str, Any], request: Request,
         return None
     if not count_only:
         turn = services.stats.turn(body["model"], effort=effort, origin="messages", stream=streaming, provider=services.registry.provider_hint(body["model"]))
+        turn.trace.request = body
         opened.append(turn)
         upstream = turn.wrap(upstream)
     try:

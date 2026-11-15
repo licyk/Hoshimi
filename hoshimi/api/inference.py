@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Any
 
+from hoshimi.core.call_trace import json_value
 from hoshimi.core.context import Services
 from hoshimi.core.effort import requested_level, resolve_level
 from hoshimi.core.errors import ValidationError
@@ -43,6 +44,7 @@ def tracked_chunks(
     effort = (resolve_level(level, services.registry.spec(model)) or "") if level else ""
     streaming = bool(body.get("stream", False)) if stream is None else stream
     turn = services.stats.turn(model, effort=effort, origin=origin, stream=streaming, provider=services.registry.provider_hint(model))
+    turn.trace.request = json_value(body)
     try:
         upstream = services.registry.stream(model, body, on_route=turn.routed)
     except BaseException as exc:

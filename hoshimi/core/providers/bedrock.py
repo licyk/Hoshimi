@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 import httpx
 
+from hoshimi.core.call_trace import current_trace, json_value
 from hoshimi.core.errors import ValidationError
 from hoshimi.core.net.sdk import bedrock_config
 from hoshimi.core.providers.base import Account, ProviderError
@@ -177,15 +178,30 @@ class BedrockProvider(KeyedProvider):
                             yield {message.headers.get(":event-type") or message.headers.get(":exception-type"): payload}
                 yield from bedrock_chunks(events())
             return
+        trace = current_trace.get()
+        payload = bedrock_payload(body, model)
+        captured: dict[str, Any] = {"protocol": "aws-sdk", "provider": self.id, "account": account.id,
+                                    "request": json_value(payload), "response": {"events": [], "complete": False}}
+        if trace is not None:
+            captured.update(trace.route)
+            trace.upstream.append(captured)
         try:
             with self._session(boto3, account).client("bedrock-runtime", region_name=self._region(account),
                                                    config=bedrock_config(self.client, "bedrock-runtime", self._region(account))) as sdk:
-                response = sdk.converse_stream(**bedrock_payload(body, model))
+                response = sdk.converse_stream(**payload)
+                captured["response"]["metadata"] = json_value({key: value for key, value in response.items() if key != "stream"})
                 stream = response["stream"]
+                def captured_events() -> Iterator[dict[str, Any]]:
+                    for event in stream:
+                        if trace is not None:
+                            captured["response"]["events"].append(json_value(event))
+                        yield event
+                    captured["response"]["complete"] = True
                 try:
-                    yield from bedrock_chunks(stream)
+                    yield from bedrock_chunks(captured_events())
                 finally:
                     stream.close()
         except ClientError as exc:
+            captured["response"]["error"] = json_value(exc.response)
             status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 502)
             raise_for_status(httpx.Response(status, text=str(exc.response.get("Error", {}))), provider=self.id)

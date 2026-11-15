@@ -12,6 +12,7 @@ from typing import Any, ClassVar
 
 import httpx
 
+from hoshimi.core.call_trace import current_trace
 from hoshimi.core.catalog import ModelSpec, default_spec
 from hoshimi.core.errors import UpstreamError
 from hoshimi.core.failure import AccountCooler, is_recoverable, parse_reset_after
@@ -535,6 +536,9 @@ class Provider(ABC):
                     continue
                 # Consume lazily; quota errors can also surface mid-stream.
                 asked += 1
+                trace = current_trace.get()
+                if trace is not None:
+                    trace.route = {"provider": self.id, "account": account.id, "attempt": asked}
                 revision = account.auth_revision
                 iterator = send(account, model, body)
                 answered = False

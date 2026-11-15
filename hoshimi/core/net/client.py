@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 
+from hoshimi.core.call_trace import TraceTransport
 from hoshimi.core.net.opencode_tls import OpenCodeTransport
 from hoshimi.core.net.policy import NetworkPolicy, parse_policy, proxy_route
 from hoshimi.core.net.profiles import request_operation
@@ -130,7 +131,7 @@ class NetworkClient(httpx.Client):
         self._network_lock = threading.RLock()
         self.login_session = login
         super().__init__(
-            transport=transport or RoutingTransport(self),
+            transport=TraceTransport(transport or RoutingTransport(self), provider),
             timeout=httpx.Timeout(timeout, connect=15.0),
             follow_redirects=False,
             trust_env=False,

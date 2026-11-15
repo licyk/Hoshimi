@@ -57,6 +57,7 @@ import threading
 import time
 import uuid
 import weakref
+import zlib
 from collections import deque
 from collections.abc import Generator, Iterable, Iterator
 from contextlib import contextmanager
@@ -64,6 +65,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from hoshimi.core.call_trace import CallTrace, current_trace, json_value
 from hoshimi.core.db import Database, open_store_database, retire_legacy_file
 from hoshimi.core.errors import HoshimiError, ValidationError
 from hoshimi.core.live import LiveHub, Subscription
@@ -348,6 +350,7 @@ class Turn:
     def __init__(self, store: StatsStore, model: str, *, effort: str = "", origin: str = "chat", stream: bool = False, provider: str = ""):
         self._store = store
         self.id = uuid.uuid4().hex[:16]
+        self.trace = CallTrace(self.id, store.save_trace)
         self._model = model
         self._effort = effort
         self._origin = origin
@@ -405,7 +408,17 @@ class Turn:
 
     def _wrap(self, chunks: Iterable[dict[str, Any]]) -> Iterator[dict[str, Any]]:
         try:
-            for chunk in chunks:
+            iterator = iter(chunks)
+            while True:
+                token = current_trace.set(self.trace)
+                try:
+                    chunk = next(iterator)
+                except StopIteration:
+                    self.trace.complete = True
+                    break
+                finally:
+                    current_trace.reset(token)
+                self.trace.chunks.append(json_value(chunk))
                 if isinstance(chunk, dict):
                     self._observe(chunk)
                 yield chunk
@@ -418,7 +431,11 @@ class Turn:
         finally:
             close = getattr(chunks, "close", None)
             if close is not None:
-                close()
+                token = current_trace.set(self.trace)
+                try:
+                    close()
+                finally:
+                    current_trace.reset(token)
         self.finish()
 
     def fail(self, exc: BaseException | None = None) -> None:
@@ -536,6 +553,7 @@ class Turn:
             error_code="" if self._ok else (self._error_code or "upstream_error"),
             error_message="" if self._ok else self._error_message,
             call_id=self.id,
+            trace_payload=self.trace.pack(),
         )
 
 
@@ -570,6 +588,7 @@ class StatsStore:
         self.keep_days = keep_days
         """Days a recorded call is kept (``server.stats_keep_days``); re-read on every prune."""
         self.live = LiveHub()
+        self._pending_traces: dict[str, bytes] = {}
         self._pending_calls: list[dict[str, Any]] = []
         self._pending_buckets: dict[tuple[str, Any, Identity], dict[str, Any]] = {}
         self._pending_hist: dict[tuple[str, Any, Identity, str, int], int] = {}
@@ -615,6 +634,7 @@ class StatsStore:
         error_code: str = "",
         error_message: str = "",
         call_id: str | None = None,
+        trace_payload: bytes | None = None,
         at: float | None = None,
     ) -> dict[str, Any]:
         """Count one call everywhere it is counted; returns its call row.
@@ -682,6 +702,8 @@ class StatsStore:
                 "no_usage": no_usage,
             }
             self._pending_calls.append(sample)
+            if trace_payload is not None:
+                self._pending_traces[sample["id"]] = trace_payload
             for scope, key in (("h", hour_start(now)), ("d", day_key(now))):
                 _accumulate(self._pending_buckets.setdefault((scope, key, identity), {}), bucket, BUCKET_FIELDS)
                 for kind, index in hist:
@@ -722,6 +744,20 @@ class StatsStore:
         return iso(now)
 
     # -- reading ---------------------------------------------------------- #
+    def save_trace(self, call_id: str, data: bytes) -> None:
+        """Persist payloads only while their call exists (a concurrent reset must stay final)."""
+        with self._lock:
+            self._pending_traces[call_id] = data
+        self._schedule_write()
+
+    def call_trace(self, seq: int) -> dict[str, Any] | None:
+        """None means no such call; a null trace means a historical call without captured bodies."""
+        with self._reading() as conn:
+            row = conn.execute("SELECT calls.id, call_traces.payload FROM calls LEFT JOIN call_traces ON call_traces.call_id = calls.id WHERE calls.seq = ?", (seq,)).fetchone()
+        if row is None:
+            return None
+        return {"id": row["id"], "trace": json.loads(zlib.decompress(row["payload"])) if row["payload"] is not None else None}
+
     def subscribe(self, loop: asyncio.AbstractEventLoop, *, recent: int = 20) -> tuple[Subscription, dict[str, Any]]:
         """Register a live watcher and build its snapshot under one lock.
 
@@ -979,7 +1015,7 @@ class StatsStore:
         """Write the pending batch in one transaction, pruning when it is due. Caller holds the lock."""
         if self._db.closed:
             return
-        if not (self._pending_calls or self._pending_buckets or self._pending_hist or self._pending_lifetime):
+        if not (self._pending_calls or self._pending_traces or self._pending_buckets or self._pending_hist or self._pending_lifetime):
             return
         # Only alongside a write: rows age out no faster than new ones arrive.
         prune = time.monotonic() - self._last_prune >= PRUNE_INTERVAL_SECONDS
@@ -987,6 +1023,8 @@ class StatsStore:
             with self._db.transaction() as conn:
                 if self._pending_calls:
                     _insert_calls(conn, self._pending_calls)
+                conn.executemany("INSERT OR REPLACE INTO call_traces(call_id, payload) SELECT id, ? FROM calls WHERE id = ?",
+                                 [(data, call_id) for call_id, data in self._pending_traces.items()])
                 _upsert_buckets(conn, [(scope, key, identity, row) for (scope, key, identity), row in self._pending_buckets.items()])
                 _upsert_hist(conn, [(scope, key, identity, kind, index, count) for (scope, key, identity, kind, index), count in self._pending_hist.items()])
                 _upsert_lifetime(conn, [(group, name, row) for (group, name), row in self._pending_lifetime.items()])
@@ -1008,6 +1046,7 @@ class StatsStore:
         conn.execute("DELETE FROM usage_hist_hourly WHERE bucket_start < ?", (cutoff,))
 
     def _clear_pending_locked(self) -> None:
+        self._pending_traces = {}
         self._pending_calls = []
         self._pending_buckets = {}
         self._pending_hist = {}

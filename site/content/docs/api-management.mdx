@@ -54,6 +54,7 @@ curl -H "Authorization: Bearer $ACCESS_KEY" $API/app/meta
 | `GET /stats` | 一个时间范围的用量汇总 |
 | `GET /stats/days` | 每个有用量的日期 |
 | `GET /stats/calls` | 逐次调用记录，可筛选、分页 |
+| `GET /stats/calls/{seq}` | 单次调用的完整请求与响应正文 |
 | `GET /stats/live` | 进行中调用的 SSE 实时流 |
 | `DELETE /stats` | 清空用量统计 |
 | `/playground/*` | 见 [Playground API](/docs/api-playground) |
@@ -253,6 +254,8 @@ curl -H "Authorization: Bearer $ACCESS_KEY" "$API/login/poll?session_id=<会话 
 | `q` | 在模型、渠道、账号、错误代码、错误消息、结束原因中不区分大小写地搜索 |
 
 每条记录包括 `seq`、`at`、`model`、`provider`、`account`、`origin`、`effort`、`stream`、`ok`、各类 Token 数、`ttft_ms`、`tps`、`elapsed_ms`、`attempts`、`finish_reason`、`error_code`、`error_message` 等。
+
+`GET /stats/calls/{seq}` 返回 `{id, trace}`。`trace` 包含 `client_request`、`client_response`、渠道转换前的 `request`、标准化分块 `response` 和逐次上游通信 `upstream`。HTTP 正文包含 `body`、`encoding`（`utf-8` 或 `base64`）、`bytes` 与 `complete`；客户端返回另有 `finished` 表示采集已结束，即使连接中断而 `complete=false`。历史调用的 `trace` 为 `null`，不存在或已删除的调用返回 404。该接口需要工具访问密钥，模型 API 密钥不能读取它。正文随记录过期或重置时删除。
 
 `DELETE /stats` 清空所有计数和调用记录，返回 `{"cleared_at": …}`；正在进行的调用结束时仍会被记录。
 

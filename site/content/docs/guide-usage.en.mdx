@@ -105,6 +105,18 @@ Click a row to open **Call details**:
 
 The arrows at the top right of the sheet (or the <kbd>↑</kbd> and <kbd>↓</kbd> keys) step to the **Newer call** and **Older call**.
 
+### Requests and responses
+
+**Requests and responses** at the bottom of the sheet loads full payloads on demand. Expand a section to inspect or copy it:
+
+- **Client HTTP request / response**: method, path, headers, status and JSON or SSE body.
+- **Model input / output**: the input before provider conversion and the normalized output chunks. Background Playground model rounds also record these sections.
+- **Upstream exchange**: the actual provider URL, headers and request body, response status, headers and body. Failures, retries and redirects are separate entries with account and attempt information. The Bedrock SDK path records SDK parameters, metadata and response events.
+
+Credential headers, sensitive query parameters and known transport credentials are masked. SSE preserves event order; binary bodies use base64. Interrupted or unread streams are marked incomplete. Missing upstream captures are explicitly identified; normalized chunks are not presented as raw responses.
+
+Bodies contain conversation content. They are compressed in `hoshimi.db`, share the call retention period, and are deleted when statistics are reset. Calls recorded before this feature have no payloads to recover.
+
 ### What counts as a call, and as a failure
 
 - Each Chat Completions, Responses, Messages, classification and Playground request is one record, however many accounts it went through.

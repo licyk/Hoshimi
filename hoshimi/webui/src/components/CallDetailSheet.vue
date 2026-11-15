@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import type { CallRecord } from '@/api/types';
+import CallPayloads from '@/components/CallPayloads.vue';
 import { duration, grouped, percent, ratio, when } from '@/format';
 import { useI18n } from '@/i18n';
 import { ErrorNotice, Badge, DataList, IconButton, Meter, SideSheet, TRANSITIONS, icons } from '@/ui';
@@ -22,7 +23,7 @@ function step(which: 'newer' | 'older') {
   else emit('older');
 }
 function onKey(e: KeyboardEvent) {
-  if (e.altKey || e.ctrlKey || e.metaKey || (e.target as HTMLElement | null)?.closest('input, textarea, [contenteditable]')) return;
+  if (e.altKey || e.ctrlKey || e.metaKey || (e.target as HTMLElement | null)?.closest('input, textarea, pre, details, [contenteditable]')) return;
   if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
     e.preventDefault();
     step(e.key === 'ArrowUp' ? 'newer' : 'older');
@@ -97,6 +98,7 @@ const uncached = computed(() => (c.value ? Math.max(0, c.value.input - c.value.c
               { label: t('usage.tps'), value: c.tps ?? '—' },
             ]"
           />
+          <CallPayloads v-if="open" :key="c.seq" :seq="c.seq" />
         </div>
       </Transition>
     </div>

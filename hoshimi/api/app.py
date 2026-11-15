@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
+from hoshimi.api.call_trace import CallTraceMiddleware
 from hoshimi.api.errors import install_error_handlers
 from hoshimi.api.routers import app_info, catalog, channels, chat, classification, credits, health, login, messages, models, playground, probe, providers, refresh, settings, stats
 from hoshimi.api.security import SecurityMiddleware
@@ -90,6 +91,8 @@ def create_app(
         app.include_router(module.router, prefix=f"{prefix}/api")
     for module in INFERENCE_ROUTES:
         app.include_router(module.router, prefix=prefix)
+
+    app.add_middleware(CallTraceMiddleware, prefix=prefix)
 
     origins = services.settings.allow_origins
     if origins:

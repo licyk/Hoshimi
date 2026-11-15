@@ -67,6 +67,18 @@ export const useCalls = (filters: Ref<CallFilters>) =>
     placeholderData: keepPreviousData,
   });
 
+/** Payloads are intentionally absent from the history and fetched only for an open detail sheet. */
+export const useCallDetail = (seq: Ref<number | null>) =>
+  useQuery({
+    queryKey: computed(() => [...keys.stats, 'call-detail', seq.value]),
+    enabled: computed(() => seq.value !== null),
+    queryFn: ({ signal }) => unwrap(api.GET('/api/v1/stats/calls/{seq}', { params: { path: { seq: seq.value! } }, signal })),
+    staleTime: 0,
+    gcTime: 0,
+    // A finished usage row can precede the final serialized response by a few frames.
+    refetchInterval: (query) => query.state.data?.trace?.client_response?.finished === false ? 1000 : false,
+  });
+
 /** Forget every counter and call: the report starts again from nothing. */
 export function useResetStats() {
   const qc = useQueryClient();
