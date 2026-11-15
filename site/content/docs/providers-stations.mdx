@@ -165,7 +165,7 @@ MiniMax Agent 的登录通道（Anthropic Messages 协议），与按密钥计�
 - **请求签名**：目录与对话请求都带 `Authorization: Bearer COSY.<payload>.<sig>`。payload 用 AES-128-CBC（密钥同时作为 IV）加密身份，AES 密钥再经 RSA 加密；签名是对 payload、密钥、时间戳、实际发送的编码正文与签名路径的 MD5。请求头声明 CLI 客户端身份（`Cosy-Clienttype: 5`、机器 id/类型/OS、`Cosy-Data-Policy: disagree`、`Login-Version: v2`）。客户端版本跟随 Qoder CLI 最新发布（每天检查一次，缓存在数据目录），因为网关会给版本落后的客户端返回精简的模型表。
 - **正文编码**：对话正文使用 Qoder 自定义 Base64（`Encode=1`）——替换字母表、`$` 补位、三段块重排。`region/endpoints` 的响应也是同一编码。
 - **节点**：对话路由到账号的 `dataNodeMap.remote_agent` 节点（官方 CLI 使用的节点），模型目录仍走推理节点。解析结果缓存一小时。`403 code 110「Billing daily count exceeded」` 按节点计数，因此适配器会轮换其余候选节点，并记住真正服务了请求的那个。
-- **模型**：从 `algo/api/v2/model/list` 实时发现。对外 ID 是目录 `display_name` 去掉空白（`Auto`、`Qwen3.8-Max`、`DeepSeek-V4-Pro` 等），上游 key（`auto`、`qmodel_38max`、`dmodel`）只在请求内部传递。上下文取目录中最大的可选值（常见 1M），输出上限 131072，思考菜单来自各模型自己的 `thinking_config`。两个版本的静态回退表不同。
+- **模型**：从 `algo/api/v2/model/list` 实时发现。对外 ID 是目录 `display_name` 去掉空白（`Auto`、`Qwen3.8-Max`、`DeepSeek-V4-Pro` 等），上游 key（`auto`、`qmodel_38max`、`dmodel`）只在请求内部传递。上下文取目录中最大的可选值（常见 1M），输出上限 131072，思考菜单来自各模型自己的 `thinking_config`。能力查询会先刷新目录，再读取思考菜单，因此发现成功时，首次 `/v1/models` 响应和管理目录就会包含实时的 `efforts` 与 `effort_default` 字段；后续读取复用模型缓存。两个版本的静态回退表不同。
 - **思考**：级别写在信封的 `parameters` 里（`enable_thinking`，effort 型模型另加 `reasoning_effort`）。关闭需要两个信号；没有 `disabled` 分支的模型只发开关，因为它会拒绝 `reasoning_effort: "none"`。泄漏的 `<thinking>` 标签与 DSML 工具调用标记会被清理；只产出标记、没有正文也没有工具调用的回合会作为可重试错误上报，而不是当作已完成。
 - **模型繁忙**：`10605` 且 `serviceAvailable` 是调度器的答复。ready 的请求按提示延时重发（有次数上限，并换新的 `request_id`）；真正排队的请求作为带等待时间的限流返回，交由调用方调度。
 - **Credits**：保留请求级 `usage.credits`、`original_credits`、`billable`，非计费请求的 `charged_credits` 为 0。**余额** 读取账号级周期额度（个人、加量、组织三个桶）；此路径没有每日签到。

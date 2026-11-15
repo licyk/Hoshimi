@@ -217,6 +217,9 @@ class QoderCliProvider(Provider):
         return self.catalog.ids()
 
     def specs(self) -> dict[str, ModelSpec]:
+        # Discovery asks for specs before IDs; refresh the catalogue before
+        # reading its capabilities, including on the first /v1/models call.
+        self.models()
         entries = self.catalog.entries()
         return {model_id: spec_for(entry, self.id) for model_id, entry in entries.items()}
 
