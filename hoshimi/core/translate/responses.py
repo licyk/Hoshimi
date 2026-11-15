@@ -91,7 +91,7 @@ def _convert_input_items(items: list[Any]) -> list[dict[str, Any]]:
         kind = item.get("type")
         if kind == "reasoning":
             details = item.get("provider_details")
-            messages.append({"role": "assistant", "content": "", "reasoning_details": details if isinstance(details, list) else [item]})
+            _append_assistant(messages, {"role": "assistant", "content": "", "reasoning_details": details if isinstance(details, list) else [item]})
         elif kind in (None, "message") or (kind is None and item.get("role")):
             role = item.get("role")
             if role not in ("user", "assistant", "system", "developer"):
@@ -100,7 +100,8 @@ def _convert_input_items(items: list[Any]) -> list[dict[str, Any]]:
             if role in ("system", "developer"):
                 messages.append({"role": "system", "content": _message_text(content)})
             elif role == "assistant":
-                messages.append(
+                _append_assistant(
+                    messages,
                     {
                         "role": "assistant",
                         "content": _message_text(content),
@@ -115,7 +116,8 @@ def _convert_input_items(items: list[Any]) -> list[dict[str, Any]]:
                 messages.append({"role": "user", "content": _user_content(content)})
         elif kind == "function_call":
             call_id = item.get("call_id") or item.get("id")
-            messages.append(
+            _append_assistant(
+                messages,
                 {
                     "role": "assistant",
                     "tool_calls": [
@@ -140,6 +142,22 @@ def _convert_input_items(items: list[Any]) -> list[dict[str, Any]]:
                 }
             )
     return messages
+
+
+def _append_assistant(messages: list[dict[str, Any]], item: dict[str, Any]) -> None:
+    # Responses splits one assistant turn into text, reasoning and individual
+    # calls. Chat requires all its calls in one message before their results.
+    assistant: dict[str, Any]
+    if messages and messages[-1]["role"] == "assistant":
+        assistant = messages[-1]
+    else:
+        assistant = {"role": "assistant"}
+        messages.append(assistant)
+    if "content" in item:
+        assistant["content"] = assistant.get("content", "") + item["content"]
+    for key in ("tool_calls", "reasoning_details"):
+        if key in item:
+            assistant.setdefault(key, []).extend(item[key])
 
 
 def _message_text(content: Any) -> str:

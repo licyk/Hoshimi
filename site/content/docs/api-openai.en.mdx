@@ -127,6 +127,8 @@ Items in an `input` array:
 
 Put the previous response's `output` items back into `input` unchanged, then append the `function_call_output` items, to carry tool calls and reasoning forward.
 
+Consecutive assistant text, reasoning and function-call items form one Chat assistant message. In particular, parallel function calls share one `tool_calls` array before their results; a tool result, user message or system message ends that group. This keeps each call paired with its result when the upstream validates Chat history.
+
 ### Response
 
 ```json
