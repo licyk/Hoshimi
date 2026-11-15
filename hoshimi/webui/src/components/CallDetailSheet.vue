@@ -23,7 +23,7 @@ function step(which: 'newer' | 'older') {
   else emit('older');
 }
 function onKey(e: KeyboardEvent) {
-  if (e.altKey || e.ctrlKey || e.metaKey || (e.target as HTMLElement | null)?.closest('input, textarea, pre, details, [contenteditable]')) return;
+  if (e.altKey || e.ctrlKey || e.metaKey || (e.target as HTMLElement | null)?.closest('input, textarea, pre, [aria-expanded], [role="region"], [contenteditable]')) return;
   if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
     e.preventDefault();
     step(e.key === 'ArrowUp' ? 'newer' : 'older');

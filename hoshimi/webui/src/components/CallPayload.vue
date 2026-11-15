@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
+import RawOutput from '@/components/chat/tools/RawOutput.vue';
 import { useI18n } from '@/i18n';
-import { AppButton } from '@/ui';
+import { AppButton, Badge, ExpansionPanel, Toolbar, icons, useSnackbar } from '@/ui';
 
 const props = defineProps<{ title: string; value: unknown; incomplete?: boolean }>();
 const { t } = useI18n();
-const copied = ref(false);
-const failed = ref(false);
+const snackbar = useSnackbar();
 function format(value: unknown): string {
   if (typeof value === 'string') {
     try { return JSON.stringify(JSON.parse(value), null, 2); } catch { return value; }
@@ -23,27 +23,27 @@ function format(value: unknown): string {
 }
 const text = computed(() => format(props.value));
 async function copy() {
-  copied.value = false;
-  failed.value = false;
-  try { await navigator.clipboard.writeText(text.value); copied.value = true; } catch { failed.value = true; }
+  try {
+    await navigator.clipboard.writeText(text.value);
+    snackbar.show(t('common.copied'));
+  } catch {
+    snackbar.error(t('usage.payloadCopyFailed'));
+  }
 }
 </script>
 
 <template>
-  <details class="payload">
-    <summary class="type-title-small">{{ title }} <span v-if="incomplete" class="partial">{{ t('usage.payloadIncomplete') }}</span></summary>
-    <div class="actions">
-      <AppButton variant="text" @click="copy">{{ copied ? t('common.copied') : t('common.copy') }}</AppButton>
-      <span v-if="failed" role="status">{{ t('usage.payloadCopyFailed') }}</span>
+  <ExpansionPanel :label="title" :icon="icons.FileText">
+    <template #trailing><Badge v-if="incomplete" tone="warning" :value="t('usage.payloadIncomplete')" /></template>
+    <div class="payload-content">
+      <Toolbar>
+        <template #end><AppButton variant="text" :icon="icons.Copy" @click="copy">{{ t('common.copy') }}</AppButton></template>
+      </Toolbar>
+      <RawOutput :text="text" tabindex="0" :aria-label="title" />
     </div>
-    <pre class="app-scroll app-scroll-chain" tabindex="0" :aria-label="title">{{ text }}</pre>
-  </details>
+  </ExpansionPanel>
 </template>
 
 <style scoped>
-.payload { min-width: 0; border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-sys-shape-corner-small); padding: var(--app-space-3); }
-summary { cursor: pointer; overflow-wrap: anywhere; }
-.actions { display: flex; align-items: center; justify-content: flex-end; }
-.partial { color: var(--md-sys-color-error); }
-pre { margin: 0; max-height: 28rem; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; user-select: text; }
+.payload-content { display: flex; flex-direction: column; gap: var(--app-space-2); min-width: 0; }
 </style>
