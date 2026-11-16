@@ -106,7 +106,7 @@ Hoshimi's Responses is stateless: the request is converted to Chat Completions, 
 | `stream` | Defaults to `true` |
 | `max_output_tokens` | Becomes `max_tokens` |
 | `temperature`, `top_p` | Passed through |
-| `tools` | `type: "function"` tools (`name`, `description`, `parameters`) and `type: "custom"` tools (`name`, `description`, `format`); other types are dropped |
+| `tools` | `type: "function"` tools (`name`, `description`, `parameters`) and `type: "custom"` tools (`name`, `description`, `format`), and `type: "namespace"` groups of function tools; other types are dropped |
 | `tool_choice` | `auto`, `none`, `required`, or a named `function` or `custom` tool |
 | `reasoning.effort` | The effort level |
 | `previous_response_id` | Refused with `400` (`invalid_input`), asking for the whole conversation in `input` |
@@ -132,6 +132,8 @@ Put the previous response's `output` items back into `input` unchanged, then app
 Custom tools such as `apply_patch` travel upstream as functions with a required string field named `input`. Hoshimi unwraps that field into the original raw text on return, including in streaming events. A grammar in `format` is passed as model guidance; the Chat transport does not enforce it with constrained decoding. Custom input is emitted after the complete JSON arguments arrive and decode successfully.
 
 Consecutive assistant text, reasoning and function-call items form one Chat assistant message. In particular, parallel function calls share one `tool_calls` array before their results; a tool result, user message or system message ends that group. This keeps each call paired with its result when the upstream validates Chat history.
+
+Namespace function tools are flattened for the upstream Chat transport and restored to their exact `namespace` and `name` in both streaming and non-streaming Responses calls. Send these identities unchanged in follow-up `input` items; a named `tool_choice` may also include `namespace`. Long transport aliases are fitted to 64 characters with a stable hash; ambiguous aliases are rejected. Native `tool_search` and `tool_search_output` are not translated: clients should expose discovery as an ordinary function, return schemas in its result, and include selected tools in the next request.
 
 ### Response
 

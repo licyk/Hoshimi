@@ -25,7 +25,7 @@ from hoshimi.core.chunks import (
 from hoshimi.core.context import Services
 from hoshimi.core.errors import HoshimiError, UpstreamError, ValidationError
 from hoshimi.core.net.identity import InferenceIdentity
-from hoshimi.core.translate.responses import ResponsesRequestError, custom_tool_names, responses_to_chat
+from hoshimi.core.translate.responses import ResponsesRequestError, custom_tool_names, response_tool_names, responses_to_chat, restore_response_tool_names
 
 router = APIRouter(prefix="/v1", tags=["openai"])
 
@@ -116,6 +116,7 @@ def create_response(
     request: Request,
 ) -> Any:
     try:
+        tool_names = response_tool_names(body.get("tools"))
         chat_body = responses_to_chat(body)
     except ResponsesRequestError as exc:
         raise ValidationError(str(exc)) from None
@@ -132,7 +133,8 @@ def create_response(
             payload = aggregate_responses(chunks, model=model, response_id=response_id, created=created, custom_tools=custom_tools)
         except UpstreamStreamFailure as exc:
             raise UpstreamError(str(exc)) from None
-        return _finish_non_stream(payload)
+        return _finish_non_stream(restore_response_tool_names(payload, tool_names))
 
     events = emit_responses_events(chunks, model=model, response_id=response_id, created=created, custom_tools=custom_tools)
-    return StreamingResponse(_sse(events, kind="responses"), media_type=SSE_MEDIA_TYPE)
+    restored = (restore_response_tool_names(event, tool_names) for event in events)
+    return StreamingResponse(_sse(restored, kind="responses"), media_type=SSE_MEDIA_TYPE)

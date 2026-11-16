@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Iterable, Iterator
 from typing import Any, TypeGuard
@@ -72,7 +73,7 @@ def responses_to_chat(body: dict[str, Any]) -> dict[str, Any]:
         chat["tool_choice"] = tool_choice
     elif _is_object(tool_choice) and tool_choice.get("type") in ("function", "custom"):
         nested = tool_choice.get("function")
-        name = tool_choice.get("name") or (nested.get("name") if _is_object(nested) else None)
+        name = _function_transport_name(tool_choice) or (nested.get("name") if _is_object(nested) else None)
         if isinstance(name, str) and name:
             chat["tool_choice"] = {"type": "function", "function": {"name": name}}
 
@@ -125,7 +126,7 @@ def _convert_input_items(items: list[Any]) -> list[dict[str, Any]]:
                             "id": call_id,
                             "type": "function",
                             "function": {
-                                "name": item.get("name"),
+                                "name": _function_transport_name(item),
                                 "arguments": json.dumps({"input": item.get("input", "")}, ensure_ascii=False)
                                 if kind == "custom_tool_call" else item.get("arguments") or "{}",
                             },
@@ -202,11 +203,66 @@ def custom_tool_names(tools: Any) -> frozenset[str]:
     )
 
 
+def _function_transport_name(tool: dict[str, Any]) -> Any:
+    name = tool.get("name")
+    namespace = tool.get("namespace")
+    if not isinstance(namespace, str) or not namespace or not isinstance(name, str):
+        return name
+    alias = f"{namespace}__{name}"
+    if len(alias) > 64:
+        digest = hashlib.sha256(json.dumps([namespace, name]).encode()).hexdigest()[:12]
+        alias = f"{alias[:51]}_{digest}"
+    return alias
+
+
+def response_tool_names(tools: Any) -> dict[str, tuple[str, str]]:
+    """Keep declared namespace identities for restoring Chat tool calls."""
+    identities: dict[str, tuple[str | None, str]] = {}
+    for tool in tools if isinstance(tools, list) else []:
+        if not _is_object(tool) or not isinstance(tool.get("name"), str):
+            continue
+        namespace = tool["name"] if tool.get("type") == "namespace" else None
+        children = tool.get("tools", []) if namespace else [tool]
+        for child in children if isinstance(children, list) else []:
+            if not _is_object(child) or child.get("type") not in ("function", "custom") or not isinstance(child.get("name"), str):
+                continue
+            identity = (namespace, child["name"])
+            alias = _function_transport_name({"namespace": namespace, "name": child["name"]})
+            if alias in identities and identities[alias] != identity:
+                raise ResponsesRequestError("Tool names collide after namespace conversion.")
+            identities[alias] = identity
+    return {alias: (namespace, name) for alias, (namespace, name) in identities.items() if namespace is not None}
+
+
+def restore_response_tool_names(payload: dict[str, Any], names: dict[str, tuple[str, str]]) -> dict[str, Any]:
+    """Restore function identities in a response or an SSE event, in place."""
+    response = payload.get("response", payload)
+    items = list(response.get("output", [])) if _is_object(response) else []
+    if _is_object(payload.get("item")):
+        items.append(payload["item"])
+    for item in items:
+        if _is_object(item) and item.get("type") == "function_call" and item.get("name") in names and "namespace" not in item:
+            item["namespace"], item["name"] = names[item["name"]]
+    return payload
+
+
 def _convert_responses_tools(tools: Any) -> list[dict[str, Any]]:
-    """Lower function and custom tools to the internal Chat transport."""
+    """Lower function, namespace and custom tools to the Chat transport."""
     out: list[dict[str, Any]] = []
     for tool in tools or []:
         if not _is_object(tool):
+            continue
+        if tool.get("type") == "namespace" and isinstance(tool.get("name"), str):
+            children = tool.get("tools")
+            if isinstance(children, list):
+                out.extend(_convert_responses_tools([
+                    {
+                        **child,
+                        "name": _function_transport_name({**child, "namespace": tool["name"]}),
+                        "description": "\n\n".join(text for text in [tool.get("description"), child.get("description")] if isinstance(text, str) and text),
+                    }
+                    for child in children if _is_object(child) and child.get("type") == "function"
+                ]))
             continue
         if tool.get("type") not in ("function", "custom"):
             continue
