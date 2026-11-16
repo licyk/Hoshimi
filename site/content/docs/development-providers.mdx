@@ -84,6 +84,7 @@ icon: Plug
 
 - `finish.reason` 不是 `stop`、`tool_calls`、`length` 时按 `stop` 处理；上游没有发出 `finish` 时，输出端补一个 `stop`。
 - `error` 分片在流式输出中变成一个错误帧；非流式时变成 `UpstreamStreamFailure`，再作为 `upstream_error`（502）返回。
+- Chat Completions 和 Responses 中的函数调用 `arguments` 保留模型给出的原始字符串，即使它不是有效 JSON。调用方在执行前校验，能将工具错误返回给模型纠正。Qoder 同样遵守这一规则；已知丢失的响应分片导致参数无法解析时，仍作为传输失败处理。自定义工具仍须先得到有效的 JSON 传输包装，才能取出其中的 `input` 字符串。
 - 只要已经产出过分片，渠道池就不再换账号重试，否则客户端会收到重复的内容。
 
 OpenAI 兼容的站点不必自己解析流：`providers/openai_compat.py` 的 `consume_openai_sse(lines, provider=...)` 把 OpenAI 风格的 SSE 转成上面的分片；`read_body` 还能处理对流式请求返回整个 JSON 的上游。其他协议的转换在 `core/translate/`（`anthropic.py`、`gemini.py`、`solo.py`、`responses.py`）。

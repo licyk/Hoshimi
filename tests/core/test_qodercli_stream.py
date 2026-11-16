@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 import pytest
 
+from hoshimi.core.chunks import aggregate_chat, aggregate_responses, emit_chat_chunks, emit_responses_events
 from hoshimi.core.providers.base import Account, ProviderError, RequestThrottled
 from hoshimi.core.providers.qodercli import QoderCliCnProvider
 from hoshimi.core.qoder import stream
@@ -90,6 +91,32 @@ def test_tool_call_fragments_accumulate_into_one_call() -> None:
     assert call["id"] == "call_1" and call["name"] == "get_weather"
     assert json.loads(call["arguments"]) == {"city": "Paris"}
     assert chunks[-1] == {"type": "finish", "reason": "tool_calls"}
+
+
+@pytest.mark.parametrize("arguments", ['{"path":', '{"path":"C:\\Users\\tester"}', '{"path":"fixture.txt",}'])
+def test_generated_invalid_arguments_reach_the_tool_caller(arguments: str) -> None:
+    frames = lines(
+        chunk({"tool_calls": [{"index": 0, "id": "bad-call", "function": {"name": "read_file", "arguments": arguments}}]}),
+        chunk({"tool_calls": [{"index": 1, "id": "good-call", "function": {"name": "list_directory", "arguments": "{}"}}]}),
+        chunk({}, finish_reason="tool_calls"),
+        envelope({"choices": [], "usage": {"prompt_tokens": 12, "completion_tokens": 5}}),
+        envelope("[DONE]"),
+    )
+    source = list(stream.iter_agent_chunks(frames, provider="qodercli-cn"))
+    calls = [entry for entry in source if entry["type"] == "tool_call_start"]
+    assert [(entry["id"], entry["name"], entry["arguments"]) for entry in calls] == [
+        ("bad-call", "read_file", arguments), ("good-call", "list_directory", "{}"),
+    ]
+    assert source[-1] == {"type": "finish", "reason": "tool_calls"}
+    chat, finish, usage = aggregate_chat(emit_chat_chunks(source, model="DeepSeek-Flash", completion_id="chat-1", created=1))
+    assert chat["tool_calls"][0]["function"]["arguments"] == arguments
+    assert finish == "tool_calls" and usage["completion_tokens"] == 5
+    options = {"model": "DeepSeek-Flash", "response_id": "resp_1", "created": 1}
+    response = aggregate_responses(source, **options)
+    assert response["output"][0]["arguments"] == arguments
+    events = list(emit_responses_events(source, **options))
+    assert events[-1]["type"] == "response.completed"
+    assert events[-1]["response"]["output"] == response["output"]
 
 
 def test_length_finish_reason_survives() -> None:

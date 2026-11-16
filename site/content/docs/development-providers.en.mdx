@@ -84,6 +84,7 @@ On the way out, three pairs of functions turn chunks into the public protocols: 
 
 - A `finish.reason` other than `stop`, `tool_calls` or `length` is treated as `stop`; when the upstream sent no `finish`, the output adds a `stop`.
 - An `error` chunk becomes an error frame in a stream; without streaming it becomes `UpstreamStreamFailure` and is returned as `upstream_error` (502).
+- Function-call `arguments` remain the model's raw string on Chat Completions and Responses, even when they are invalid JSON. The caller validates them before execution and can return a tool error for the model to correct. Qoder follows this rule too; a known lost payload that leaves arguments unparseable remains a transport failure. Custom tools still require a valid JSON transport wrapper before its `input` string can be unwrapped.
 - Once any chunk has gone out, the pool never retries on another account, or the client would receive the content twice.
 
 OpenAI-compatible stations need not parse their stream: `consume_openai_sse(lines, provider=...)` in `providers/openai_compat.py` turns OpenAI-style SSE into the chunks above, and `read_body` also copes with an upstream that answers a stream request with one whole JSON document. Translation for the other protocols is in `core/translate/` (`anthropic.py`, `gemini.py`, `solo.py`, `responses.py`).

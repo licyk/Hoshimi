@@ -368,8 +368,9 @@ def iter_agent_chunks(
                 # Nothing executable was published: a lost payload is a
                 # transport failure, and the turn should be replayed.
                 raise ProviderError(502, f"{provider}: server error, tool-call argument stream was cut off (unparseable upstream payload)", retryable=True) from None
-            yield {"type": "error", "error": f"{provider}: invalid or incomplete tool-call JSON"}
-            return
+            # Generated arguments remain a raw string on the function-call
+            # wire. The caller must reject them and can return a tool error
+            # for the model to correct, without losing this response's calls.
         yield {"type": "tool_call_start", "id": slot.id or f"call_{position}", "name": slot.name, "arguments": arguments, "index": position}
 
     if usage is not None:
