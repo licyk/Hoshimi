@@ -10,7 +10,7 @@ from hoshimi.core.chunks import aggregate_chat, aggregate_responses, emit_chat_c
 from hoshimi.core.providers import PROVIDER_CLASSES
 from hoshimi.core.providers.base import Account
 from hoshimi.core.providers.catalog_profiles import CATALOG_PROFILES, CatalogProfile, Field, discover_catalog
-from hoshimi.core.providers.keyed import KeyedProvider
+from hoshimi.core.providers.keyed import KeyedProvider, chat_row, modality_names, spec_from_row
 from hoshimi.core.providers.openai_compat import consume_openai_sse
 from hoshimi.core.providers.request_profiles import ChatProfile
 from hoshimi.core.providers.transports import request_payload
@@ -121,3 +121,94 @@ def test_registry_keeps_real_vendor_effort_instead_of_applying_free_lane_budget(
         assert seen[0]["reasoning_effort"] == "xhigh"
         assert seen[0]["max_tokens"] == 20
         assert lane.specs()["m"].efforts == ("high", "xhigh")
+
+
+# -- modality fields come in two shapes, and both mean the same thing --------- #
+
+# Transcribed from discovery-api.intern-ai.org.cn (one row of its ``/v1/models``):
+# the shape that made an entire account read as "no models". Its modalities are
+# descriptors carrying limits and pricing, not bare names.
+_OBJECT_MODALITIES_ROW = {
+    "id": "Sage-A1.5",
+    "name": "Sage-A1.5",
+    "input_modalities": [
+        {"type": "text", "supported_inputs": {"max_context_length": {"value": 262144, "unit": "token"}}},
+        {"type": "image", "supported_inputs": {"sources": {"type": "enum", "values": ["url", "base64"]}}},
+    ],
+    "output_modalities": [
+        {
+            "type": "text",
+            "max_length": {"value": 262144, "unit": "token"},
+            "streaming": True,
+            "supported_parameters": {"tools": {"type": "boolean"}},
+            "pricing": [{"type": "completion", "unit": "token", "cost_usd": "0.000064"}],
+        }
+    ],
+}
+
+
+def test_modality_names_reads_both_published_shapes():
+    assert modality_names(["text", "image"]) == {"text", "image"}
+    assert modality_names(_OBJECT_MODALITIES_ROW["output_modalities"]) == {"text"}
+    assert modality_names(_OBJECT_MODALITIES_ROW["input_modalities"]) == {"text", "image"}
+    # Absent, null, or a shape that says nothing all read as "not stated".
+    assert modality_names(None) == set()
+    assert modality_names("text") == {"text"}
+    for unreadable in (7, {"type": "text"}, [7, None, {"no_type": True}]):
+        assert modality_names(unreadable) == set()
+
+
+def test_an_object_shaped_catalogue_is_not_filtered_away():
+    """The regression: descriptors used to read as "output is not text"."""
+    assert chat_row(_OBJECT_MODALITIES_ROW) is True
+    # The string shape keeps working, unchanged.
+    assert chat_row({"id": "a", "output_modalities": ["text"]}) is True
+    # And the exclusion the filter exists for still excludes, in both shapes.
+    assert chat_row({"id": "b", "output_modalities": [{"type": "image"}]}) is False
+    assert chat_row({"id": "c", "architecture": {"output_modalities": [{"type": "audio"}]}}) is False
+    assert chat_row({"id": "d", "output_modalities": [{"type": "text"}, {"type": "image"}]}) is True
+
+
+def test_vision_is_read_from_descriptors_as_well_as_names():
+    assert spec_from_row("Sage-A1.5", "openai", _OBJECT_MODALITIES_ROW).vision is True
+    assert spec_from_row("m", "openai", {"id": "m", "input_modalities": ["image"]}).vision is True
+    assert spec_from_row("m", "openai", {"id": "m", "input_modalities": [{"type": "text"}]}).vision is False
+
+
+def test_an_object_shaped_account_reaches_the_lane_catalogue():
+    """End to end: the descriptors survive discovery and reach the lane."""
+    def handle(request):
+        return httpx.Response(200, json={"object": "list", "data": [
+            _OBJECT_MODALITIES_ROW,
+            {"id": "glm-5.3", "output_modalities": ["text"]},
+            {"id": "an-image-model", "output_modalities": [{"type": "image"}]},
+        ]})
+
+    class Lane(KeyedProvider):
+        id = "test"
+        base_url = "https://object.test/v1"
+
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        lane = Lane(client, [Account({"id": "one", "api_key": "k"})])
+        # The descriptor row is kept, the name row is still kept, and the
+        # descriptor that really is not a chat target is still dropped.
+        assert lane.fetch_models() == ["Sage-A1.5", "glm-5.3"]
+        assert lane.specs()["Sage-A1.5"].vision is True
+
+
+def test_the_catalogue_url_is_the_lane_address_not_the_account_one():
+    """The premise the test above relies on: discovery reads ``self.base_url``."""
+    seen = []
+
+    def handle(request):
+        seen.append(str(request.url))
+        return httpx.Response(200, json={"object": "list", "data": [{"id": "m"}]})
+
+    class Lane(KeyedProvider):
+        id = "test"
+        base_url = "https://lane.test/v1"
+
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        lane = Lane(client, [Account({"id": "a", "api_key": "k", "base_url": "https://account.test/v1"})])
+        lane.fetch_models()
+    assert seen == ["https://lane.test/v1/models"]

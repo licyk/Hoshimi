@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Iterator
 from concurrent.futures import wait
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -169,18 +170,51 @@ class Registry:
         return provider.specs().get(upstream_model)
 
     # -- catalogue -------------------------------------------------------- #
+    @staticmethod
+    def _advertised(pairs: Iterable[tuple[str, str]]) -> Iterator[tuple[str, str, str]]:
+        """(advertised id, provider, upstream name), bare names first.
+
+        A bare model name belongs to the first lane that lists it — the rule
+        /v1/models has always used, and the one a caller who names no lane is
+        entitled to keep. What used to follow was a silent disappearance: the
+        second lane's copy of that name was dropped from the listing entirely.
+        A lane whose whole catalogue is shared with earlier ones therefore
+        contributed nothing at all, while its own listing answered 200 — and
+        nothing in the catalogue said so.
+
+        So the shadowed copy is published instead, under the ``provider/name``
+        id :meth:`resolve` already routes. Nothing that used to work changes:
+        the bare id still goes to the same lane, and every added entry is
+        additive. Bare names are collected first, so an alias is never handed
+        out for a name some lane really does publish in that form.
+        """
+        pairs = list(pairs)
+        owner: dict[str, str] = {}
+        for provider_id, name in pairs:
+            owner.setdefault(name, provider_id)
+
+        # Bare ids, in the order this has always emitted them.
+        for name, provider_id in owner.items():
+            yield name, provider_id, name
+
+        emitted = set(owner)
+        for provider_id, name in pairs:
+            if owner[name] == provider_id:
+                continue
+            alias = f"{provider_id}/{name}"
+            if alias in emitted:
+                continue
+            emitted.add(alias)
+            yield alias, provider_id, name
+
+    def _listing(self) -> Iterator[tuple[str, str, str]]:
+        """(advertised id, provider, upstream name) for the whole catalogue."""
+        return self._advertised((provider_id, name) for provider_id in self._order()
+                                for name in self.providers[provider_id].models())
+
     def model_ids(self) -> list[tuple[str, str]]:
         """Return (model id, owning provider) pairs for /v1/models."""
-        out: list[tuple[str, str]] = []
-        seen: set[str] = set()
-        for provider_id in self._order():
-            provider = self.providers[provider_id]
-            for name in provider.models():
-                if name in seen:
-                    continue
-                seen.add(name)
-                out.append((name, provider_id))
-        return out
+        return [(advertised, provider_id) for advertised, provider_id, _name in self._listing()]
 
     def probe_targets(self) -> list[tuple[Provider, str]]:
         """(provider, model) pairs a default probe round asks about.
@@ -197,15 +231,22 @@ class Registry:
         ]
 
     def catalog(self) -> list[ModelSpec]:
-        """One spec per advertised id, in listing order (first provider wins)."""
+        """One spec per advertised id, in listing order (first provider wins).
+
+        The ids are :meth:`_listing`'s, so this cannot disagree with /v1/models
+        about what exists. An alias carries the capabilities of the lane it
+        names — the same id at two stations is two different offers — and says
+        so in ``provider``, which stays the lane rather than the id prefix.
+        """
         out: list[ModelSpec] = []
-        seen: set[str] = set()
-        for provider_id in self._order():
-            for model_id, spec in self.providers[provider_id].specs().items():
-                if model_id in seen:
-                    continue
-                seen.add(model_id)
-                out.append(spec)
+        by_provider: dict[str, dict[str, ModelSpec]] = {}
+        for advertised, provider_id, name in self._listing():
+            if provider_id not in by_provider:
+                by_provider[provider_id] = self.providers[provider_id].specs()
+            spec = by_provider[provider_id].get(name)
+            if spec is None:
+                continue
+            out.append(spec if advertised == name else replace(spec, id=advertised))
         return out
 
     def quick_models(self, *, timeout: float = 2.0) -> list[tuple[str, str, ModelSpec | None]]:
@@ -214,8 +255,7 @@ class Registry:
         pending = [self.discovery.submit(provider) for _id, provider in providers]
         if pending:
             wait(pending, timeout=timeout)
-        result: list[tuple[str, str, ModelSpec | None]] = []
-        seen: set[str] = set()
+        known: list[tuple[str, str, ModelSpec | None]] = []
         for provider_id, provider in providers:
             specs = self.discovery.cached(provider).specs
             declared = []
@@ -224,10 +264,15 @@ class Registry:
                 if isinstance(models, list):
                     declared.extend(model for model in models if isinstance(model, str))
             for model in list(specs) or provider.cached_model_ids() or declared or provider.fallback_models():
-                if model not in seen:
-                    seen.add(model)
-                    result.append((model, provider_id, specs.get(model)))
-        return result
+                known.append((model, provider_id, specs.get(model)))
+        # The same catalogue rule as the live listing: this path answers
+        # /v1/models?limit=N, and it must not disagree with the unbounded one
+        # about which ids exist.
+        by_lane = {(provider_id, model): spec for model, provider_id, spec in known}
+        return [
+            (advertised, provider_id, by_lane.get((provider_id, name)))
+            for advertised, provider_id, name in self._advertised((pid, model) for model, pid, _ in known)
+        ]
 
     def close(self) -> None:
         self.discovery.close()

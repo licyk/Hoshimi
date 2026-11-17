@@ -114,5 +114,92 @@ def test_spec_and_catalog_report_what_the_route_would_use() -> None:
     assert spec is not None
     assert (spec.provider, spec.reasoning) == ("trae", True)
     assert registry.spec("missing") is None
-    # First provider wins, exactly like /v1/models.
-    assert [(row.id, row.provider) for row in registry.catalog()] == [("a", "cline"), ("b", "trae")]
+    # First provider wins the bare id; trae's copy is reachable as trae/a.
+    assert [(row.id, row.provider) for row in registry.catalog()] == [
+        ("a", "cline"),
+        ("b", "trae"),
+        ("trae/a", "trae"),
+    ]
+
+
+# -- a name two lanes publish ------------------------------------------------ #
+
+
+def test_a_shadowed_model_keeps_its_bare_name_on_the_first_lane() -> None:
+    """The rule that must not move: a caller naming no lane gets the same lane."""
+    registry = Registry({"cline": FakeProvider("cline", ["shared"]), "trae": FakeProvider("trae", ["shared"])})
+    provider, model = registry.resolve("shared")
+    assert (provider.id, model) == ("cline", "shared")
+    assert registry.model_ids()[0] == ("shared", "cline")
+
+
+def test_a_shadowed_model_is_reachable_under_its_lane() -> None:
+    """The regression: the second lane's copy used to vanish from the catalogue."""
+    registry = Registry({"cline": FakeProvider("cline", ["shared"]), "trae": FakeProvider("trae", ["shared"])})
+    assert dict(registry.model_ids()) == {"shared": "cline", "trae/shared": "trae"}
+    # And the alias routes to the lane it names, not back to the winner.
+    provider, model = registry.resolve("trae/shared")
+    assert (provider.id, model) == ("trae", "shared")
+
+
+def test_an_alias_carries_the_capabilities_of_the_lane_it_names() -> None:
+    """Same id, two stations, two different offers — and the spec must say which."""
+    registry = Registry({"cline": FakeProvider("cline", ["shared"]), "trae": SpecProvider("trae", ["shared"])})
+    specs = {row.id: row for row in registry.catalog()}
+    assert specs["shared"].provider == "cline"
+    assert specs["shared"].reasoning is False
+    assert specs["trae/shared"].provider == "trae"
+    assert specs["trae/shared"].reasoning is True
+    # The bare spec is untouched by the alias beside it.
+    assert specs["shared"].id == "shared"
+
+
+def test_three_lanes_sharing_a_name_get_one_alias_each() -> None:
+    registry = Registry({
+        "cline": FakeProvider("cline", ["m"]),
+        "trae": FakeProvider("trae", ["m"]),
+        "zcode": FakeProvider("zcode", ["m"]),
+    })
+    assert dict(registry.model_ids()) == {"m": "cline", "trae/m": "trae", "zcode/m": "zcode"}
+
+
+def test_an_alias_never_displaces_a_name_a_lane_really_publishes() -> None:
+    """A station may genuinely sell an id shaped like another lane's alias.
+
+    ``cline`` sells an id literally named ``trae/m``, which is also the alias
+    ``trae`` would have been given for its ``m``. A real id wins: it keeps its
+    bare form and its lane, and the alias is dropped rather than published
+    twice under one name.
+    """
+    registry = Registry({
+        "cline": FakeProvider("cline", ["trae/m"]),
+        "trae": FakeProvider("trae", ["m"]),
+        "zcode": FakeProvider("zcode", ["m"]),
+    })
+    ids = dict(registry.model_ids())
+    # The real id keeps its bare form and its own lane.
+    assert ids["trae/m"] == "cline"
+    # zcode precedes trae in the provider order, so it keeps the bare name.
+    assert ids["m"] == "zcode"
+    # The colliding alias is not emitted a second time under one name.
+    assert [name for name, _ in registry.model_ids()].count("trae/m") == 1
+    # The cost is stated rather than hidden: trae's copy is unreachable here.
+    assert "trae/m" in ids
+
+
+def test_the_catalogue_stays_ordered_bare_first() -> None:
+    """Every bare id precedes every alias, so existing readers see a prefix."""
+    registry = Registry({
+        "cline": FakeProvider("cline", ["x", "y"]),
+        "trae": FakeProvider("trae", ["y", "z"]),
+    })
+    names = [name for name, _ in registry.model_ids()]
+    assert names == ["x", "y", "z", "trae/y"]
+
+
+def test_the_bounded_listing_agrees_with_the_full_one() -> None:
+    """`/v1/models?limit=N` goes through quick_models; it must not differ."""
+    registry = Registry({"cline": FakeProvider("cline", ["shared"]), "trae": FakeProvider("trae", ["shared"])})
+    bounded = [(name, owner) for name, owner, _spec in registry.quick_models(timeout=0.01)]
+    assert bounded == registry.model_ids()
+    assert dict(bounded)["trae/shared"] == "trae"

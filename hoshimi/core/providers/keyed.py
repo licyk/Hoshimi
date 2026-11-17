@@ -20,14 +20,42 @@ def account_token(account: Account) -> str:
     return next((value for key in ("api_key", "access_token", "token") if (value := str(account.get(key, "")).strip())), "")
 
 
+def modality_names(value: Any) -> set[str]:
+    """The names in a modality field, in either shape a station publishes.
+
+    Two shapes are in the wild and both say the same thing: a plain list of
+    names (``["text"]``, what the OpenAI-shaped listings carry) and a list of
+    descriptors (``[{"type": "text", "max_length": {...}}]``, which the
+    Intern/discovery-style catalogues publish instead).
+
+    Reading only the first shape is not "no opinion", it is a verdict. The
+    membership test then compares names against descriptors, so ``"text" in
+    [...]`` is false for every row, and an account whose entire catalogue is
+    object-shaped is filtered down to nothing — which reaches the operator as
+    "this account exposes no models", even though its listing answered 200 with
+    eleven of them.
+    """
+    if isinstance(value, str):
+        return {value}
+    if not isinstance(value, list):
+        return set()
+    names: set[str] = set()
+    for entry in value:
+        if isinstance(entry, str):
+            names.add(entry)
+        elif isinstance(entry, dict) and isinstance(entry.get("type"), str):
+            names.add(entry["type"])
+    return names
+
+
 def chat_row(row: dict[str, Any]) -> bool:
     kind = row.get("model_type") or row.get("type")
     if kind in ("embedding", "embeddings", "image", "video", "audio", "rerank", "classifier"):
         return False
     architecture = row.get("architecture")
     architecture = architecture if isinstance(architecture, dict) else {}
-    modalities = row.get("output_modalities") or architecture.get("output_modalities")
-    return not isinstance(modalities, list) or not modalities or "text" in modalities
+    modalities = modality_names(row.get("output_modalities") or architecture.get("output_modalities"))
+    return not modalities or "text" in modalities
 
 
 def spec_from_row(model: str, provider: str, row: dict[str, Any], *, wire: str = "chat") -> ModelSpec:
@@ -63,7 +91,7 @@ def spec_from_row(model: str, provider: str, row: dict[str, Any], *, wire: str =
     if isinstance(top, dict) and isinstance(top.get("max_completion_tokens"), int) and top["max_completion_tokens"] > 0:
         values["max_output"] = top["max_completion_tokens"]
     if isinstance(inputs, list):
-        values["vision"] = "image" in inputs
+        values["vision"] = "image" in modality_names(inputs)
     if isinstance(row.get("isFree"), bool):
         values["free"] = row["isFree"]
     return enrich_spec(replace(spec, **values), declared="reasoning" in values or "vision" in values)
