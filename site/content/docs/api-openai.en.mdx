@@ -129,6 +129,8 @@ Items in an `input` array:
 
 Put the previous response's `output` items back into `input` unchanged, then append the matching `function_call_output` or `custom_tool_call_output` items, to carry tool calls and reasoning forward.
 
+Tool outputs may be strings or arrays of `input_text` and `input_image` blocks. Text remains in the matching tool reply. Images, including their URL and optional `detail`, are attached to a user message immediately after the consecutive tool replies, with labels identifying their call IDs. This preserves image input for tools such as `view_image` while keeping parallel tool replies together; image bytes are never flattened into text. Image support still depends on the selected upstream model.
+
 Custom tools such as `apply_patch` travel upstream as functions with a required string field named `input`. Hoshimi unwraps that field into the original raw text on return, including in streaming events. A grammar in `format` is passed as model guidance; the Chat transport does not enforce it with constrained decoding. Custom input is emitted after the complete JSON arguments arrive and decode successfully.
 
 Consecutive assistant text, reasoning and function-call items form one Chat assistant message. In particular, parallel function calls share one `tool_calls` array before their results; a tool result, user message or system message ends that group. This keeps each call paired with its result when the upstream validates Chat history.

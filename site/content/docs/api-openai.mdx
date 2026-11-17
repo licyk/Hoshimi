@@ -129,6 +129,8 @@ Hoshimi 的 Responses 是无状态的：请求被转换成 Chat Completions，�
 
 把上一轮响应的 `output` 项原样放回 `input`，再追加对应的 `function_call_output` 或 `custom_tool_call_output`，就能延续工具调用和推理。
 
+工具的 `output` 可以是字符串，也可以是包含 `input_text` 和 `input_image` 的数组。文字保留在对应的工具回复中；图片及其 URL、可选的 `detail` 会放在这一组连续工具回复之后的用户消息中，并标注所属调用 ID。这样既能保留 `view_image` 等工具返回的图片，又不会打断并行工具回复的配对；图片数据不会被压成文本。图片识别能力仍取决于选用的上游模型。
+
 `apply_patch` 等自定义工具会转换成带有必填字符串字段 `input` 的函数工具发给上游。返回时，Hoshimi 将该字段还原为原始文本，流式事件也采用相同处理。`format` 中的语法作为提示传给模型，Chat 传输不会通过约束解码强制执行该语法。自定义工具的输入会在完整 JSON 参数到达并成功解码后发出。
 
 连续的 assistant 文本、推理和函数调用项会合并为一条 Chat assistant 消息。并行函数调用会放在同一个 `tool_calls` 数组中，后面再接对应的工具结果；工具结果、用户消息或系统消息会结束这一组。这样上游校验 Chat 历史时，每个调用都能与其结果正确配对。

@@ -86,10 +86,16 @@ def responses_to_chat(body: dict[str, Any]) -> dict[str, Any]:
 
 def _convert_input_items(items: list[Any]) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
+    tool_images: list[dict[str, Any]] = []
     for item in items:
         if not _is_object(item):
             continue
         kind = item.get("type")
+        # Chat tool messages are text-only. Keep parallel replies together,
+        # then deliver their images as user content before the next turn.
+        if tool_images and kind not in ("function_call_output", "custom_tool_call_output"):
+            messages.append({"role": "user", "content": tool_images})
+            tool_images = []
         if kind == "reasoning":
             details = item.get("provider_details")
             _append_assistant(messages, {"role": "assistant", "content": "", "reasoning_details": details if isinstance(details, list) else [item]})
@@ -135,14 +141,23 @@ def _convert_input_items(items: list[Any]) -> list[dict[str, Any]]:
                 }
             )
         elif kind in ("function_call_output", "custom_tool_call_output"):
+            output = item.get("output")
+            content = output if isinstance(output, str) else text_from_content(output)
+            parts = _user_content(output)
+            images = [part for part in parts if part.get("type") == "image_url"] if isinstance(parts, list) else []
+            if images:
+                marker = f"[Hoshimi: image output of tool call {item.get('call_id')}]"
+                tool_images.extend([{"type": "text", "text": marker}, *images])
+                content += "\n[Hoshimi: tool result images attached in the following user message]"
             messages.append(
                 {
                     "role": "tool",
                     "tool_call_id": item.get("call_id"),
-                    "content": item.get("output") if isinstance(item.get("output"), str)
-                    else text_from_content(item.get("output")),
+                    "content": content,
                 }
             )
+    if tool_images:
+        messages.append({"role": "user", "content": tool_images})
     return messages
 
 
@@ -189,7 +204,10 @@ def _user_content(content: Any) -> Any:
             elif btype == "input_image":
                 url = block.get("image_url")
                 if isinstance(url, str):
-                    parts.append({"type": "image_url", "image_url": {"url": url}})
+                    image_url = {"url": url}
+                    if isinstance(block.get("detail"), str):
+                        image_url["detail"] = block["detail"]
+                    parts.append({"type": "image_url", "image_url": image_url})
         return parts or ""
     return content
 
