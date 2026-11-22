@@ -133,6 +133,8 @@ class Services:
             max_account_retries=settings.max_account_retries,
             disabled=after.disabled,
         )
+        if self.login is not None:
+            self.login.bind_openai_rotation(self.registry)
         if isinstance(self.registry.client, NetworkClient):
             self.registry.client.network = settings.network
         return True
@@ -190,8 +192,12 @@ def build_services(settings: Settings | None = None) -> Services:
             disabled=pool.disabled,
         )
 
+        login.bind_openai_rotation(registry)
+
     data_dir = default_data_dir()
     refresher = Refresher(settings=settings, registry=registry)
+    login = LoginManager(settings=settings, on_persist=rebuild_after_login, on_account_persist=refresher.credentials_updated)
+    login.bind_openai_rotation(registry)
     # One connection for every store; each imports (then renames) its old JSON file once.
     db = Database(data_dir / DB_FILE_NAME)
     return Services(
@@ -202,7 +208,7 @@ def build_services(settings: Settings | None = None) -> Services:
         stats=StatsStore(data_dir / STATS_FILE_NAME, db=db, keep_days=settings.stats_keep_days),
         refresher=refresher,
         credits=CreditsService(settings=settings, registry=registry, store=CheckinStore(data_dir / CHECKIN_FILE_NAME, db=db)),
-        login=LoginManager(settings=settings, on_persist=rebuild_after_login, on_account_persist=refresher.credentials_updated),
+        login=login,
         updates=UpdateChecker(network=settings.network),
         conversations=ConversationStore(db),
     )

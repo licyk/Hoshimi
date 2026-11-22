@@ -60,9 +60,10 @@ class LoginReporter:
         if self.cancelled.wait(seconds):
             raise LoginError("Login cancelled")
 
-    def authorization(self, server: CallbackServer | None, timeout: float = LOGIN_TIMEOUT_SECONDS) -> dict[str, str]:
+    def authorization(self, server: CallbackServer | None, timeout: float = LOGIN_TIMEOUT_SECONDS, *, callback_state: str | None = None) -> dict[str, str]:
         """Race a loopback callback with an explicit manual submission."""
-        self.update({"waiting_for": "manual_code", "instructions": "Complete browser login, or paste the final redirect URL or authorization code.",
+        self.update({"waiting_for": "callback_url" if callback_state else "manual_code",
+                     "instructions": "" if callback_state else "Complete browser login, or paste the final redirect URL or authorization code.",
                      "expires_at": time.time() + timeout})
         deadline = time.monotonic() + timeout
         try:
@@ -73,6 +74,11 @@ class LoginReporter:
                 except queue.Empty:
                     value = ""
                 if value:
+                    if callback_state and server is not None:
+                        try:
+                            return validated_callback(value, server.redirect_uri(), callback_state)
+                        except LoginError:
+                            continue  # A submission for an earlier attempt may already be queued.
                     split = urlsplit(value)
                     if split.scheme:
                         return {key: items[0] for key, items in parse_qs(split.query).items()}
@@ -150,6 +156,19 @@ def poll_pause(seconds: float) -> None:
     time.sleep(max(0.0, seconds))
 
 
+def validated_callback(value: str, redirect: str, state: str) -> dict[str, str]:
+    """Parse the exact loopback redirect shared by browser and manual submissions."""
+    base, separator, query = value.partition("?")
+    if base != redirect or not separator or "#" in query:
+        raise LoginError("Paste the complete callback URL from this sign-in attempt.")
+    fields = parse_qs(query, keep_blank_values=True)
+    if any(len(items) != 1 for items in fields.values()):
+        raise LoginError("The callback contains duplicate parameters.")
+    if not secrets.compare_digest(fields.get("state", [""])[0].encode(), state.encode()):
+        raise LoginError("The callback belongs to a different sign-in attempt.")
+    return {key: items[0] for key, items in fields.items()}
+
+
 class CallbackServer:
     """A one-shot loopback HTTP server that captures a login redirect.
 
@@ -159,12 +178,12 @@ class CallbackServer:
     which Google's ``localhost`` redirect needs on hosts that prefer IPv6.
     """
 
-    def __init__(self, path: str, *, host: str = "127.0.0.1", port: int = 0, dual_stack: bool = False):
+    def __init__(self, path: str, *, host: str = "127.0.0.1", port: int = 0, dual_stack: bool = False, state: str | None = None):
         if not path.startswith("/"):
             raise ValueError("callback path must start with /")
         self.path = path
         self._answers: queue.Queue[dict[str, str]] = queue.Queue()
-        handler = _make_handler(path, self._answers)
+        handler = _make_handler(path, self._answers, state)
         self._servers = [ThreadingHTTPServer((host, port), handler)]
         if dual_stack:
             try:
@@ -195,21 +214,37 @@ class CallbackServer:
             server.server_close()
 
 
-def _make_handler(path: str, answers: queue.Queue[dict[str, str]]) -> type[BaseHTTPRequestHandler]:
+def _make_handler(path: str, answers: queue.Queue[dict[str, str]], state: str | None) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args: Any) -> None:  # the browser's hit is not a server log line
             return
 
         def do_GET(self) -> None:
-            split = urlsplit(self.path)
-            if split.path != path:
+            if state is not None:
+                assert isinstance(self.server, ThreadingHTTPServer)
+                expected_host = f"127.0.0.1:{self.server.server_port}"
+                if self.headers.get_all("Host") != [expected_host] or self.path.partition("?")[0] != path:
+                    self.send_error(404)
+                    return
+                try:
+                    params = validated_callback(f"http://{expected_host}{self.path}", f"http://{expected_host}{path}", state)
+                except LoginError:
+                    self.send_error(400, "Invalid sign-in callback")
+                    return
+            elif urlsplit(self.path).path != path:
                 self.send_error(404)
                 return
-            params = {key: values[0] for key, values in parse_qs(split.query).items()}
+            else:
+                params = {key: values[0] for key, values in parse_qs(urlsplit(self.path).query).items()}
             answers.put(params)
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
             self.end_headers()
-            self.wfile.write(b"<!doctype html><meta charset=utf-8><h2>Login complete</h2><p>You can close this tab and return to Hoshimi.</p>")
+            if state is not None:
+                self.wfile.write(b"<!doctype html><meta charset=utf-8><h2>Authorization received</h2><p>Return to Hoshimi for the sign-in result.</p>")
+            else:
+                self.wfile.write(b"<!doctype html><meta charset=utf-8><h2>Login complete</h2><p>You can close this tab and return to Hoshimi.</p>")
 
     return Handler

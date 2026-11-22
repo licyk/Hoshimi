@@ -8,7 +8,6 @@ from __future__ import annotations
 import re
 import secrets
 import time
-import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -37,7 +36,6 @@ DEVICE_OAUTH = {
 }
 ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 ANTHROPIC_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
-OPENAI_TOKEN_URL = "https://auth.openai.com/api/accounts/oauth/token"
 COPILOT_HEADERS = {"User-Agent": "GitHubCopilotChat/0.35.0", "Editor-Version": "vscode/1.107.0",
                    "Editor-Plugin-Version": "copilot-chat/0.35.0", "Copilot-Integration-Id": "vscode-chat"}
 
@@ -153,42 +151,20 @@ def start_device_login(provider: str, client: httpx.Client, report: Callable[[st
     raise LoginError(f"{provider}: authorization timed out")
 
 
-def _installation_id() -> str:
-    from hoshimi.core.paths import default_data_dir
-
-    path = default_data_dir() / "oauth-installation-id"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        return str(uuid.UUID(path.read_text().strip()))
-    except FileNotFoundError:
-        value = str(uuid.uuid4())
-        try:
-            with path.open("x") as stream:
-                stream.write(value)
-        except FileExistsError:
-            return str(uuid.UUID(path.read_text().strip()))
-        return value
-
-
 def start_browser_login(provider: str, client: httpx.Client, report: Callable[[str], None]) -> dict[str, Any]:
     verifier, challenge = pkce_pair()
     state = secrets.token_urlsafe(32)
-    path = "/auth/callback" if provider == "openai" else f"/oauth/callback/{secrets.token_hex(16)}"
-    server = CallbackServer(path, port=1455 if provider == "openai" else 0)
+    server = CallbackServer(f"/oauth/callback/{secrets.token_hex(16)}")
     redirect = server.redirect_uri()
     params = {"response_type": "code", "redirect_uri": redirect, "code_challenge": challenge, "code_challenge_method": "S256", "state": state}
     if provider == "openrouter":
         params = {"callback_url": redirect, "code_challenge": challenge, "code_challenge_method": "S256"}
         authorize = "https://openrouter.ai/auth"
-    elif provider == "anthropic":
+    else:
         state = verifier
         params.update({"state": state, "client_id": ANTHROPIC_CLIENT_ID, "code": "true",
                        "scope": "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"})
         authorize = "https://claude.ai/oauth/authorize"
-    else:
-        params.update({"client_id": "dynamic_agent_client", "agent_name_hint": "Hoshimi", "ext_agent_host_id": f"urn:uuid:{_installation_id()}",
-                       "resource": "https://api.openai.com/v1", "scope": "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct", "nonce": secrets.token_urlsafe(32)})
-        authorize = "https://auth.openai.com/api/accounts/authorize"
     try:
         report(str(httpx.URL(authorize, params=params)))
         answer = report.authorization(server) if isinstance(report, LoginReporter) else server.wait(LOGIN_TIMEOUT_SECONDS)
@@ -207,22 +183,12 @@ def start_browser_login(provider: str, client: httpx.Client, report: Callable[[s
         if response.is_error or not isinstance(payload.get("key"), str) or not payload["key"]:
             raise LoginError(f"OpenRouter key exchange failed (HTTP {response.status_code})")
         return {"api_key": payload["key"]}
-    if provider == "anthropic":
-        response = client.post(ANTHROPIC_TOKEN_URL, json={"grant_type": "authorization_code", "client_id": ANTHROPIC_CLIENT_ID,
-                               "code": code, "state": state, "redirect_uri": redirect, "code_verifier": verifier}, timeout=30)
-        client_id = ANTHROPIC_CLIENT_ID
-    else:
-        client_id = answer.get("client_id", "")
-        if not client_id:
-            raise LoginError("OpenAI callback contains no issued client ID")
-        response = client.post(OPENAI_TOKEN_URL, data={"grant_type": "authorization_code", "client_id": client_id, "code": code,
-                               "code_verifier": verifier, "redirect_uri": redirect, "resource": "https://api.openai.com/v1"}, timeout=30)
+    response = client.post(ANTHROPIC_TOKEN_URL, json={"grant_type": "authorization_code", "client_id": ANTHROPIC_CLIENT_ID,
+                           "code": code, "state": state, "redirect_uri": redirect, "code_verifier": verifier}, timeout=30)
     payload = json_object(response)
     if response.is_error:
         raise LoginError(f"{provider}: token exchange failed (HTTP {response.status_code})")
-    if provider == "openai" and "chatgpt.tokens.use.direct" not in str(payload.get("scope") or "").split():
-        raise LoginError("OpenAI did not grant direct API token access")
-    credential = credential_from_tokens(payload, client_id=client_id)
+    credential = credential_from_tokens(payload, client_id=ANTHROPIC_CLIENT_ID)
     if not credential.get("refresh_token"):
         raise LoginError("Authorization returned no refresh token")
     return credential
@@ -249,15 +215,9 @@ def refresh_provider_account(provider: str, client: httpx.Client, account: Any) 
                 from hoshimi.core.login.codex import CLIENT_ID, TOKEN_ENDPOINT
 
                 url, client_id = TOKEN_ENDPOINT, str(account.get("client_id") or CLIENT_ID)
-            elif provider == "openai":
-                url, client_id = OPENAI_TOKEN_URL, str(account.get("client_id") or "")
-                if not client_id:
-                    return False
             else:
                 return False
             fields = {"grant_type": "refresh_token", "client_id": client_id, "refresh_token": refresh}
-            if provider == "openai":
-                fields["resource"] = "https://api.openai.com/v1"
             if provider == "anthropic":
                 response = client.post(url, json=fields, timeout=30)
             else:
@@ -279,4 +239,4 @@ def provider_login_flows() -> dict[str, Callable[[httpx.Client, Callable[[str], 
     from functools import partial
 
     return {**{provider: partial(start_device_login, provider) for provider in DEVICE_OAUTH},
-            **{provider: partial(start_browser_login, provider) for provider in ("anthropic", "openrouter", "openai")}}
+            **{provider: partial(start_browser_login, provider) for provider in ("anthropic", "openrouter")}}

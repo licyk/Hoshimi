@@ -51,6 +51,7 @@ class ChannelAccount(Record):
     """
 
     id: str
+    plan_authorized: bool | None = None
     edit_mode: Literal["config", "login"] | None = None
     needs_login: bool = False
     refreshable: bool = False
@@ -170,7 +171,7 @@ def channel_status(view: ChannelView, summary: ProviderSummary, now: float) -> L
         return "empty"
     now_ms = now * 1000
     for account in view.accounts:
-        if account.needs_login or account.cooled_reason or (account.expires_at is not None and account.expires_at <= now_ms):
+        if account.plan_authorized is False or account.needs_login or account.cooled_reason or (account.expires_at is not None and account.expires_at <= now_ms):
             return "attention"
     if view.quota is not None and (view.quota.counters.rate_limited > 0 or (view.quota.percent is not None and view.quota.percent <= LOW_QUOTA_PERCENT)):
         return "attention"
@@ -191,6 +192,8 @@ def _account(
     cfg = services.settings.providers.get(provider_id)
     raw = next((raw for index, raw in enumerate(cfg.accounts if cfg else []) if str(raw.get("id") or f"{provider_id}-{index}") == account_id), None)
     if raw is not None:
+        if provider_id == "openai":
+            row.plan_authorized = raw.get("plan_authorized")
         row.edit_mode = account_edit_mode(provider_id, raw, loginable=provider_id in login_providers())
     if renewal is not None:
         row.needs_login = bool(renewal.get("needs_login"))

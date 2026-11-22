@@ -119,8 +119,8 @@ def test_manual_code_wait_is_cancellable():
         reporter.authorization(None)
 
 
-@pytest.mark.parametrize("provider", ["openrouter", "anthropic", "openai"])
-def test_browser_exchange_uses_pkce_and_openai_issued_client_id(provider, monkeypatch):
+@pytest.mark.parametrize("provider", ["openrouter", "anthropic"])
+def test_browser_exchange_uses_pkce(provider, monkeypatch):
     class Callback:
         def __init__(self, path, **kwargs):
             self.path = path
@@ -129,7 +129,6 @@ def test_browser_exchange_uses_pkce_and_openai_issued_client_id(provider, monkey
         def close(self):
             pass
     monkeypatch.setattr(oauth, "CallbackServer", Callback)
-    monkeypatch.setattr(oauth, "_installation_id", lambda: "12345678-1234-1234-1234-123456789abc")
     inputs = queue.Queue()
     def update(values):
         if "login_url" in values:
@@ -140,8 +139,6 @@ def test_browser_exchange_uses_pkce_and_openai_issued_client_id(provider, monkey
     def handle(request):
         if provider == "openrouter":
             return httpx.Response(200, json={"key": "permanent"})
-        if provider == "openai":
-            assert b"client_id=issued" in request.content
         return httpx.Response(200, json={"access_token": "access", "refresh_token": "refresh", "expires_in": 3600, "scope": "chatgpt.tokens.use.direct"})
     with httpx.Client(transport=httpx.MockTransport(handle)) as client:
         credential = oauth.start_browser_login(provider, client, LoginReporter(update, inputs=inputs))

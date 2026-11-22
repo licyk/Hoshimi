@@ -10,8 +10,8 @@ from typing import Any
 from hoshimi.core.catalog import ModelSpec
 from hoshimi.core.net.identity import identity
 from hoshimi.core.provider_definitions import CANONICAL_PROVIDERS, REGULAR_PROVIDER_IDS, ProviderDefinition
-from hoshimi.core.providers.base import Account
-from hoshimi.core.providers.catalog_profiles import CATALOG_PROFILES, catalog_url
+from hoshimi.core.providers.base import Account, ProviderError
+from hoshimi.core.providers.catalog_profiles import CATALOG_PROFILES, CatalogProfile, Field, catalog_url, discover_catalog
 from hoshimi.core.providers.compat import gateway_chat_body, provider_chat_body
 from hoshimi.core.providers.keyed import KeyedProvider, account_token, spec_from_row
 from hoshimi.core.providers.request_profiles import CHAT_PROFILES
@@ -161,9 +161,56 @@ class ConfiguredProvider(KeyedProvider):
         return refresh_provider_account(self.id, self.client, account)
 
 
+class OpenAIProvider(ConfiguredProvider):
+    """A verified ChatGPT grant can use the direct Responses route."""
+
+    @staticmethod
+    def _can_infer(account: Account) -> bool:
+        return account.get("plan_authorized") is not False and not account.get("pending_refresh") and not account.needs_login and not account.get("reauth_required")
+
+    def inference_accounts(self) -> list[Account]:
+        return [account for account in self.accounts if self._can_infer(account)]
+
+    def build_headers(self, account: Account, model: str) -> dict[str, str]:
+        if not self._can_infer(account):
+            raise ProviderError(403, "OpenAI plan authorization or identity verification is required.")
+        return super().build_headers(account, model)
+
+    def wire_for(self, model: str, account: Account | None = None) -> str:
+        if account is not None and account.get("plan_authorized") is True:
+            return "responses"
+        return super().wire_for(model, account)
+
+    def endpoint_base(self, account: Account) -> str:
+        if account.get("plan_authorized") is True:
+            return self.definition.base_url
+        return super().endpoint_base(account)
+
+    def discover_rows(self, account: Account) -> list[dict[str, Any]]:
+        if account.get("plan_authorized") is not True:
+            return super().discover_rows(account)
+        profile = CatalogProfile(collection=("models",), id_path=("slug",), fields=(Field("name", ("display_name",)),),
+                                 required=((("visibility",), ("list",)),))
+        headers = {**self.build_headers(account, ""), "Accept": "application/json"}
+        return discover_catalog(self.client, self.catalog_url(account), headers, profile)
+
+    def refresh_account(self, account: Account) -> bool:
+        from hoshimi.core.login.openai import refresh_openai
+        from hoshimi.core.providers.base import RefreshTokenRejected
+
+        try:
+            return refresh_openai(self.client, account)
+        except RefreshTokenRejected as exc:
+            try:
+                account.commit_credentials({"reauth_required": True, "access_token": None, "refresh_token": None, "expires_at": None, "pending_refresh": None})
+            except OSError:
+                raise RefreshTokenRejected(exc.status, f"{exc} Could not save the reauthorization status.") from None
+            raise
+
+
 def regular_provider_classes() -> dict[str, type[KeyedProvider]]:
     """Generate thin classes from definitions; protocol logic remains shared."""
-    return {definition.id: type(definition.id.replace("-", "_").title() + "Provider", (ConfiguredProvider,),
+    return {definition.id: type(definition.id.replace("-", "_").title() + "Provider", (OpenAIProvider if definition.id == "openai" else ConfiguredProvider,),
                                 {"id": definition.id, "display_name": definition.name, "base_url": definition.base_url,
                                  "definition": definition, "models_path": definition.catalog if definition.catalog.startswith("/") and " " not in definition.catalog else "/models"})
             for definition in CANONICAL_PROVIDERS if definition.id in REGULAR_IDS}

@@ -199,6 +199,10 @@ export default {
     authMethod: '鉴权方式',
     deviceCode: '验证码',
     deviceInstructions: '在授权页面输入此验证码，完成登录。',
+    callbackUrl: '完整回调地址',
+    callbackHelp: '浏览器位于另一台设备时，请粘贴最终跳转的完整地址，包含问号后的全部参数。',
+    planDisabled: '已登录，尚未授权使用 ChatGPT 套餐。',
+    enablePlan: '授权使用 ChatGPT 套餐',
     manualCode: '授权码或回调地址',
     manualCodeHelp: '浏览器位于另一台设备时，可粘贴最终回调地址。Anthropic 也支持 code#state。',
     tokenCode: '个人访问令牌',
@@ -312,6 +316,7 @@ export default {
       policy_blocked: '被策略阻止',
     },
     accountStates: {
+      consent: '待授权套餐',
       login: '需要登录',
       expired: '已过期',
       cooled: '暂停中',

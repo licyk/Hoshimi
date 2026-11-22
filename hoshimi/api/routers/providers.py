@@ -137,9 +137,10 @@ def configured_account(provider_id: str, account_id: str, services: ServicesDep)
 @router.get("/providers/{provider_id}/accounts/{account_id}", operation_id="get_provider_account", responses=ERROR_RESPONSES)
 def get_provider_account(provider_id: str, account_id: str, services: ServicesDep, response: Response) -> AccountDetail:
     raw = configured_account(provider_id, account_id, services)
-    form = account_form(provider_id, raw)
+    account = {key: value for key, value in raw.items() if key != "_hoshimi_login" and not (provider_id == "openai" and key == "pending_refresh")}
+    form = account_form(provider_id, account)
     response.headers["Cache-Control"] = "no-store"
-    return AccountDetail(account={key: value for key, value in raw.items() if key != "_hoshimi_login"},
+    return AccountDetail(account=account,
                          form=CredentialFormView(method=form.method, fields=[CredentialFieldView(**asdict(f)) for f in form.fields], defaults=dict(form.defaults)))
 
 

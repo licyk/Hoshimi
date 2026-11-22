@@ -42,7 +42,7 @@ def login(
             raise typer.Exit(2) from None
 
         deadline = time.monotonic() + LOGIN_TIMEOUT_SECONDS
-        opened = False
+        opened_url = ""
         reported_code = False
         reported_url = ""
         submitted = False
@@ -56,21 +56,30 @@ def login(
             if current.login_url and current.login_url != reported_url:
                 logger.info("Authorize at %s", current.login_url)
                 reported_url = current.login_url
-            if manual and current.waiting_for in ("manual_code", "personal_token") and not submitted:
+                deadline = time.monotonic() + LOGIN_TIMEOUT_SECONDS
+                submitted = False
+            if manual and current.waiting_for in ("manual_code", "personal_token", "callback_url") and not submitted:
                 prompt = "Personal Access Token" if current.waiting_for == "personal_token" else "Authorization code or callback URL"
+                if current.waiting_for == "callback_url":
+                    prompt = "Full callback URL"
                 value = typer.prompt(prompt, hide_input=True)
-                services.login.submit(current.id, value)
-                submitted = True
+                try:
+                    services.login.submit(current.id, value)
+                    submitted = True
+                except LoginError as exc:
+                    logger.warning("%s", exc)
             # The URL only exists once the station has issued it, so the browser
             # opens on the first poll that carries one.
-            if open_browser and not opened and current.login_url:
+            if open_browser and current.status == "pending" and current.login_url and current.login_url != opened_url:
                 logger.info("Opening %s", current.login_url)
-                opened = webbrowser.open(current.login_url)
-                if not opened:
+                opened_url = current.login_url
+                if not webbrowser.open(current.login_url):
                     logger.warning("Could not open a browser; visit %s by hand.", current.login_url)
             if current.status != "pending":
                 if current.status == "succeeded":
                     logger.info("Signed into %s as %s.", current.provider, current.account_id)
+                    if getattr(current, "plan_authorized", None) is False:
+                        logger.info("ChatGPT plan use has not been authorized.")
                     return
                 logger.error("%s", current.message or "login failed")
                 raise typer.Exit(1)

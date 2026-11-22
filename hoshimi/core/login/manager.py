@@ -34,6 +34,8 @@ from hoshimi.core.providers.base import ProviderError
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from hoshimi.core.config import Settings
+    from hoshimi.core.providers.base import Account
+    from hoshimi.core.registry import Registry
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +52,7 @@ STATUS_PENDING = "pending"
 STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
 
-INPUT_STATES = frozenset({"manual_code", "personal_token"})
+INPUT_STATES = frozenset({"manual_code", "personal_token", "callback_url"})
 """The waits a pasted answer resolves: a browser code, or a station token."""
 
 
@@ -65,6 +67,7 @@ class LoginSession:
     message: str = ""
     account_id: str = ""
     started_at: float = field(default_factory=time.time)
+    plan_authorized: bool | None = None
     user_code: str = ""
     instructions: str = ""
     expires_at: float | None = None
@@ -84,6 +87,7 @@ class LoginSession:
             "account_id": self.account_id,
             "started_at": self.started_at,
             "user_code": self.user_code,
+            "plan_authorized": self.plan_authorized,
             "instructions": self.instructions,
             "expires_at": self.expires_at,
             "waiting_for": self.waiting_for,
@@ -102,6 +106,7 @@ def _flows() -> dict[str, LoginFlow]:
     from hoshimi.core.login.lobsterai import start_lobsterai_login
     from hoshimi.core.login.loomy import start_loomy_login
     from hoshimi.core.login.minimax import start_minimax_login
+    from hoshimi.core.login.openai import start_openai_login
     from hoshimi.core.login.provider_oauth import provider_login_flows
     from hoshimi.core.login.qoder import start_qoder_login
     from hoshimi.core.login.qodercli import start_qodercli_login
@@ -127,6 +132,7 @@ def _flows() -> dict[str, LoginFlow]:
         "loomy": start_loomy_login,
         "codearts": start_codearts_login,
         "codex": start_codex_login,
+        "openai": start_openai_login,
         "raccoon": start_raccoon_login,
         "eac": start_eac_login,
     }
@@ -169,6 +175,10 @@ class LoginManager:
             known = ", ".join(sorted(flows))
             raise LoginError(f"no interactive login for '{provider}' (known: {known})")
         original = copy.deepcopy(self._account(provider, account_id)) if account_id is not None else None
+        if provider == "openai" and original is not None:
+            from hoshimi.core.login.openai import start_openai_login
+
+            flow = partial(start_openai_login, previous=original)
         if provider == "eac":
             from hoshimi.core.login.eac import _resolve_account, start_eac_login
 
@@ -210,6 +220,11 @@ class LoginManager:
             raise LoginError("This login is not waiting for an authorization code or token.")
         if not value.strip() or len(value) > 16384:
             raise LoginError("Supply a valid authorization code or callback URL.")
+        if session.waiting_for == "callback_url":
+            from hoshimi.core.login.common import validated_callback
+
+            params = httpx.URL(session.login_url).params
+            validated_callback(value.strip(), params.get("redirect_uri", ""), params.get("state", ""))
         session.inputs.put(value)
 
     def cancel(self, session_id: str) -> None:
@@ -260,8 +275,9 @@ class LoginManager:
                         else:
                             write_eac_user(previous_eac)
                     raise
-                session.status = STATUS_SUCCEEDED
                 session.account_id = account_id
+                session.plan_authorized = credential.get("plan_authorized") if session.provider == "openai" else None
+                session.status = STATUS_SUCCEEDED
         except (LoginError, ProviderError) as exc:
             session.status = STATUS_FAILED
             session.message = str(exc)
@@ -301,6 +317,8 @@ class LoginManager:
             target = next((raw for index, raw in enumerate(cfg.accounts) if str(raw.get("id") or f"{provider}-{index}") == replacement), None)
             if target is None:
                 raise LoginError("The account was removed during login; start again.")
+        elif provider == "openai" and credential.get("client_id") and credential.get("sub"):
+            target = next((raw for raw in cfg.accounts if raw.get("client_id") == credential["client_id"] and raw.get("sub") == credential["sub"]), None)
         elif identity is not None:
             key, value = identity
             target = next((raw for raw in cfg.accounts if str(raw.get(key) or "") == value), None)
@@ -314,7 +332,10 @@ class LoginManager:
             from hoshimi.core.provider_forms import credential_forms
 
             configuration = {f.key for form in credential_forms().get(provider, ()) for f in form.fields if f.kind != "secret"}
-            updated = {key: value for key, value in target.items() if key in configuration} if replacement is not None and provider != "eac" else dict(target)
+            replace_credentials = replacement is not None or (provider == "openai" and "plan_authorized" in credential)
+            updated = dict(target)
+            if replace_credentials and provider != "eac":
+                updated = {key: value for key, value in target.items() if key in configuration}
             updated.update(credential)
             updated["id"] = account_id
             target.clear()
@@ -342,6 +363,38 @@ class LoginManager:
         if self._on_account_persist is not None:
             self._on_account_persist(provider, account_id)
         return account_id
+
+    def bind_openai_rotation(self, registry: Registry) -> None:
+        """Give request-triggered and scheduled renewals the same durable commit."""
+        provider = registry.providers.get("openai")
+        if provider is not None:
+            for account in provider.accounts:
+                account.persist_credentials = self._save_openai_rotation
+                if account.get("reauth_required") is True:
+                    account.needs_login = True
+
+    def _save_openai_rotation(self, account: Account, changes: dict[str, Any]) -> None:
+        from hoshimi.core.config import save_settings
+
+        with self._persist_lock:
+            try:
+                current = self._account("openai", account.id)
+            except LoginError as exc:
+                raise ProviderError(409, str(exc)) from None
+            pending_changed = current.get("pending_refresh") and current["pending_refresh"] != account.get("pending_refresh")
+            if pending_changed or any(current.get(key) != account.get(key) for key in ("refresh_token", "access_token", "client_id", "sub")):
+                raise ProviderError(409, "The OpenAI account changed during renewal.")
+            # Write an isolated snapshot before changing the live settings.
+            candidate = copy.copy(self.settings)
+            cfg = copy.copy(self.settings.providers["openai"])
+            updated = {**current, **changes}
+            for key, value in changes.items():
+                if value is None:
+                    updated.pop(key, None)
+            cfg.accounts = [updated if raw is current else raw for raw in cfg.accounts]
+            candidate.providers = {**self.settings.providers, "openai": cfg}
+            save_settings(candidate)
+            self.settings.providers["openai"] = cfg
 
     def _account(self, provider: str, account_id: str) -> dict[str, Any]:
         cfg = self.settings.providers.get(provider)

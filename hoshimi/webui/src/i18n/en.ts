@@ -197,6 +197,10 @@ export default {
     authMethod: 'Authentication method',
     deviceCode: 'Verification code',
     deviceInstructions: 'Enter this code on the authorization page to finish signing in.',
+    callbackUrl: 'Full callback URL',
+    callbackHelp: 'If the browser is on another machine, paste the full final redirect URL, including its query.',
+    planDisabled: 'Signed in. ChatGPT plan use has not been authorized.',
+    enablePlan: 'Authorize ChatGPT plan use',
     manualCode: 'Authorization code or callback URL',
     manualCodeHelp: 'For a browser on another machine, paste the final callback URL. Anthropic also accepts code#state.',
     tokenCode: 'Personal Access Token',
@@ -312,6 +316,7 @@ export default {
       policy_blocked: 'Blocked by policy',
     },
     accountStates: {
+      consent: 'Plan access pending',
       login: 'Needs login',
       expired: 'Expired',
       cooled: 'Resting',

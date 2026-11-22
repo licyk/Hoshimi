@@ -20,10 +20,11 @@ const loginDone = useLoginDone();
 const session = ref<LoginSession | null>(null);
 const error = ref('');
 const manualCode = ref('');
+const inputError = ref('');
 const submitting = ref(false);
 let polling = false;
 let poller: number | undefined;
-let opened = false;
+let openedUrl = '';
 let generation = 0;
 
 type Step = 'start' | 'browser' | 'done';
@@ -45,8 +46,9 @@ async function begin(provider: string) {
   const mine = ++generation;
   error.value = '';
   manualCode.value = '';
+  inputError.value = '';
   session.value = null;
-  opened = false;
+  openedUrl = '';
   try {
     const started = await startLogin(provider, props.accountId);
     if (mine !== generation || !open.value) {
@@ -69,15 +71,17 @@ async function poll() {
     const view = await pollLogin(id);
     if (session.value?.id !== id || !open.value) return;
     // The URL only exists once the station issues one; open it the moment it does.
-    if (view.login_url && !opened) {
-      opened = true;
+    if (view.status === 'pending' && view.login_url && view.login_url !== openedUrl) {
+      openedUrl = view.login_url;
+      inputError.value = '';
+      manualCode.value = '';
       window.open(view.login_url, '_blank', 'noopener');
     }
     session.value = view;
     if (view.status !== 'pending') {
       stopPolling();
       if (view.status === 'succeeded') {
-        snackbar.show(t('channels.loginDone', { id: view.account_id }));
+        snackbar.show(view.plan_authorized === false ? t('channels.planDisabled') : t('channels.loginDone', { id: view.account_id }));
         loginDone();
       } else error.value = view.message || t('common.error');
     }
@@ -95,7 +99,7 @@ function stopPolling() {
 function stop() {
   generation++;
   stopPolling();
-  opened = false;
+  openedUrl = '';
   if (session.value?.status === 'pending') void cancelLogin(session.value.id).catch((e: Error) => snackbar.error(e.message));
 }
 function reset() {
@@ -109,14 +113,18 @@ watch(open, (value) => (value && props.provider ? void begin(props.provider) : r
 onBeforeUnmount(reset);
 
 async function sendCode() {
-  if (!session.value || !manualCode.value.trim()) return;
+  if (submitting.value || !session.value || !manualCode.value.trim()) return;
+  if (session.value.waiting_for === 'callback_url' && !manualCode.value.trim().startsWith('http://127.0.0.1:')) {
+    inputError.value = t('channels.callbackHelp');
+    return;
+  }
   submitting.value = true;
   try {
     await submitLoginInput(session.value.id, manualCode.value);
     manualCode.value = '';
-    error.value = '';
+    inputError.value = '';
   } catch (e) {
-    error.value = (e as Error).message;
+    inputError.value = (e as Error).message;
   } finally {
     submitting.value = false;
   }
@@ -153,20 +161,22 @@ const retry = () => props.provider && begin(props.provider);
           </div>
           <span class="type-body-small muted">{{ t('channels.deviceInstructions') }}</span>
         </div>
-        <form v-if="(session.waiting_for === 'manual_code' || session.waiting_for === 'personal_token') && session.status === 'pending'" class="manual" @submit.prevent="sendCode">
+        <form v-if="(session.waiting_for === 'callback_url' || session.waiting_for === 'manual_code' || session.waiting_for === 'personal_token') && session.status === 'pending'" class="manual" @submit.prevent="sendCode">
           <TextField
             v-model="manualCode"
             type="password"
             autocomplete="off"
-            :label="session.waiting_for === 'personal_token' ? t('channels.tokenCode') : t('channels.manualCode')"
-            :supporting-text="session.instructions || t('channels.manualCodeHelp')"
+            :error-text="inputError"
+            @update:model-value="inputError = ''"
+            :label="session.waiting_for === 'personal_token' ? t('channels.tokenCode') : session.waiting_for === 'callback_url' ? t('channels.callbackUrl') : t('channels.manualCode')"
+            :supporting-text="session.waiting_for === 'callback_url' ? t('channels.callbackHelp') : session.instructions || t('channels.manualCodeHelp')"
             @enter="sendCode"
           />
           <AppButton variant="tonal" :loading="submitting" :disabled="!manualCode.trim()" @click="sendCode">{{ t('channels.submitCode') }}</AppButton>
         </form>
         <p v-if="session.expires_at" class="type-body-small muted">{{ t('channels.loginExpires', { when: new Date(session.expires_at * 1000).toLocaleTimeString() }) }}</p>
       </template>
-      <p v-if="step === 'done'" class="type-body-medium ok-text">{{ t('channels.loginDone', { id: session?.account_id ?? '' }) }}</p>
+      <p v-if="step === 'done'" class="type-body-medium ok-text">{{ session?.plan_authorized === false ? t('channels.planDisabled') : t('channels.loginDone', { id: session?.account_id ?? '' }) }}</p>
       <ErrorNotice v-if="error" :message="error" announcement="assertive">
         <template #actions>
           <AppButton variant="text" :icon="icons.RotateCcw" @click="retry">{{ t('common.retry') }}</AppButton>

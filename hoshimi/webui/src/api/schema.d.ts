@@ -1613,6 +1613,8 @@ export interface components {
              * @default false
              */
             needs_login: boolean;
+            /** Plan Authorized */
+            plan_authorized: boolean | null;
             /**
              * Refreshable
              * @default false
@@ -2343,6 +2345,8 @@ export interface components {
              * @default
              */
             message: string;
+            /** Plan Authorized */
+            plan_authorized: boolean | null;
             /** Provider */
             provider: string;
             /**

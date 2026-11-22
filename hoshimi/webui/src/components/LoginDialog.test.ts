@@ -21,7 +21,7 @@ vi.mock('@/ui', async () => {
     IconButton: slot,
     Stepper: { props: ['steps'], template: '<ol class="steps"><li v-for="s in steps" :key="s.id" :data-state="s.state">{{ s.label }}</li></ol>' },
     AppButton: { props: ['disabled'], emits: ['click'], template: '<button :disabled="disabled" @click="$emit(\'click\')"><slot /></button>' },
-    TextField: { props: ['label', 'type', 'modelValue'], template: '<label>{{ label }}<input :type="type" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" /></label>' },
+    TextField: { props: ['label', 'type', 'modelValue', 'errorText'], template: '<label>{{ label }}{{ errorText }}<input :type="type" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" /></label>' },
     AppDialog: { props: ['open'], template: '<div v-if="open" class="dialog"><slot /><slot name="actions" /></div>' },
     useSnackbar: () => ({ show: vi.fn(), error: vi.fn() }),
   };
@@ -60,6 +60,27 @@ describe('signing a channel in', () => {
     expect(state.submit).toHaveBeenCalledWith('session', 'code#state');
     await button('Cancel').trigger('click');
     expect(state.cancel).toHaveBeenCalledWith('session');
+  });
+
+  it('keeps an incomplete callback editable, opens a fresh authorization URL and reports identity-only sign-in', async () => {
+    vi.useFakeTimers();
+    const session = { id: 'openai-login', provider: 'openai', status: 'pending', waiting_for: 'callback_url', login_url: 'https://auth.example/first' };
+    state.start.mockResolvedValue(session);
+    state.poll.mockResolvedValueOnce(session).mockResolvedValueOnce({ ...session, login_url: 'https://auth.example/second' })
+      .mockResolvedValue({ ...session, status: 'succeeded', plan_authorized: false, account_id: 'saved' });
+    w = dialog();
+    await w.setProps({ provider: 'openai', open: true });
+    await flushPromises();
+    await w.find('input').setValue('bare-code');
+    await button('Submit code').trigger('click');
+    expect(w.text()).toContain('full final redirect URL');
+    expect(state.submit).not.toHaveBeenCalled();
+    expect(stepState(1)).toBe('running');
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(window.open).toHaveBeenCalledWith('https://auth.example/second', '_blank', 'noopener');
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(w.text()).toContain('ChatGPT plan use has not been authorized');
+    expect(state.done).toHaveBeenCalledOnce();
   });
 
   it('cancels a session that starts after its dialog has closed', async () => {

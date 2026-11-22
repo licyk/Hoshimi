@@ -23,6 +23,7 @@ class LoginSessionView(Record):
     message: str = ""
     account_id: str = ""
     started_at: float = 0.0
+    plan_authorized: bool | None = None
     user_code: str = ""
     instructions: str = ""
     expires_at: float | None = None

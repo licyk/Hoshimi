@@ -62,15 +62,16 @@ const enabled = computed({
 // -- accounts ------------------------------------------------------------------ #
 const now = () => Date.now();
 const balanceOf = (account: string) => props.balances?.rows.find((r) => r.provider === c.value.id && r.account === account);
-type AccountState = 'login' | 'expired' | 'cooled' | 'failing' | 'ok';
+type AccountState = 'consent' | 'login' | 'expired' | 'cooled' | 'failing' | 'ok';
 function stateOf(a: ChannelAccount): AccountState {
+  if (a.plan_authorized === false) return 'consent';
   if (a.needs_login) return 'login';
   if (a.expires_at !== null && a.expires_at !== undefined && a.expires_at <= now()) return 'expired';
   if (a.cooled_reason) return 'cooled';
   if (a.failures > 0 && a.last_error) return 'failing';
   return 'ok';
 }
-const TONES: Record<AccountState, 'error' | 'warning' | 'primary' | 'neutral'> = { login: 'warning', expired: 'error', cooled: 'warning', failing: 'warning', ok: 'primary' };
+const TONES: Record<AccountState, 'error' | 'warning' | 'primary' | 'neutral'> = { consent: 'warning', login: 'warning', expired: 'error', cooled: 'warning', failing: 'warning', ok: 'primary' };
 const accounts = computed(() =>
   c.value.accounts.map((a) => {
     const state = stateOf(a);
@@ -95,7 +96,7 @@ const accountMenu = (account: ChannelAccount): MenuItem[] => [
   ...(account.edit_mode === 'config' ? [{ id: 'edit', label: t('channels.editAccount'), icon: icons.Pencil }] : []),
   // Older OAuth providers sometimes stored only an API key, indistinguishable
   // from a pasted key. Keep re-login available for those existing entries too.
-  ...(account.edit_mode && c.value.loginable ? [{ id: 'relogin', label: t('channels.relogin'), icon: icons.LogIn }] : []),
+  ...(account.edit_mode && c.value.loginable ? [{ id: 'relogin', label: t(account.plan_authorized === false ? 'channels.enablePlan' : 'channels.relogin'), icon: icons.LogIn }] : []),
   ...(account.refreshable ? [{ id: 'refresh', label: t('channels.renewAccount'), icon: icons.RotateCcw }] : []),
   { id: 'forget', label: t('channels.forget'), icon: icons.Trash2, danger: true },
 ];

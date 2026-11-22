@@ -215,6 +215,17 @@ class Account:
         self.needs_login = False
         self.refresh_lock = threading.RLock()
         self.auth_revision = 0
+        self.persist_credentials: Callable[[Account, dict[str, Any]], None] | None = None
+
+    def commit_credentials(self, changes: dict[str, Any]) -> None:
+        """Publish a rotation only after the configured store accepts it."""
+        if self.persist_credentials is not None:
+            self.persist_credentials(self, changes)
+        updated = {**self.data, **changes}
+        for key, value in changes.items():
+            if value is None:
+                updated.pop(key, None)
+        self.data = updated
 
     @property
     def credential(self) -> dict[str, Any]:

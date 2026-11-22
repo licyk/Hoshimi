@@ -199,6 +199,10 @@ export default {
     authMethod: '認証方法',
     deviceCode: '確認コード',
     deviceInstructions: '認証ページにこのコードを入力してログインを完了してください。',
+    callbackUrl: '完全なコールバック URL',
+    callbackHelp: '別の端末でログインした場合は、クエリを含む完全なリダイレクト URL を貼り付けてください。',
+    planDisabled: 'サインインしました。ChatGPT プランの利用はまだ許可されていません。',
+    enablePlan: 'ChatGPT プランの利用を許可',
     manualCode: '認証コードまたはコールバック URL',
     manualCodeHelp: '別の端末のブラウザーでは、最終コールバック URL を貼り付けてください。Anthropic は code#state も使用できます。',
     tokenCode: 'パーソナルアクセストークン',
@@ -312,6 +316,7 @@ export default {
       policy_blocked: 'ポリシーによりブロック',
     },
     accountStates: {
+      consent: 'プラン利用未許可',
       login: '要ログイン',
       expired: '期限切れ',
       cooled: '休止中',

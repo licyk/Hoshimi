@@ -61,6 +61,8 @@ def needs_refresh(account: Account, now_ms: float | None = None) -> bool:
     """Renew when the lead window has opened, or when nothing records an expiry."""
     if not is_refreshable(account):
         return False
+    if account.provider_id == "openai" and account.get("pending_refresh"):
+        return True
     expiry = account_expiry_ms(account)
     if expiry is None:
         return True
@@ -135,7 +137,7 @@ class Refresher:
             self.last_ok[key] = time.time()
             self.last_error.pop(key, None)
             account.needs_login = False
-            result.persisted = self._persist(provider.id, account.id, account.data)
+            result.persisted = account.persist_credentials is not None or self._persist(provider.id, account.id, account.data)
             logger.info("refreshed %s/%s%s", provider.id, account.id, " (written to config)" if result.persisted else "")
             return result
 

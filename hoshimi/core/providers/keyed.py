@@ -121,8 +121,11 @@ class KeyedProvider(OpenAiCompatProvider):
             raise ProviderError(400, f"{self.id}: the account needs api_key or access_token")
         return {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "text/event-stream"}
 
+    def inference_accounts(self) -> list[Account]:
+        return self.accounts
+
     def fetch_models(self) -> list[str]:
-        for account in self.accounts:
+        for account in self.inference_accounts():
             declared = account.get("models", self.options.get("models"))
             try:
                 if isinstance(declared, list):
@@ -140,7 +143,7 @@ class KeyedProvider(OpenAiCompatProvider):
             self._account_rows[account.id] = found
         self.catalog_authoritative = not self.catalog_failed
         combined: dict[str, dict[str, Any]] = {}
-        for account in self.accounts:
+        for account in self.inference_accounts():
             for model, row in self._account_rows.get(account.id, {}).items():
                 combined.setdefault(model, row)
         self.listing_rows = combined
@@ -157,8 +160,8 @@ class KeyedProvider(OpenAiCompatProvider):
 
     def _stream_candidates(self, model: str) -> list[Account]:
         if not self._account_rows:
-            return self.accounts
-        return [account for account in self.accounts if model in self._account_rows.get(account.id, {})]
+            return self.inference_accounts()
+        return [account for account in self.inference_accounts() if model in self._account_rows.get(account.id, {})]
 
     def accepts_row(self, row: dict[str, Any]) -> bool:
         return chat_row(row)
