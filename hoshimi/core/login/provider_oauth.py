@@ -100,6 +100,13 @@ def _mint_copilot(client: httpx.Client, identity: str) -> tuple[httpx.Response, 
     if not host.endswith(".githubcopilot.com") or any(c in host for c in "/:@"):
         raise LoginError("Copilot returned an invalid inference host")
     credential["base_url"] = f"https://{host}"
+    # The plan SKU decides which models this account may run: a free account
+    # is offered the whole Copilot catalogue and refused most of it. The
+    # minted token carries the SKU, so it is recorded here rather than
+    # inferred later.
+    sku = payload.get("sku")
+    if isinstance(sku, str) and sku:
+        credential["copilot_sku"] = sku
     return response, credential
 
 

@@ -134,7 +134,7 @@ class KeyedProvider(OpenAiCompatProvider):
                     rows = self.discover_rows(account)
                 else:
                     continue
-                found = {row["id"]: row for row in rows if isinstance(row.get("id"), str) and row["id"] and self.accepts_row(row)}
+                found = {row["id"]: row for row in rows if isinstance(row.get("id"), str) and row["id"] and self.accepts_row_for(account, row)}
             except (httpx.HTTPError, ValueError, TypeError, ProviderError) as exc:
                 self.record_catalog_failure(exc)
                 # Keep this account's last complete catalog; another account's
@@ -165,6 +165,16 @@ class KeyedProvider(OpenAiCompatProvider):
 
     def accepts_row(self, row: dict[str, Any]) -> bool:
         return chat_row(row)
+
+    def accepts_row_for(self, account: Account, row: dict[str, Any]) -> bool:
+        """Whether this account may run the row.
+
+        The default is the lane's own filter. A lane whose accounts differ
+        in what they may run — a plan decides that, and two accounts can sit
+        on different plans — answers per account, so one account's limit
+        does not remove a model from another's catalogue.
+        """
+        return self.accepts_row(row)
 
     def catalog_url(self, account: Account) -> str:
         return f"{self.base_url}{self.models_path}"

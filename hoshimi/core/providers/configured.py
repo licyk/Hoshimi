@@ -7,12 +7,15 @@ from collections.abc import Iterator
 from dataclasses import replace
 from typing import Any
 
-from hoshimi.core.catalog import ModelSpec
+import httpx
+
+from hoshimi.core.catalog import ModelSpec, default_spec
 from hoshimi.core.net.identity import identity
 from hoshimi.core.provider_definitions import CANONICAL_PROVIDERS, REGULAR_PROVIDER_IDS, ProviderDefinition
 from hoshimi.core.providers.base import Account, ProviderError
 from hoshimi.core.providers.catalog_profiles import CATALOG_PROFILES, CatalogProfile, Field, catalog_url, discover_catalog
 from hoshimi.core.providers.compat import gateway_chat_body, provider_chat_body
+from hoshimi.core.providers.copilot import AUTO_MODEL_ID, AutoRoute, AutoSessionCache, auto_prompt, free_usable, is_free_account, model_kind, resolve_auto
 from hoshimi.core.providers.keyed import KeyedProvider, account_token, spec_from_row
 from hoshimi.core.providers.request_profiles import CHAT_PROFILES
 from hoshimi.core.providers.transports import request_payload, stream_http
@@ -208,9 +211,145 @@ class OpenAIProvider(ConfiguredProvider):
             raise
 
 
+class CopilotProvider(ConfiguredProvider):
+    """A Copilot account whose plan decides what it may run.
+
+    Copilot hands every account the same listing — the union of every model
+    it serves — and each row states the plans it is restricted to and what it
+    costs. A free account is therefore offered models it cannot run: on a
+    real free account 35 of the 48 listed models answer
+    ``model_not_supported``, and the ones that work are exactly the rows
+    priced at zero for the account's tier.
+
+    So the lane filters the listing by what the account may actually use, and
+    offers the Auto route — which asks Copilot to pick a model the account
+    can run — beside them.
+    """
+
+    id = "github-copilot"
+    display_name = "GitHub Copilot"
+    base_url = "https://api.individual.githubcopilot.com"
+    # The canonical Copilot lane. The generated registration overrides this
+    # with the same definition; naming it here keeps the class usable on its
+    # own, which the tests and the CLI's direct lane lookups rely on.
+    definition: ProviderDefinition = next(d for d in CANONICAL_PROVIDERS if d.id == "github-copilot")
+    models_path = "/models"
+
+    def __init__(self, client: httpx.Client, accounts: list[Account], options: dict[str, Any] | None = None):
+        super().__init__(client, accounts, options)
+        self.auto_routes = AutoSessionCache()
+
+    def accepts_row(self, row: dict[str, Any]) -> bool:
+        """Whether this lane may run the row on any of its accounts."""
+        return self.accepts_row_for(self.inference_accounts()[0], row) if self.inference_accounts() else False
+
+    def accepts_row_for(self, account: Account, row: dict[str, Any]) -> bool:
+        """Whether this account may run the row.
+
+        A free account is held to the free rows; a paid account is held to
+        the chat rows it can see, because a paid plan may run what it is
+        billed for and the gate no longer decides for it. The answer is per
+        account, so a free account in the pool does not remove a paid
+        account's models from the lane.
+        """
+        if not super().accepts_row(row):
+            return False
+        # Copilot states the model's kind in its capabilities; the embedding
+        # and decision rows answer 400 on a chat route on any plan.
+        if model_kind(row) not in (None, "chat"):
+            return False
+        if is_free_account(account):
+            return free_usable(row)
+        return True
+
+    def fetch_models(self) -> list[str]:
+        models = super().fetch_models()
+        if self._auto_available():
+            # The Auto route is a model the account can run, so it belongs in
+            # the listing beside the fixed ones.
+            return [AUTO_MODEL_ID, *models]
+        return models
+
+    def _stream_candidates(self, model: str) -> list[Account]:
+        """The accounts that may run this model.
+
+        The Auto route is not a row of the catalogue — it is Copilot's own
+        picker, and every account that can reach it may run it. So it is
+        offered to the accounts that can, rather than looked up among the
+        rows the catalogue returned.
+        """
+        if model == AUTO_MODEL_ID:
+            return [account for account in self.inference_accounts() if is_free_account(account)]
+        return super()._stream_candidates(model)
+
+    def _auto_available(self) -> bool:
+        """Whether any account can reach Copilot's Auto route.
+
+        The route answers for a free account, which is the account that needs
+        it: a paid account can already name the model it wants.
+        """
+        return any(is_free_account(account) for account in self.inference_accounts())
+
+    def wire_for(self, model: str, account: Account | None = None) -> str:
+        if model == AUTO_MODEL_ID:
+            # The Auto session token is only accepted on /responses.
+            return "responses"
+        return super().wire_for(model, account)
+
+    def stream_raw(self, account: Account, model: str, body: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        if model != AUTO_MODEL_ID:
+            yield from super().stream_raw(account, model, body)
+            return
+        route = self.auto_route(account, body)
+        payload = request_payload(body, route.model_id, "responses")
+        headers = self.build_headers(account, route.model_id)
+        headers["Copilot-Session-Token"] = route.session_token
+        headers["Openai-Intent"] = "conversation-agent"
+        yield from stream_http(self.client, provider=self.id, url=f"{self.endpoint_base(account)}/responses",
+                               headers=headers, payload=payload, wire="responses")
+
+    def auto_route(self, account: Account, body: dict[str, Any]) -> AutoRoute:
+        """The Auto resolution for this turn, reused while it stays valid."""
+        key = self._auto_key(account, body)
+        cached = self.auto_routes.get(key)
+        if cached is not None:
+            return cached
+        prompt, has_image = auto_prompt(body)
+        route = resolve_auto(self.client, account, self.endpoint_base(account), prompt, has_image)
+        self.auto_routes.put(key, route)
+        return route
+
+    def _auto_key(self, account: Account, body: dict[str, Any]) -> str:
+        """The identity of one Auto session: an account and a conversation.
+
+        The session token belongs to a single conversation — it names the
+        model Copilot picked for it — so it is not carried from one talk into
+        the next. A conversation with no id of its own gets one of its own,
+        so an unidentified turn is not mixed into another's session.
+        """
+        conversation = str(body.get("session_id") or body.get("conversation_id") or "").strip()
+        if not conversation:
+            conversation = identity.get().session
+        return f"{account.id}:{conversation}"
+
+    def specs(self) -> dict[str, ModelSpec]:
+        specs = super().specs()
+        if AUTO_MODEL_ID in specs:
+            return specs
+        specs[AUTO_MODEL_ID] = replace(default_spec(AUTO_MODEL_ID, self.id), wire="responses",
+                                       name="GitHub Copilot Auto")
+        return specs
+
+
 def regular_provider_classes() -> dict[str, type[KeyedProvider]]:
     """Generate thin classes from definitions; protocol logic remains shared."""
-    return {definition.id: type(definition.id.replace("-", "_").title() + "Provider", (OpenAIProvider if definition.id == "openai" else ConfiguredProvider,),
+    return {definition.id: type(definition.id.replace("-", "_").title() + "Provider", (_CLASS_FOR.get(definition.id, ConfiguredProvider),),
                                 {"id": definition.id, "display_name": definition.name, "base_url": definition.base_url,
                                  "definition": definition, "models_path": definition.catalog if definition.catalog.startswith("/") and " " not in definition.catalog else "/models"})
             for definition in CANONICAL_PROVIDERS if definition.id in REGULAR_IDS}
+
+
+_CLASS_FOR: dict[str, type[ConfiguredProvider]] = {
+    "openai": OpenAIProvider,
+    "github-copilot": CopilotProvider,
+}
