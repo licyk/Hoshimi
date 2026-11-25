@@ -1,7 +1,7 @@
 ---
 title: "Anthropic 兼容接口"
 description: "/v1/messages 与 /v1/messages/count_tokens 的参考：请求校验、原生转发与协议转换如何选择、转换路径支持哪些字段和内容块、思考签名的回放、推理强度换算、流式事件、Token 计数和错误。"
-icon: FileJson
+icon: MessagesSquare
 ---
 
 这两个接口兼容 Anthropic Messages，供 Anthropic SDK、Claude Code 等客户端使用。基础地址是 `http://127.0.0.1:10600`（客户端自己拼上 `/v1/messages`），使用模型 API 密钥，以 `x-api-key` 或 `Authorization: Bearer` 发送（见 [API 概览](/docs/api)）。用法示例见 [Anthropic SDK](/docs/clients-anthropic)。

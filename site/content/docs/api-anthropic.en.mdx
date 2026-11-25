@@ -1,7 +1,7 @@
 ---
 title: "Anthropic-compatible API"
 description: "Reference for /v1/messages and /v1/messages/count_tokens: request validation, how native forwarding or protocol conversion is chosen, the fields and content blocks conversion supports, thinking-signature replay, effort mapping, stream events, token counting and errors."
-icon: FileJson
+icon: MessagesSquare
 ---
 
 These two endpoints are compatible with Anthropic Messages and serve clients such as the Anthropic SDKs and Claude Code. The base address is `http://127.0.0.1:10600` (clients add `/v1/messages` themselves), authenticated with the model API key sent as `x-api-key` or `Authorization: Bearer` (see [API overview](/docs/api)). Usage examples are in [Anthropic SDK](/docs/clients-anthropic).
